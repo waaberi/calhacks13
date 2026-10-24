@@ -6,6 +6,88 @@ P2 headset test is requested or repeated by this verification workflow. FPS is
 not an acceptance criterion. A compiler or simulated input pass cannot establish
 that a native Blender button or spatial drawing gesture works in the headset.
 
+## Headless control regression pass
+
+The user explicitly requested headless testing. This pass launches no interactive
+Blender, capture helper, desktop input injection, Player or headset session. Its
+source checkpoint is `07db58c56ddedae8546a7ed7d37fd3a2e4d8e4df`.
+
+The helper's real HTTP tests reproduced non-ASCII-token and huge-number crashes,
+false focus acknowledgement after failed held-input release, and phantom releases
+when context validation refused an event before dispatch. The fixes reject bad
+requests with bounded errors, block focus until release succeeds, and track new
+holds only immediately before dispatch. Successful watchdog release invalidates
+the stale gesture session; failed cleanup and idle heartbeats preserve it.
+
+The Unity client now validates the helper fields it consumes and always clears
+its state-reader barrier. Dispatch and independent cleanup require explicit
+`ok:true` with the exact event sequence. An HTTP 200 alone cannot end the native
+reservation. Invalid acknowledgements cancel pending actions; model mutations are
+not replayed. Only idempotent release can retry after a fresh authoritative GET.
+The actual capture-only helper's compact disabled response is accepted without
+credentials, so setup guidance still explains `--enable-input`. Even previously
+synchronized input is revoked and cannot POST after this response.
+
+| Headless check | Result | Evidence and limit |
+| --- | --- | --- |
+| Capture/input/launcher/bootstrap HTTP and isolation suite | 77 passed | `p25-headless-helper-20261024T183842Z/final-tests.log`; fake Windows adapter, no HWND/SendInput |
+| Actual UnityWebRequest and production reader/sender/cleanup coroutines | 9 cases passed | `p25-headless-http9-result.json` and Editor log; fake ephemeral loopback responses, no native admission |
+| Complete fresh-Editor sequence | Passed, exit 0 | `p25-headless-protocol-cumulative.log`; original P1/P2/arrangement gates plus protocol, target, occlusion and keyboard-last checks |
+| Native background preview workflows | 136 assertions passed in six processes | Unit scales 1/.001 and CAD-free; private resources/TEMP/logs and unchanged source/bytecode verified |
+| Native test runner isolation guards | 5 passed | Private inherited-environment replacement and external output refusal checks |
+| Full Python suite and repository-wide Ruff | 873 passed, 36 skipped; Ruff passed | `p25-headless-final-pytest.log` / `p25-headless-final-ruff.log`; explicit skips are not native acceptance |
+| Final Windows v9 build | Passed, zero errors/exit 0 | `p25-preview-spatial-v9-build-result.json` / build log; frozen source `07db58c`, complete mandatory gates, no Player launch |
+
+The current complete runtime directory is external
+`artifacts/p25-preview-spatial-v9/`. It was built headlessly in this worktree's own
+Library, with BelowNormal priority and one worker. All HTTP9 source hashes match
+the frozen build source. Generated settings were preserved to external evidence,
+verified as whitespace-only changes, and restored to the accepted baseline.
+
+| Final v9 identity | Value |
+| --- | --- |
+| Frozen app source | `07db58c56ddedae8546a7ed7d37fd3a2e4d8e4df` |
+| Git app tree | `8efb72293a2c3a413849b474f313c969c4a66a41` |
+| Managed assembly SHA-256 | `e35fbeb2da7cb6d1d300b0221fbd2a750838793ac615d9b13979403d736a8a44` |
+| Executable SHA-256 | `001aeebfb92718f8b49f0c0e0a03e313c54669552b08e952b2fee3ddd143683a` |
+
+The HTTP cases cover compact disabled state without input authority, recovery
+after wrong-typed valid JSON, rejection of empty
+200 responses, exact sender acknowledgements, cleanup callback refusal for
+empty/wrong-sequence/false acknowledgements, successful release, and recovery by
+GET before retrying release. `P25Checks.RunInputProtocol` runs inside the cumulative
+Editor/build gates. It covers disabled/no-window state and
+integer overflow without injecting OS input.
+
+Run the asynchronous HTTP fixture with a new absolute external
+`CALHACKS_P25_HTTP_RESULTS` path:
+
+```powershell
+& '<Unity-editor>/Editor/Unity.exe' -batchmode -nographics `
+  -projectPath '<isolated-P25-worktree>/app' `
+  -executeMethod P25HttpChecks.Run -job-worker-count 1 `
+  -logFile '<new-external-evidence>/http-editor.log'
+```
+
+Do not supply `-quit`: the bounded Editor scheduler exits after the actual
+asynchronous HTTP operations finish. The fixture does not enable XR or launch a
+Player. See [native workflow evidence and isolation limits](P2_5_NATIVE_PREVIEW_WORKFLOWS.md)
+for the operation coverage and the initial shared-TEMP logger mistake, which is
+preserved separately from the corrected private reruns. Reproductions and fixes
+are recorded in [issue 139](https://github.com/waaberi/calhacks13/issues/139#issuecomment-6388121302).
+
+Actual hover, menu/button delivery, sliders/drags, OS focus, auxiliary windows,
+changing captured pixels and controller/headset drawing remain pending. Successful
+native operations establish the underlying behavior; their UI event sequences
+still require the later coordinated runtime slot. No evolving P2 surface changes
+were imported during this control test pass, and no P2 physical test was requested.
+
+The earlier passing v8 checkpoint is preserved at source `e81d36b`, app tree
+`383e7e006b97ba443366f808ff3cd6282af865e2`, DLL SHA-256
+`6378781fec53e72ac725e222d08a052cee72f57923d3fa5f080257d8ccb7302b`.
+It passed the complete build sequence with zero errors/exit 0. The later
+capture-only setup correction has its own source and HTTP9 evidence above.
+
 ## Isolation
 
 - The feature worktree is outside OneDrive. Existing P2 working trees, build
@@ -91,7 +173,7 @@ Implementation and verification results are recorded as they complete. No native
 interaction, headset interaction or broad Blender button coverage is claimed from
 the compiler or managed checks alone.
 
-Final isolated verification on 2026-10-24:
+Earlier v7 isolated verification on 2026-10-24:
 
 | Check | Result | Limit |
 | --- | --- | --- |
@@ -163,7 +245,7 @@ the testing slot even while its Player is closed.
 
 The pre-integration v6 checkpoint remains preserved at frozen `e4d3108`, DLL
 SHA-256 `1c9ba81a69fe8a1e74d18451f5787433f13e4dc6ef75726317823f87d5717736`,
-with its original build log/result manifest. V7 is the current integration candidate.
+with its original build log/result manifest. V9 above is the current headless-verified candidate.
 
 The first v1 build began before the component-disable cleanup repair was frozen
 and picked up that repair during Player compilation. It is retained as a
