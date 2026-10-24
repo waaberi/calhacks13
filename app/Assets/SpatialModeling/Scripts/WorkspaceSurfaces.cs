@@ -39,6 +39,7 @@ namespace SpatialModeling
         public int DetectedCount => detected.Count;
         string message = "Checking saved room";
         string lastCounts;
+        string pendingLevel;
         bool loading, disposed, reloadPending, wasPresent;
         int generation, attempts, roomCount;
         float retryAt;
@@ -307,7 +308,12 @@ namespace SpatialModeling
             if (AutomaticEnabled && TryChooseDetected(kind,camera.transform.position,out var surface))
             { CreateLevel(kind,surface.Pose,surface.Size,surface.Id); return; }
             var host=FindFirstObjectByType<HostScene>();
-            var facing=host!=null && host.DisplayPlacementReady ? host.PlacementHeadPose.rotation : camera.transform.rotation;
+            // A menu click before the startup gate settles cannot seed an alternate
+            // frame. Queue it until the same tracked workspace pose is available.
+            if(host!=null && !host.DisplayPlacementReady)
+            { pendingLevel=kind; message="Look ahead · waiting for workspace position"; return; }
+            pendingLevel=null;
+            var facing=host!=null ? host.PlacementHeadPose.rotation : camera.transform.rotation;
             CreateLevel(kind,InitialLevelPose(kind,camera.transform.position,facing));
         }
         public static Pose InitialLevelPose(string kind, Vector3 eye, Quaternion workspaceFacing)
@@ -332,6 +338,7 @@ namespace SpatialModeling
         }
         public void ClearLevels()
         {
+            pendingLevel=null;
             FindFirstObjectByType<WorkspaceInteraction>()?.CancelGrabs();
             foreach (var level in levels) if (level.Target != null) DestroyObject(level.Target.gameObject);
             levels.Clear(); surfaces.Clear();
@@ -363,6 +370,11 @@ namespace SpatialModeling
         }
         void LateUpdate()
         {
+            if(pendingLevel!=null)
+            {
+                var host=FindFirstObjectByType<HostScene>();
+                if(host!=null && host.DisplayPlacementReady) BeginLevel(pendingLevel);
+            }
             detected.Clear(); var candidates = new List<(Guid room, Surface surface)>(); Guid currentRoom = Guid.Empty;
             foreach (var item in anchors)
             {

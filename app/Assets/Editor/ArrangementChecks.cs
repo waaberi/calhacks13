@@ -158,12 +158,14 @@ public static class ArrangementChecks
             try
             {
                 facingHostObject.SetActive(true); // Disabled HostScene never opens its transport.
-                typeof(HostScene).GetField("placed",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(facingHost,true);
                 var settled=new Pose(new Vector3(2,1.65f,3),Quaternion.Euler(0,73,0));
                 typeof(HostScene).GetProperty("PlacementHeadPose").SetValue(facingHost,settled);
                 cameraObject.tag="MainCamera";
                 cameraObject.transform.SetPositionAndRotation(settled.position,Quaternion.Euler(35,3,12));
                 provider.BeginLevel("desk");
+                Check(provider.LevelCount==0,"early side-menu selection waits for shared tracked startup instead of creating a second gaze frame");
+                typeof(HostScene).GetField("placed",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(facingHost,true);
+                typeof(WorkspaceSurfaces).GetMethod("LateUpdate",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(provider,null);
                 var spawned=provider.Surfaces.Single();
                 Near(spawned.Pose.position,WorkspaceSurfaces.InitialLevelPose("desk",settled.position,settled.rotation).position,
                     "actual menu callback uses common settled workspace frame even when head looks70degrees left at the menu");
