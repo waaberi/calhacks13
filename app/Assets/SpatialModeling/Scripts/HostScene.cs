@@ -235,7 +235,7 @@ namespace SpatialModeling
         }
 
         // The one place that converts Blender (right-handed, Z up) to Unity (left-handed, Y up).
-        // PROVISIONAL: Waaberi documents the official conversion in #38. Change only here.
+        // Matches "Blender to Unity" in contracts/README.md (#38). Change only here.
         static Vector3 ToUnity(float x, float y, float z) => new Vector3(x, z, y);
 
         static Mesh BuildMesh(JObject m, string name)
