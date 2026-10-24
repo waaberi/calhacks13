@@ -17,11 +17,12 @@ CHECK = Path(__file__).with_name("blender_check.py")
 
 
 def run_check(cmd, tmp_path):
-    try:
-        socket.create_connection(("127.0.0.1", 8765), timeout=1).close()
-        pytest.skip("port 8765 is in use; is a Host-role Blender running?")
-    except OSError:
-        pass
+    for port in (8765, 8767):
+        try:
+            socket.create_connection(("127.0.0.1", port), timeout=1).close()
+            pytest.skip(f"port {port} is in use; is a Host-role Blender running?")
+        except OSError:
+            pass
     env = {**os.environ, "BLENDER_USER_RESOURCES": str(tmp_path)}  # keep real prefs untouched
     result = subprocess.run(cmd, check=False, env=env, capture_output=True, text=True, timeout=180)
     assert result.returncode == 0, result.stdout + result.stderr
