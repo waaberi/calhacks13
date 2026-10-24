@@ -83,8 +83,8 @@ public static class ArrangementChecks
             var batches=WorkspaceSurfaces.Batches(ids.Concat(ids).Concat(new[]{Guid.Empty}));
             Check(batches.Count==3 && batches.All(batch=>batch.Length<=50)
                 && batches.SelectMany(batch=>batch).Distinct().Count()==123,"room children beyond SDK's first50 are fetched without duplicates/empty UUIDs");
-            var top=WorkspaceSurfaces.DeskTop(new Pose(new Vector3(2,.5f,3),Quaternion.Euler(90,30,0)),new Bounds(new Vector3(.2f,0,0),new Vector3(1,.6f,.4f)));
-            Check(top.Normal.y>.999f && Mathf.Abs(top.Pose.position.y-.7f)<.0001f,"desk uses volume top, including non-centred bounds and rotated anchor");
+            var deskFace=WorkspaceSurfaces.DeskTop(new Pose(new Vector3(2,.5f,3),Quaternion.Euler(90,30,0)),new Bounds(new Vector3(.2f,0,0),new Vector3(1,.6f,.4f)));
+            Check(deskFace.Normal.y>.999f && Mathf.Abs(deskFace.Pose.position.y-.7f)<.0001f,"desk uses volume top, including non-centred bounds and rotated anchor");
             var level=provider.CreateLevel("desk",new Pose(new Vector3(.1f,.8f,.2f),Quaternion.Euler(31,42,18)));
             Check(level.gameObject.activeSelf && level.GetComponentInChildren<LineRenderer>().positionCount>20,"fallback is a visible grid immediately, without holding an object near it");
             Check(Vector3.Dot(level.forward,Vector3.up)>.999f,"desk level stays horizontal despite wrist tilt");
