@@ -317,10 +317,11 @@ namespace SpatialModeling
         void Remove(string id)
         {
             if (!objects.TryGetValue(id, out var go)) return;
+            objects.Remove(id);
+            if (go == null) return;   // already destroyed (e.g. when Play stops)
             var mf = go.GetComponent<MeshFilter>();
             if (mf != null && mf.sharedMesh != null) Destroy(mf.sharedMesh);
             Destroy(go);
-            objects.Remove(id);
         }
 
         void ClearScene()

@@ -47,7 +47,8 @@ namespace SpatialModeling
         string typed = "";
         string shownError;                // the VoiceInput error already shown, so it isn't repeated every 4 s
         string grammarNames;              // the names the recognizer grammar was last built from
-
+        bool talking, waitingResult, playing;   // feedback: holding talk, waiting for a result, a prompt is playing
+        float resultDeadline;
         InputAction talk, confirm, cancel;
 
         void Awake()
@@ -75,8 +76,20 @@ namespace SpatialModeling
             cancel = new InputAction("CancelPending", InputActionType.Button);
             cancel.AddBinding("<XRController>{LeftHand}/triggerPressed");
             cancel.AddBinding("<Keyboard>/escape");
-            talk.started += _ => { Debug.Log("TALK down. ready=" + input?.Ready + " error=" + input?.Error); input?.StartUtterance(); };
-            talk.canceled += _ => { Debug.Log("TALK up"); input?.StopUtterance(); };
+            talk.started += _ =>
+            {
+                Debug.Log("TALK down. ready=" + input?.Ready + " error=" + input?.Error);
+                talking = input != null; waitingResult = false;
+                if (input != null) Note("Listening...");
+                input?.StartUtterance();
+            };
+            talk.canceled += _ =>
+            {
+                Debug.Log("TALK up");
+                talking = false;
+                input?.StopUtterance();
+                if (input != null) { waitingResult = true; resultDeadline = Time.time + 3f; Note("Processing..."); }
+            };
             confirm.started += _ => ConfirmDelete();
             cancel.started += _ => CancelPressed();
             talk.Enable(); confirm.Enable(); cancel.Enable();
@@ -108,6 +121,10 @@ namespace SpatialModeling
                 input = new VoiceInput(() => VoskSpeechRecognizer.Load(model));
                 if (Microphone.devices.Length == 0) { Note("No microphone. Use the text box (voice off)."); return; }
                 micDevice = null;
+                foreach (string d in Microphone.devices)
+                    if (d.IndexOf("Oculus", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        d.IndexOf("Headset", StringComparison.OrdinalIgnoreCase) >= 0) { micDevice = d; break; }
+                Debug.Log("VoiceUiAdapter mic: " + (micDevice ?? "(OS default)") + "  all: " + string.Join(" | ", Microphone.devices));
                 Microphone.GetDeviceCaps(micDevice, out int min, out int max);
                 int rate = min == 0 && max == 0 ? 16000 : Mathf.Clamp(16000, min, max);
                 mic = Microphone.Start(micDevice, true, 1, rate);
@@ -139,10 +156,18 @@ namespace SpatialModeling
                 }
                 while (input.TryGetResult(out RecognitionResult result))
                 {
+                    waitingResult = false;
+                    if (string.IsNullOrWhiteSpace(result.Text)) { Note("Didn't hear anything. Speak closer and louder."); continue; }
                     Debug.Log("HEARD: " + result);
-                    Note("Heard: " + result.Text);
+                    if (prompts.Count == 0 && !playing) Note("Heard: " + result.Text);   // don't cover a prompt that is playing
                     Handle(session.Hear(result));
                 }
+            }
+            if (talking) noteUntil = Time.time + 1f;   // keep "Listening..." up while the button is held
+            if (waitingResult && Time.time > resultDeadline)
+            {
+                waitingResult = false;
+                Note("Didn't hear anything. Speak closer and louder.");
             }
             Handle(session.Tick());
             UpdatePointer();
@@ -209,7 +234,7 @@ namespace SpatialModeling
                 return;
             }
             GUI.SetNextControlName("voicebox");
-            typed = GUI.TextField(new Rect(10, 10, 420, 26), typed);
+            typed = GUI.TextField(new Rect(Screen.width - 430, Screen.height - 36, 420, 26), typed);
         }
 
         // ---------- scene ----------
@@ -257,6 +282,8 @@ namespace SpatialModeling
                     Handle(session.SetSelection(new[] { vc.TargetId }));
                 else if (vc.Kind == CommandKind.Cancel)
                     CancelPressed();
+                else if (vc.Kind != CommandKind.Select)
+                    Enqueue(Prompt.Unsupported, null);   // e.g. "apply": say so instead of staying silent
                 return;
             }
             if (vc.RequiresConfirmation)
@@ -302,6 +329,7 @@ namespace SpatialModeling
                 return;
             }
             voiceRequests.Add(id);
+            session.SetSelection(Array.Empty<string>());   // "this" goes back to the gaze target after a command
         }
 
         void OnAnswered(CommandAnswer a)
@@ -328,6 +356,7 @@ namespace SpatialModeling
                 if (prompts.Count == 0) { yield return null; continue; }
                 Prompt p = prompts.Dequeue();
                 string detail = details.Dequeue();
+                playing = true;
                 Note(string.IsNullOrEmpty(detail) ? p.Text : p.Text + "\n" + detail);
                 AudioClip clip = Resources.Load<AudioClip>(p.ClipResource);
                 if (input != null) input.Paused = true;
@@ -337,6 +366,7 @@ namespace SpatialModeling
                     yield return new WaitForSeconds(clip.length + 0.3f);   // Air Link plays audio late
                 }
                 else yield return new WaitForSeconds(1.5f);
+                playing = false;
                 if (prompts.Count == 0 && input != null) input.Paused = false;
             }
         }
