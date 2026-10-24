@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "type": "voice.resolve",
+  "id": "5b1f0c7e9a2d4e61b3f8c0a4d6e2f917",
+  "payload": {
+    "text": "make five copies along z",
+    "confidence": 0.93,
+    "target": {
+      "id": "fd7bd4ddae444528a4fedbc562fe018b",
+      "generation": 40
+    }
+  }
+}
