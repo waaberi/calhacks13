@@ -48,10 +48,27 @@ under translated/rotated/nonuniform display magnification, a rotated native plan
 and invalid/parallel/behind/singular inputs. It must run inside Unity because the
 actual Unity matrix/quaternion implementations can require native initialization.
 
+`P25Checks.RunTargets` checks that an applied new-sketch receipt selects its actual
+native UUID even when native telemetry still names an older sketch. A missing new
+scene record waits for that UUID, and removal refuses to redirect drawing to the
+old sketch. Rejected/unrelated receipts and genuine native context switches are
+covered by the actual managed implementation.
+
+`P25Checks.RunKeyboardIsolation` sends synthetic Input System events only inside
+the isolated Editor. It invokes actual `TablePlacement.Update` and verifies that
+native-owned M/Enter/Escape do not also move/place/cancel the table; ordinary
+desktop behavior remains. The actual composite pan action rejects owned keyboard
+arrows while preserving independent controller axes. Pending input cleanup still
+blocks desktop shortcuts. No OS keyboard event is injected. This mandatory gate
+runs last, after the existing controller gates, to isolate its synthetic player
+input state from their Editor-buffer tests.
+
 `P25Build.Windows` requires `CALHACKS_P25_BUILD_PATH` to be an absolute `.exe` path
 outside Git worktrees and OneDrive. It invokes the P2.5 gates and existing cumulative
 P2/arrangement/P1 gates, preserving the accepted aim, controller, startup, image
 freshness and visual baseline checks. It never launches the resulting Player.
+The final keyboard-isolation gate must also pass before the wrapper logs
+`P25_BUILD_RESULT Succeeded`; an existing output directory alone is insufficient.
 
 Example offline compiler invocation, substituting local absolute paths:
 
@@ -78,21 +95,26 @@ Final isolated verification on 2026-10-24:
 
 | Check | Result | Limit |
 | --- | --- | --- |
-| Full runtime C# and Editor C# offline compile | Pass, 21 runtime / 7 Editor sources | Actual compiled mapping/transport/session gates also ran under Mono |
+| Full runtime C# and Editor C# offline compile | Pass, 22 runtime / 7 Editor sources | Actual compiled mapping/transport/target/session gates ran under Mono; final Editor fixture also compiled in Unity |
 | Actual compiled preview mapping/routing gates under Mono | Pass | Synthetic coordinates; no real controller/desktop input |
 | Actual compiled HTTP sequence barrier under Mono | Pass | Pure state gate; actual HTTP failure paths remain separate |
+| Confirmed new-sketch target selection | Pass under Mono and Unity | New UUID, delayed record and removed-target regression coverage |
 | Actual compiled native edit session gates under Mono | Pass | Wire-state behavior only; no native geometry execution |
 | Dedicated launcher isolation tests | 5 passed and 7 subtests passed | Mocked preflight; no runtime launched |
 | Ruff for owned Python wrappers | Pass | Static style/import checks |
 | Isolated native CAD create/reopen at scene unit scales 1 and .001 | Pass, four fresh Blender processes | Native solver/persistence checks; no desktop/headset input |
+| Backend/contract combined suite | 868 passed, 36 skipped | Skips remain distinct from actual isolated native runs |
+| Capture/input/launcher/bootstrap combined suite | 69 passed | Source/transport/isolation tests; no headset acceptance |
 | Spatial native matrix gates | Pass inside Unity | Known world/native oracles; no physical gesture |
 | Cumulative P2/arrangement/P1 interaction and visual gates | Pass inside Unity | Synthetic/editor checks preserve existing requirements; no new physical acceptance |
-| Windows Player build | Pass, exit 0 and zero errors | Frozen app source `900b7a7`; resulting Player never launched |
+| Actual keyboard ownership and controller-axis isolation | Pass inside Unity | Real Input System synthetic edges and actual table update; no OS input injected |
+| Windows Player build | Pass, exit 0 and zero errors | Frozen app source `e4d3108`; resulting Player never launched |
 | Broad native UI workflows and direct VR drawing in headset | Pending | Requires later coordinated P2.5 runtime slot |
 
-The external `p25-offline-release/compile-manifest.json` records the exact source
+The external `p25-offline-v3/compile-manifest.json` records the exact runtime source
 hashes and compiled assembly hashes for its run; subsequent source changes require
-a fresh run. A previous in-flight compile correctly refused a missing drawing
+a fresh run. Later Editor-fixture repairs were compiled and executed by Unity's
+narrow and complete build gates. A previous in-flight compile correctly refused a missing drawing
 class while parallel implementation was unfinished. That transient error is not
 reported as a completed feature regression.
 
@@ -108,31 +130,52 @@ background isolated native documents, not input sent to the user's Blender or a
 proof of a working VR gesture. The captured native button/menu workflows remain
 pending runtime acceptance.
 
-Final Windows output is the external directory
-`artifacts/p25-preview-spatial-v2/`. The build used this feature worktree's own
+The verified Windows checkpoint is the external directory
+`artifacts/p25-preview-spatial-v6/`. The build used this feature worktree's own
 Library, Unity 6000.6.5f1 in batch/nographics mode with two job workers, and a
 BelowNormal Editor process. `P25Build.Windows` passed its mapping, transport and
 spatial gates, then the cumulative P2 placement/menu/scene, arrangement, accepted
-aim/controller/startup/freshness and render-scale/MSAA/alpha checks. Unity reported
+aim/controller/startup/freshness and render-scale/MSAA/alpha checks, followed by
+mandatory keyboard isolation. Unity reported
 `Succeeded errors=0` and exited with code 0. No Player, capture helper or interactive
 Blender was launched by this build. P2's active test runtime was not replaced.
 
-| Final v2 identity | Value |
+| Verified v6 identity | Value |
 | --- | --- |
-| Frozen app source | `900b7a7` |
-| Git app tree | `b2f2ec89f619babc77f1facd0d3fd9b7d9aade37` |
-| `SpatialModeling_Data/Managed/Assembly-CSharp.dll` SHA-256 | `1a838542e58e1760f681b10ab4e010dcbc5d4e091e83e832cae25482816e5f18` |
+| Frozen app source | `e4d3108be9c871f42bbe8ff60739c66c56b194dc` |
+| Git app tree | `8af1ec38f336b8a96c85820c83390d38a2913b2c` |
+| `SpatialModeling_Data/Managed/Assembly-CSharp.dll` SHA-256 | `1c9ba81a69fe8a1e74d18451f5787433f13e4dc6ef75726317823f87d5717736` |
 | `SpatialModeling.exe` SHA-256 | `001aeebfb92718f8b49f0c0e0a03e313c54669552b08e952b2fee3ddd143683a` |
-| Build evidence | `evidence/p25-preview-spatial-v2-build.log` and `p25-preview-spatial-v2-build-result.json` |
+| Build evidence | `evidence/p25-preview-spatial-v6-build.log` and `p25-preview-spatial-v6-build-result.json` |
 
 The first v1 build began before the component-disable cleanup repair was frozen
 and picked up that repair during Player compilation. It is retained as a
 mixed-timing diagnostic and is not attributed exclusively to its starting commit.
-The v2 rebuild used frozen `900b7a7`; its C# source was verified unchanged afterward.
+The historical v2 rebuild used frozen `900b7a7`; its C# source was verified unchanged afterward.
 The equal v1/v2 DLL hashes reflect the first build having already incorporated the
-repair. Generated settings diffs were preserved to external evidence for each run,
+repair. Their historical DLL hash is `1a838542e58e1760f681b10ab4e010dcbc5d4e091e83e832cae25482816e5f18`.
+They precede the explicit new-sketch target and expanded keyboard regressions and
+are superseded by v6. Generated settings diffs were preserved to external evidence for each run,
 verified to contain only line-ending/trailing-whitespace changes, then restored.
 No generated render/XR/project settings were included in this feature change.
+
+Rejected intermediate build attempts remain preserved:
+
+| Attempt | Exact failing gate | Diagnosis and correction |
+| --- | --- | --- |
+| v3, `af087f1` | `synthetic keyboard actually delivers a fresh key event` | Edit-mode input buffers did not supply the required player edge counter. The fixture now enables/restores the installed Input System's nonpersisted player-update test flag; the fresh-edge assertion remains. |
+| v4, `969c958` | `P2: table controls plus pin/dock menu actions constructed` | The inactive fixture left its separately created menu behind because Unity did not call its OnDestroy. The fixture now explicitly invokes its real cleanup and asserts no extra TableActions remain. |
+| v5, `e992ed1` | `Typed pose reader must accept Current` | Synthetic player updates initialized global Input System state before the original Editor-buffer pose tests. The mandatory keyboard fixture now runs last; all original P1/P2 assertions are unchanged. |
+
+These are verification-harness failures, not observed headset or native geometry
+failures. Their logs are retained as `p25-preview-spatial-v3/v4/v5-build.log` under
+external evidence. They are tracked in [P2.5 issue 139](https://github.com/waaberi/calhacks13/issues/139),
+including the [original fresh-edge failure](https://github.com/waaberi/calhacks13/issues/139#issuecomment-6387560729).
+The complete narrow sequence `P25Checks.RunCumulativeEditor` passed with unchanged
+P2, arrangement and Current/Legacy controller gates before the full v6 build; its
+evidence is `p25-complete-editor-isolation.log`. V6 then passed the complete build
+and its final mandatory keyboard gate with exit code 0. No intermediate failure
+was promoted to a candidate or replaced P2's runtime.
 
 Before accepting a later isolated runtime, record exact source and assembly hashes
 and verify a deliberately changing native viewport alongside actual operations:
