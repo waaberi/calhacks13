@@ -45,8 +45,38 @@ public static class P2Checks
             Check(!scene.Placement.gameObject.activeSelf,"model must wait for Place Table");
             table.SeedFromHead(new Vector3(1,1.65f,2),Vector3.forward);
             Check(preview.gameObject.activeSelf,"settled seed reveals preview while model remains gated");
+            scene.InvalidateUnconfirmedPlacement();
+            Check(table.NeedsSeed && !preview.gameObject.activeSelf,"unmount/focus loss hides and invalidates an unconfirmed old preview");
+            table.Place();
+            Check(!table.IsPlaced,"old preview cannot be confirmed after readiness was lost");
+            var origin=new GameObject("Rotated placement origin");
+            Pose worldHead;
+            try
+            {
+                origin.transform.SetPositionAndRotation(new Vector3(2,.1f,-4),Quaternion.Euler(0,73,0));
+                worldHead=WorkspaceInteraction.ToWorldPose(origin.transform,
+                    new Pose(new Vector3(.2f,1.55f,.4f),Quaternion.Euler(0,-31,0)));
+            }
+            finally { UnityEngine.Object.DestroyImmediate(origin); }
+            var facing=Vector3.ProjectOnPlane(worldHead.rotation*Vector3.forward,Vector3.up).normalized;
+            table.SeedFromHead(worldHead.position,worldHead.rotation*Vector3.forward);
+            var expectedTable=worldHead.position+facing*table.Distance;
+            expectedTable.y=table.Height;
+            Near(scene.Placement.position,expectedTable,"table uses current world headset pose exactly once under a translated/rotated tracking origin");
+            Check(HostScene.TryGetDisplayPose(worldHead.position,worldHead.rotation*Vector3.forward,1.05f,0,
+                out var screenPosition,out var screenRotation),"same world headset pose produces the screen placement");
+            Check(Mathf.Abs(Vector3.Dot(screenPosition-worldHead.position,Vector3.Cross(Vector3.up,facing)))<.00001f,
+                "screen has no unexpected lateral offset from the shared forward heading");
+            Check(Quaternion.Angle(scene.Placement.rotation,screenRotation)<.001f,
+                "table and screen use the same horizontal heading, not opposite or independently sampled headings");
             table.Place();
             Check(table.IsPlaced && scene.Placement.gameObject.activeSelf,"Place exposes the model");
+            var confirmedPose=new Pose(scene.Placement.position,scene.Placement.rotation);
+            scene.InvalidateUnconfirmedPlacement();
+            Check(table.IsPlaced && scene.Placement.gameObject.activeSelf,"removing headset does not undo an explicitly confirmed placement");
+            Near(scene.Placement.position,confirmedPose.position,"confirmed table stays world anchored through focus/removal");
+            Check(Quaternion.Angle(scene.Placement.rotation,confirmedPose.rotation)<.001f,"focus/removal preserves confirmed orientation");
+            Debug.Log("P2_PLACEMENT_LIFECYCLE_CHECK PASS pending invalidation/remount/rotated-origin/shared heading/confirmed anchoring");
             var first = scene.Placement.GetChild(0).GetComponent<WorkspaceObjectView>();
             var originalNative = first.NativePosition;
             var mesh = first.GetComponent<MeshFilter>().sharedMesh;

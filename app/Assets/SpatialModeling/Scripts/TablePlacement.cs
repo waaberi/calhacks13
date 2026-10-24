@@ -93,6 +93,14 @@ namespace SpatialModeling
             Refresh();
         }
 
+        public void InvalidateSeed()
+        {
+            // Preserve Move/Cancel's saved arrangement while hiding a pending
+            // preview captured before the current worn/focused headset session.
+            seeded = false;
+            Refresh();
+        }
+
         public void BeginMove()
         {
             if (display == null || State != PlacementState.Placed) return;

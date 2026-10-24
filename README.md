@@ -5,6 +5,7 @@ Edit a real Blender project in VR on a Quest 3S over Air Link, while a second pe
 - **Architecture, phases and who owns what:** [PHASE_PLAN.md](PHASE_PLAN.md). Start with its "Architecture" section.
 - **Wire formats:** [contracts/README.md](contracts/README.md)
 - **Tasks:** [project board](https://github.com/users/waaberi/projects/3)
+- **Before changing VR placement/orientation:** [placement lifecycle contract](docs/product-workflow/PLACEMENT_ORIENTATION_CONTRACT.md)
 - **Deadline:** feature freeze Sat Oct 24, 7 pm PT. Everything done by 11 pm PT.
 
 ## Where code goes

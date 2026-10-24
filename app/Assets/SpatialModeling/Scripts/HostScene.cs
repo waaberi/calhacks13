@@ -61,6 +61,7 @@ namespace SpatialModeling
         GUIStyle style;
         InputAction recenterAction;
         bool placed, recenterRequested;
+        string placementReadiness = "";
         GameObject statusPanel;
         Text headsetStatus;
 
@@ -93,6 +94,8 @@ namespace SpatialModeling
 
         void OnEnable()
         {
+            OVRManager.HMDUnmounted += InvalidateUnconfirmedPlacement;
+            OVRManager.VrFocusLost += InvalidateUnconfirmedPlacement;
             // Explicit isolated-test/deployment configuration must never fall
             // back to a different native session after a typo. No LAN endpoint.
             if (!TryResolvePort(System.Environment.GetEnvironmentVariable("CALHACKS_HOST_PORT"), port, out int connectionPort)
@@ -121,6 +124,8 @@ namespace SpatialModeling
 
         void OnDisable()
         {
+            OVRManager.HMDUnmounted -= InvalidateUnconfirmedPlacement;
+            OVRManager.VrFocusLost -= InvalidateUnconfirmedPlacement;
             recenterAction?.Dispose();
             recenterAction = null;
             link?.Stop();   // its thread exits and posts nothing more, so a re-enable can't run two
@@ -162,6 +167,30 @@ namespace SpatialModeling
             FindFirstObjectByType<BlenderScreen>()?.RequestRecenter();
         }
 
+        // Tracked does not mean worn: Link can retain a valid pose on a desk.
+        // Missing userPresence must not silently certify that the user is ready.
+        public static bool HeadsetAllowsPlacement(bool xrActive, bool tracked,
+            bool presenceKnown, bool worn, bool vrFocused)
+            => xrActive && tracked && presenceKnown && worn && vrFocused;
+
+        public void InvalidateUnconfirmedPlacement()
+        {
+            startupFacing.Ready(Vector3.forward, false, Time.realtimeSinceStartupAsDouble);
+            // A confirmed table is world-anchored. Ordinary removal/focus loss
+            // must not silently recenter an arrangement the user already placed.
+            if (table == null || table.IsPlaced) return;
+            placed = false;
+            table.InvalidateSeed();
+            FindFirstObjectByType<BlenderScreen>()?.RequestRecenter();
+        }
+
+        void PlacementReadiness(string state)
+        {
+            if (placementReadiness == state) return;
+            placementReadiness = state;
+            Debug.Log("WORKSPACE_PLACEMENT_READINESS " + state);
+        }
+
         void LateUpdate()
         {
             var camera = Camera.main;
@@ -169,24 +198,39 @@ namespace SpatialModeling
             UpdateHeadsetStatus(camera);
             // Place once after head tracking starts. Looking/walking and scene reconnects
             // must not move an already placed model. B/Y explicitly requests a new placement.
-            if (placed && !recenterRequested && (table == null || !table.NeedsSeed)) return;
             var headPose = new Pose(camera.transform.position, camera.transform.rotation);
             bool xr = XRSettings.enabled || XRSettings.isDeviceActive;
             if (xr)
             {
                 var head = InputDevices.GetDeviceAtXRNode(XRNode.Head);
-                bool ready = head.TryGetFeatureValue(UnityEngine.XR.CommonUsages.isTracked, out var tracked) && tracked;
-                if (head.TryGetFeatureValue(UnityEngine.XR.CommonUsages.userPresence, out var present) && !present) ready = false;
-                if (!ready) { startupFacing.Ready(Vector3.forward, false, Time.realtimeSinceStartupAsDouble); return; }
+                bool tracked = head.TryGetFeatureValue(UnityEngine.XR.CommonUsages.isTracked, out var tracking) && tracking;
+                bool inputPresenceKnown = head.TryGetFeatureValue(UnityEngine.XR.CommonUsages.userPresence, out var inputPresent);
+                bool metaReady = OVRPlugin.initialized;
+                bool metaPresent = metaReady && OVRPlugin.userPresent;
+                bool focused = metaReady && OVRPlugin.hasVrFocus;
+                bool worn = (inputPresenceKnown || metaReady) && (!inputPresenceKnown || inputPresent)
+                    && (!metaReady || metaPresent);
+                bool ready = HeadsetAllowsPlacement(true, tracked, inputPresenceKnown || metaReady, worn, focused);
+                PlacementReadiness($"xr=True tracked={tracked} presence_known={inputPresenceKnown || metaReady} worn={worn} vr_focused={focused}");
+                if (!ready) { InvalidateUnconfirmedPlacement(); return; }
                 // Read the tracked head directly: the camera can still contain its
                 // startup transform in the first frame that tracking becomes valid.
                 if (!head.TryGetFeatureValue(UnityEngine.XR.CommonUsages.devicePosition, out Vector3 headPosition)
-                    || !head.TryGetFeatureValue(UnityEngine.XR.CommonUsages.deviceRotation, out Quaternion headRotation)) return;
+                    || !head.TryGetFeatureValue(UnityEngine.XR.CommonUsages.deviceRotation, out Quaternion headRotation))
+                { InvalidateUnconfirmedPlacement(); return; }
                 headPose = WorkspaceInteraction.ToWorldPose(camera.transform.parent, new Pose(headPosition, headRotation));
-                if (!recenterRequested && !startupFacing.Ready(headPose.rotation * Vector3.forward, true,
-                        Time.realtimeSinceStartupAsDouble)) return;
             }
-            else if (!Application.isFocused) return;
+            else if (!Application.isEditor || !Application.isFocused)
+            {
+                // A Windows VR Player must never commit the desktop/default
+                // camera while its XR loader or Link session is still starting.
+                PlacementReadiness("xr=False waiting_for_headset=True");
+                InvalidateUnconfirmedPlacement();
+                return;
+            }
+            if (placed && !recenterRequested && (table == null || !table.NeedsSeed)) return;
+            if (xr && !recenterRequested && !startupFacing.Ready(headPose.rotation * Vector3.forward, true,
+                    Time.realtimeSinceStartupAsDouble)) return;
 
             if (!TryGetDisplayPose(headPose.position, headPose.rotation * Vector3.forward,
                     viewingDistance, belowEyeHeight, out var position, out var rotation)) return;
@@ -196,7 +240,7 @@ namespace SpatialModeling
             placed = true;
             recenterRequested = false;
             PlacementHeadPose = headPose;
-            Debug.Log($"HostScene placement: head={headPose.position:F3} forward={headPose.rotation * Vector3.forward:F3} root={position:F3}; display only shared_tracked_head=True");
+            Debug.Log($"HostScene placement: head={headPose.position:F3} forward={headPose.rotation * Vector3.forward:F3} table={root.position:F3} yaw={root.eulerAngles.y:F2}; shared_tracked_head=True readiness=[{placementReadiness}]");
         }
 
         // Wait until the wearer is looking ahead steadily, rather than capturing
