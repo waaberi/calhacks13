@@ -40,7 +40,7 @@ import uuid
 import bpy
 from bpy.app.handlers import persistent
 
-from . import commands, document, edits, gate, lan, leases, server, session
+from . import commands, document, edits, gate, lan, leases, server, session, sketch
 from . import sync as scene_sync  # host.sync() is the role switch below
 
 DRAIN_INTERVAL = 0.02  # seconds between queue drains
@@ -180,6 +180,17 @@ def _get_session_id():
     return _session_id
 
 
+def _capabilities():
+    """Advertise only usable native CAD, never a UI-only sketch placeholder."""
+    check = getattr(sketch, "dependency_status", None)
+    if check is None:
+        return {"sketch": False}
+    try:
+        return {"sketch": bool(check().get("available", False))}
+    except Exception:  # noqa: BLE001 - optional native dependency failure must disable Sketch
+        return {"sketch": False}
+
+
 _shown = None  # (participants, leases) as last printed
 
 
@@ -262,6 +273,7 @@ def start():
         on_change=_session_changed,
         name=prefs.host_name if prefs else None,
         client_can_edit=bool(prefs and prefs.client_edits),
+        capabilities=_capabilities,
     )
     editor = edits.Editor(scene_sync, undoable, doc)
     lses = leases.Leases(sess, editor)

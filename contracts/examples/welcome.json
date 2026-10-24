@@ -8,6 +8,7 @@
     "host_epoch": "de36341c159e4d63a802adfefdfd4683",
     "actor_id": "be10cd89a4e841e7b708ae9cdbefeb77",
     "can_edit": true,
+    "capabilities": { "sketch": false },
     "app": { "name": "spatial_modeling", "version": "0.1.0" },
     "document": {
       "id": "15e12b8b8c12437098bb8a090659c8cb",
