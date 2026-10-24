@@ -14,6 +14,7 @@ public static class P1Build
         var output = Environment.GetEnvironmentVariable("CALHACKS_P1_BUILD_PATH");
         if (string.IsNullOrEmpty(output)) throw new Exception("Set CALHACKS_P1_BUILD_PATH to an output EXE outside the repository.");
         WorkspaceChecks.Run();
+        ControllerPoseChecks.Run();
         RoomSetupChecks.Run();
         // Protect accepted clarity and room visibility while changing interaction.
         // Deliberate future baseline changes must update this gate and physical evidence.

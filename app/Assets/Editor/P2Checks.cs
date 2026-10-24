@@ -241,6 +241,9 @@ public static class P2Checks
 
     public static void Windows()
     {
+        PhysicalScaleChecks.Run();
+        IndependentPlaneChecks.Run();
+        SettingsMenuChecks.Run();
         Run();
         ArrangementChecks.Run();
         ArrangementChecks.VerifyRecordedRoom();

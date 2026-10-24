@@ -1,5 +1,11 @@
 # Direct workspace arrangement
 
+The Settings/manual-plane follow-up supersedes the older manual-guide auto-attach
+and Desk/Wall/Floor menu descriptions below. See [SETTINGS_PLANES.md](SETTINGS_PLANES.md):
+room visualization defaults hidden, multiple horizontal/vertical planes stay
+independent, and per-plane alignment/deletion are explicit. The accepted origin
+conversion, startup/current-room guards and ordinary model contact are preserved.
+
 This is the user's new interaction redesign after accepting the P2 menu on
 679fd04. Prior P2 acceptance is preserved. It does not authorize native P3 editing,
 FPS work, or a main merge.

@@ -65,10 +65,13 @@ public static class ArrangementChecks
                 string kind=source.Name.ToLowerInvariant();
                 var wrong=new Pose(source.Pose.position+source.Normal*.08f,Quaternion.Euler(23,51,17));
                 var guide=arrangement.Surfaces.CreateLevel(kind,wrong,source.Size,source.Id);
-                var attached=arrangement.Apply(guide,wrong,wrong,false,false);
+                var independent=arrangement.Apply(guide,wrong,wrong,false,false);
+                Near(independent.position,wrong.position,"actual correction remains independent even beside its detected source");
+                Check(arrangement.Surfaces.AlignPlaneToDetected(guide),"actual room permits deliberate one-shot detected alignment");
+                var attached=new Pose(guide.position,guide.rotation);
                 var expected=WorkspaceSurfaces.LevelPose(kind,source.Pose);
                 Check(Vector3.Distance(attached.position,source.Pose.position+source.Normal*.003f)<.001f,
-                    "actual guide path attaches to actual Meta surface");
+                    "explicit guide alignment attaches to actual Meta surface");
                 Check(Quaternion.Angle(attached.rotation,expected.rotation)<.05f,"actual guide path uses selected Meta wall/table orientation");
                 Check(kind!="desk"||Vector3.Dot(attached.rotation*Vector3.forward,Vector3.up)>.99999f,"actual desk guide remains exactly horizontal");
                 arrangement.Surfaces.ClearLevels();
@@ -204,7 +207,8 @@ public static class ArrangementChecks
             var attachmentGuide=provider.CreateLevel("wall",nearSide);
             detectedSurfaces.Add(sideWall);
             var autoGuide=arrangement.Apply(attachmentGuide,nearSide,nearSide,false,false);
-            Check(Vector3.Dot(autoGuide.rotation*Vector3.forward,Vector3.left)>.999f,"actual guide constraint path uses Meta wall orientation");
+            Near(autoGuide.position,nearSide.position,"default guide path never reattaches to inaccurate Meta position");
+            Check(Quaternion.Angle(autoGuide.rotation,nearSide.rotation)<.001f,"default guide path never replaces manual wall yaw");
             var manualGuide=arrangement.Apply(attachmentGuide,autoGuide,nearSide,false,true);
             Near(manualGuide.position,nearSide.position,"free-adjust bypass allows correcting an inaccurate scan without being pulled back");
             Check(Quaternion.Angle(manualGuide.rotation,nearSide.rotation)<.001f,"free-adjust preserves deliberate wall yaw while remaining upright");
@@ -324,10 +328,16 @@ public static class ArrangementChecks
             var heldGuide=provider.CreateLevel("wall",nearSide);
             begin.Invoke(interaction,new object[]{leftHand,heldGuide,null,pickupAim,nearSide.position});
             var adopted=arrangement.Apply(heldGuide,nearSide,nearSide,false,false);
+            Check(Quaternion.Angle(adopted.rotation,nearSide.rotation)<.001f,"ordinary guide hold remains independent from nearby wall yaw");
+            Check(provider.AlignPlaneToDetected(heldGuide),"guide can deliberately adopt a nearby wall heading once");
+            adopted=new Pose(heldGuide.position,heldGuide.rotation);
+            // Menu alignment releases a live grab; a later pickup captures the
+            // explicit pose. Exercise the same rebase used by one/two-hand holds.
+            begin.Invoke(interaction,new object[]{leftHand,heldGuide,null,pickupAim,heldGuide.position});
             rebase.Invoke(null,new object[]{leftHand,pickupAim,adopted});
             relative=(Pose)handType.GetField("rayRelative").GetValue(leftHand);held=(Quaternion)handType.GetField("placementRotation").GetValue(leftHand);
             var away=WorkspaceInteraction.FollowPlacementRay(new Pose(Vector3.left,Quaternion.Euler(0,-20,0)),relative,0,true,held,Quaternion.identity);
-            Check(Vector3.Dot(away.rotation*Vector3.forward,Vector3.left)>.999f,"actual guide pickup and automatic orientation rebase cannot revert to its original wall heading on moving away");
+            Check(Vector3.Dot(away.rotation*Vector3.forward,Vector3.left)>.999f,"pickup after explicit one-shot alignment retains chosen heading while moving away");
             provider.ClearLevels();detectedSurfaces.Clear();
             begin.Invoke(interaction,new object[]{leftHand,screen.Placement,null,pickupAim,screen.Placement.position});
             Check(!(bool)handType.GetField("preserveRotation").GetValue(leftHand),"screen keeps accepted legacy grip orientation mapping");

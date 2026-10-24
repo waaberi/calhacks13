@@ -18,6 +18,9 @@ namespace SpatialModeling
         public float Height { get; private set; } = 0.8f;
         public float Distance { get; private set; } = 1.1f;
         public float Size { get; private set; } = 1f;
+        public bool IsActualSize => Mathf.Approximately(Size, 1f);
+        public string ScaleLabel => IsActualSize ? "Actual size · 1:1"
+            : $"Inspection size · {Size.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}×";
         public float Yaw { get; private set; }
         public Transform Display => display;
         public Transform Menu => panel;
@@ -25,11 +28,15 @@ namespace SpatialModeling
         public bool MenuDocked { get; private set; } = true;
         const float MenuScale = 0.00055f;
         Transform display, preview, panel;
-        float baseScale;
         bool seeded, pointing, cancelAllowed, menuTracked;
         Pose savedPose;
         float savedSize, savedHeight, savedDistance, savedYaw;
         Text title;
+        enum MenuPage { Arrange, Settings, Planes, Environment }
+        MenuPage menuPage;
+        int planePage;
+        string planeNotice;
+        public bool SettingsOpen => menuPage == MenuPage.Settings;
         WorkspaceRoomSetup roomSetup;
         Material material;
         readonly List<XRInputSubsystem> subsystems = new List<XRInputSubsystem>();
@@ -45,7 +52,10 @@ namespace SpatialModeling
         {
             if (display != null) return;
             display = target;
-            baseScale = display.localScale.x;
+            // Size is an explicit inspection multiplier relative to metres,
+            // never relative to a hidden scale inherited from the scene.
+            Size = 1f;
+            display.localScale = Vector3.one;
             // Clone an actual scene asset so its shader is retained in a Player.
             // Shader.Find alone can succeed in the Editor and be stripped in a build.
             material = new Material(previewMaterial);
@@ -149,7 +159,14 @@ namespace SpatialModeling
         {
             // Direct two-hand magnification stays on this display root. Keep
             // menu refresh/docking from restoring an older inspection size.
-            if(display!=null && baseScale>0) Size=display.localScale.x/baseScale;
+            if(display!=null) Size=display.localScale.x;
+        }
+
+        public void RestoreActualSize()
+        {
+            FindFirstObjectByType<WorkspaceInteraction>()?.CancelGrabs();
+            Size = 1f;
+            Refresh();
         }
 
         public void SeedFromHead(Vector3 head, Vector3 forward)
@@ -199,7 +216,7 @@ namespace SpatialModeling
         void Refresh()
         {
             if (display == null) return;
-            display.localScale = Vector3.one * baseScale * Size;
+            display.localScale = Vector3.one * Size;
             display.gameObject.SetActive(IsPlaced);
             if (panel != null) panel.gameObject.SetActive(seeded && (!MenuDocked || menuTracked));
             if (preview != null)
@@ -223,10 +240,10 @@ namespace SpatialModeling
             if (!seeded) return; // HostScene supplies the common settled tracked-head pose.
             if (panel == null) CreatePanel();
             var connection = GetComponent<HostScene>();
-            var arrangement=FindFirstObjectByType<WorkspaceArrangement>();
-            title.text = arrangement!=null ? (roomSetup!=null && roomSetup.IsOpen ? roomSetup.Heading : $"Arrange space · {(MenuDocked ? "left hand" : "in space")}\n{arrangement.SurfaceState}\nGrip menu to place it") : $"{(IsPlaced ? "Inspect table" : State == PlacementState.ConfirmTrackingReset ? "Tracking reset — confirm placement" : "Choose table position")}" +
+            var arrangement=GetComponent<WorkspaceArrangement>() ?? FindFirstObjectByType<WorkspaceArrangement>();
+            title.text = arrangement!=null ? MenuHeading(arrangement) : $"{(IsPlaced ? "Inspect table" : State == PlacementState.ConfirmTrackingReset ? "Tracking reset — confirm placement" : "Choose table position")}" +
                 $" · {(MenuDocked ? "left hand" : "in space")}\nGrip menu, move, release to place" +
-                $"\nHeight {Height:F2} m · size {Size:F2}× · {connection.ConnectionText}";
+                $"\nHeight {Height:F2} m · {ScaleLabel} · {connection.ConnectionText}";
             var keyboard = Keyboard.current;
             if (keyboard != null)
             {
@@ -305,8 +322,11 @@ namespace SpatialModeling
                 if (action.GetComponent<Collider>().Raycast(ray, out var result, distance))
                 { distance = result.distance; selected = action; }
             }
-            if (click) selected?.Invoke();
-            return selected != null;
+            if(selected==null) return false;
+            // Page callbacks may destroy/rebuild this action. Retain the hit
+            // result so the same trigger cannot fall through after dispatch.
+            if(click) selected.Invoke();
+            return true;
         }
 
         void CreatePanel()
@@ -317,7 +337,7 @@ namespace SpatialModeling
             panel.localScale = Vector3.one * MenuScale;
             var canvas = panel.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
-            var arrangement=FindFirstObjectByType<WorkspaceArrangement>();
+            var arrangement=GetComponent<WorkspaceArrangement>() ?? FindFirstObjectByType<WorkspaceArrangement>();
             bool compact=arrangement!=null;
             panel.GetComponent<RectTransform>().sizeDelta = new Vector2(640, compact?580:650);
             panel.GetComponent<Image>().color = new Color(.015f,.025f,.04f,.96f);
@@ -343,23 +363,25 @@ namespace SpatialModeling
             };
             if(compact) actions=new (string, Action)[] {
                 ("Undo placement",arrangement.UndoPlacement), ("Recover workspace",arrangement.Recover),
-                ("Desk: adjust / add",()=>arrangement.Surfaces.BeginLevel("desk")),
-                ("Wall: adjust / add",()=>arrangement.Surfaces.BeginLevel("wall")),
-                ("Floor: adjust / add",()=>arrangement.Surfaces.BeginLevel("floor")),
-                ("Environment setup",()=>SetupMenu(true)),
-                ("Auto detection on/off",arrangement.Surfaces.ToggleAutomatic),
-                ("Show/hide detected",arrangement.Surfaces.ToggleDetected),
-                ("Clear manual levels",arrangement.Surfaces.ClearLevels),
-                ("Pin menu here",PinMenu), ("Return to left hand",DockMenu)
+                ("Add horizontal plane",()=>arrangement.Surfaces.BeginPlane("horizontal")),
+                ("Add vertical plane",()=>arrangement.Surfaces.BeginPlane("vertical")),
+                ("Manage planes",()=>ChangeMenu(MenuPage.Planes)), ("Actual size",RestoreActualSize),
+                ("Pin menu here",PinMenu), ("Return to left hand",DockMenu),
             };
-            if(compact && roomSetup.IsOpen) actions=new (string,Action)[] {
+            if(compact && menuPage==MenuPage.Settings) actions=new (string,Action)[] {
+                ("Show room geometry",()=>{ arrangement.Surfaces.ToggleDetected(); RefreshMenu(); }),
+                ("Auto surfaces on/off",arrangement.Surfaces.ToggleAutomatic),
+                ("Environment setup",()=>SetupMenu(true)), ("Manage planes",()=>ChangeMenu(MenuPage.Planes)),
+                ("Surface help on/off",arrangement.ToggleAssist), ("Actual size",RestoreActualSize),
+                ("Back to arrange",()=>ChangeMenu(MenuPage.Arrange))
+            };
+            if(compact && menuPage==MenuPage.Environment) actions=new (string,Action)[] {
                 ("Load saved room",arrangement.Surfaces.Reload), ("Scan / update on Quest",roomSetup.Scan),
-                ("Show/hide room geometry",arrangement.Surfaces.ToggleDetected), ("Back to arrange",()=>SetupMenu(false)),
-                ("Desk: adjust detected",()=>arrangement.Surfaces.BeginLevel("desk")),
-                ("Wall: adjust detected",()=>arrangement.Surfaces.BeginLevel("wall")),
-                ("Floor: adjust detected",()=>arrangement.Surfaces.BeginLevel("floor")),
-                ("Clear corrections",arrangement.Surfaces.ClearLevels)
+                ("Show room geometry",()=>{ arrangement.Surfaces.ToggleDetected(); RefreshMenu(); }),
+                ("Back to Settings",()=>ChangeMenu(MenuPage.Settings))
             };
+            if(compact && menuPage==MenuPage.Planes) actions=PlaneActions(arrangement.Surfaces);
+            if(compact) title.text=MenuHeading(arrangement);
             for (int i = 0; i < actions.Length; i++)
             {
                 var background = new GameObject(actions[i].Item1, typeof(RectTransform), typeof(Image));
@@ -378,16 +400,73 @@ namespace SpatialModeling
                 action.Click = actions[i].Item2;
                 buttons.Add(action);
             }
+            if(compact)
+            {
+                var gear=new GameObject("Settings",typeof(RectTransform),typeof(CanvasRenderer),typeof(SettingsGearGraphic),typeof(BoxCollider),typeof(TableAction));
+                gear.transform.SetParent(panel,false);
+                var rect=gear.GetComponent<RectTransform>();
+                rect.anchoredPosition=new Vector2(265,-240); rect.sizeDelta=new Vector2(64,64);
+                gear.GetComponent<SettingsGearGraphic>().color=new Color(.85f,.94f,1);
+                gear.GetComponent<SettingsGearGraphic>().raycastTarget=false;
+                gear.GetComponent<BoxCollider>().size=new Vector3(64,64,8);
+                var action=gear.GetComponent<TableAction>();
+                action.Click=()=>ChangeMenu(menuPage==MenuPage.Settings?MenuPage.Arrange:MenuPage.Settings);
+                buttons.Add(action);
+            }
             panel.gameObject.SetActive(seeded && (!MenuDocked || menuTracked));
+        }
+
+        string MenuHeading(WorkspaceArrangement arrangement)
+        {
+            if(menuPage==MenuPage.Environment) return roomSetup.Heading;
+            if(menuPage==MenuPage.Settings) return "Settings\nRoom geometry: "+(arrangement.Surfaces.ShowDetected?"shown":"hidden")+
+                " · auto surfaces: "+(arrangement.Surfaces.AutomaticEnabled?"on":"off")+
+                "\nSurface help: "+(arrangement.AssistEnabled?"on":"off")+"\n"+ScaleLabel;
+            if(menuPage==MenuPage.Planes) return "Horizontal / vertical planes\n"+(string.IsNullOrEmpty(planeNotice)?"Manual corrections stay independent":planeNotice)+"\nPage "+(planePage+1)+" · "+arrangement.Surfaces.PlaneTargets.Count+" planes";
+            return $"Arrange space · {(MenuDocked ? "left hand" : "in space")}\n{arrangement.SurfaceState}\n{ScaleLabel}\nGrip menu to place it";
+        }
+
+        (string,Action)[] PlaneActions(WorkspaceSurfaces surfaces)
+        {
+            const int perPage=3;
+            var planes=surfaces.PlaneTargets;
+            int pages=Mathf.Max(1,(planes.Count+perPage-1)/perPage);
+            planePage=Mathf.Clamp(planePage,0,pages-1);
+            var result=new List<(string,Action)>();
+            for(int i=planePage*perPage;i<Mathf.Min(planes.Count,(planePage+1)*perPage);i++)
+            {
+                var target=planes[i]; var label=surfaces.PlaneLabel(target);
+                result.Add(("Align "+label,()=>{planeNotice=surfaces.AlignPlaneToDetected(target)?"Aligned once · future grabs stay free":"No matching detected surface nearby";RefreshMenu();}));
+                result.Add(("Delete "+label,()=>{surfaces.DeletePlane(target);planeNotice="Deleted "+label;RefreshMenu();}));
+            }
+            if(pages>1) {
+                result.Add(("Previous planes",()=>{planePage=(planePage+pages-1)%pages;RefreshMenu();}));
+                result.Add(("Next planes",()=>{planePage=(planePage+1)%pages;RefreshMenu();}));
+            }
+            result.Add(("Back to arrange",()=>ChangeMenu(MenuPage.Arrange)));
+            return result.ToArray();
+        }
+
+        void ChangeMenu(MenuPage page)
+        {
+            menuPage=page;
+            planeNotice=null;
+            if(roomSetup!=null) { if(page==MenuPage.Environment) roomSetup.Open();else roomSetup.Close(); }
+            RefreshMenu();
+        }
+
+        void RefreshMenu()
+        {
+            FindFirstObjectByType<WorkspaceInteraction>()?.CancelGrabs();
+            if(panel==null) return;
+            var pose=new Pose(panel.position,panel.rotation);
+            panel.gameObject.SetActive(false);ReleaseObject(panel.gameObject);panel=null;buttons.Clear();
+            CreatePanel();panel.SetPositionAndRotation(pose.position,pose.rotation);
         }
 
         void SetupMenu(bool open)
         {
-            FindFirstObjectByType<WorkspaceInteraction>()?.CancelGrabs();
-            var pose=new Pose(panel.position,panel.rotation);
-            if(open) roomSetup.Open(); else roomSetup.Close();
-            panel.gameObject.SetActive(false); ReleaseObject(panel.gameObject);panel=null;buttons.Clear();
-            CreatePanel();panel.SetPositionAndRotation(pose.position,pose.rotation);
+            ChangeMenu(open?MenuPage.Environment:MenuPage.Arrange);
         }
 
         static Text Label(Transform parent, string value, Vector2 position, Vector2 size)
@@ -408,5 +487,29 @@ namespace SpatialModeling
     {
         public Action Click;
         public void Invoke() => Click?.Invoke();
+    }
+
+    // Code-drawn gear: no dependency on a platform font containing a gear glyph.
+    [RequireComponent(typeof(CanvasRenderer))]
+    public sealed class SettingsGearGraphic : MaskableGraphic
+    {
+        protected override void OnPopulateMesh(VertexHelper helper)
+        {
+            helper.Clear(); const int count=48;
+            float size=Mathf.Min(rectTransform.rect.width,rectTransform.rect.height)*.46f;
+            var center=rectTransform.rect.center;
+            for(int i=0;i<count;i++)
+            {
+                float angle=i*Mathf.PI*2/count;
+                var direction=new Vector2(Mathf.Sin(angle),Mathf.Cos(angle));
+                float radius=(i%6==0||i%6==5)?size*.76f:size;
+                helper.AddVert(center+direction*radius,color,Vector2.zero);
+                helper.AddVert(center+direction*size*.38f,color,Vector2.zero);
+            }
+            for(int i=0;i<count;i++) {
+                int a=i*2,b=((i+1)%count)*2;
+                helper.AddTriangle(a,b,a+1);helper.AddTriangle(a+1,b,b+1);
+            }
+        }
     }
 }

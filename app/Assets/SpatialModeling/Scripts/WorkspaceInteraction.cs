@@ -87,12 +87,13 @@ namespace SpatialModeling
             var h = new Hand { node = node, color = color };
             h.visual = new GameObject(usage + " tracked controller");
             h.visual.transform.SetParent(transform, false);
-            var handle = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-            handle.name = "Grip";
+            // A neutral tracking marker, not an inaccurately offset hand/controller model.
+            var handle = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            handle.name = "Grip tracking marker";
             Destroy(handle.GetComponent<Collider>());
             handle.transform.SetParent(h.visual.transform, false);
-            handle.transform.localPosition = new Vector3(0, -0.025f, -0.025f);
-            handle.transform.localScale = new Vector3(0.033f, 0.06f, 0.033f);
+            handle.transform.localPosition = Vector3.zero;
+            handle.transform.localScale = Vector3.one * 0.025f;
             var renderer = handle.GetComponent<Renderer>();
             renderer.sharedMaterial = material;
             var block = new MaterialPropertyBlock();
@@ -231,7 +232,7 @@ namespace SpatialModeling
                         : h.target == screen.Placement ? "Aim to move screen · stick: distance / size · release grip: place"
                         : "Aim to move whole build · release grip: place";
                     if(arrangement!=null) Instruction=arrangement.Surfaces.IsLevel(h.target)
-                        ? "Aim: move level · "+(h.freePlacement?"free adjust":"auto surface alignment")+" · stick click: switch · release: place"
+                        ? "Aim: move plane independently · stick: rotate/distance · release: place · Align: Manage planes"
                         : "Aim: move · stick: rotate/distance · trigger: align to guide · stick click: "+(h.freePlacement?"surface help":"free placement");
                 }
             }
@@ -278,25 +279,24 @@ namespace SpatialModeling
         bool TryReadHand(Hand h, out Pose hand, out Pose aim)
         {
             hand = aim = default;
-            string source;
-            Pose local;
-            if (h.gripPose.controls.Count > 0)
+            if (!TryReadControllerPair(h.gripPose, h.aimPose, h.previousGripControl,
+                    out var local, out var localAim, out var control, out var aimControl))
             {
-                var control = h.gripPose.activeControl ?? h.gripPose.controls[0];
-                if (h.previousGripControl != null && h.previousGripControl != control) h.poseControlSwitches++;
-                h.previousGripControl = control;
-                source = control.valueType.Name;
-                if (!TryReadControllerPose(control, out local)) return false;
+                if (h.poseSource != "unavailable")
+                    Debug.Log("WORKSPACE_POSE_SOURCE hand=" + h.node + " source=unavailable valid_same_device_grip_and_aim_required=true");
+                h.poseSource = "unavailable";
+                return false;
             }
-            else
+            if (h.previousGripControl != null && h.previousGripControl != control)
             {
-                source = "legacy_fallback";
-                var device = InputDevices.GetDeviceAtXRNode(h.node);
-                if (!device.isValid || !device.TryGetFeatureValue(UnityEngine.XR.CommonUsages.isTracked, out bool tracked) || !tracked
-                    || !device.TryGetFeatureValue(UnityEngine.XR.CommonUsages.devicePosition, out Vector3 position)
-                    || !device.TryGetFeatureValue(UnityEngine.XR.CommonUsages.deviceRotation, out Quaternion rotation)) return false;
-                local = new Pose(position, rotation);
+                h.poseControlSwitches++;
+                Release(h); // A replacement device must not inherit an old device's hold offset.
+                h.aimInitialized = false;
+                h.armed = false;
+                h.previousPoseTime = 0;
             }
+            h.previousGripControl = control;
+            string source = control.path + " aim=" + aimControl.path + " device=" + control.device.deviceId;
             if (h.poseSource != source)
             {
                 h.poseSource = source;
@@ -304,11 +304,33 @@ namespace SpatialModeling
                     + " grip_controls=" + h.gripPose.controls.Count + " aim_controls=" + h.aimPose.controls.Count + " stage=before_render");
             }
             hand = ToWorldPose(trackingOrigin, local);
-            aim = hand;
-            if (h.aimPose.controls.Count > 0 && TryReadControllerPose(
-                    h.aimPose.activeControl ?? h.aimPose.controls[0], out var localAim))
-                aim = ToWorldPose(trackingOrigin, localAim);
+            aim = ToWorldPose(trackingOrigin, localAim);
             return true;
+        }
+
+        // Both values must come from one tracked device. In particular, a missing aim
+        // is not the grip orientation: OpenXR defines distinct poses for these jobs.
+        public static bool TryReadControllerPair(InputAction gripAction, InputAction aimAction,
+            InputControl preferredGrip, out Pose grip, out Pose aim,
+            out InputControl gripControl, out InputControl aimControl)
+        {
+            grip = aim = default;
+            gripControl = aimControl = null;
+            // Keep a valid source stable rather than switching with action magnitude.
+            for (int pass = 0; pass < 2; pass++)
+            foreach (var candidate in gripAction.controls)
+            {
+                if ((pass == 0) != (candidate == preferredGrip)) continue;
+                if (!TryReadControllerPose(candidate, out var gripPose)) continue;
+                foreach (var pointer in aimAction.controls)
+                {
+                    if (pointer.device != candidate.device || !TryReadControllerPose(pointer, out var aimPose)) continue;
+                    grip = gripPose; aim = aimPose;
+                    gripControl = candidate; aimControl = pointer;
+                    return true;
+                }
+            }
+            return false;
         }
 
         public static bool TryGetTrackedPose(PoseState sample, out Pose pose)
@@ -457,12 +479,15 @@ namespace SpatialModeling
         void UpdatePair()
         {
             bool shared=left.target!=null && left.target==right.target;
-            if(!shared || !TryReadHand(left,out var a,out _) || !TryReadHand(right,out var b,out _))
+            if(!shared || !TryReadHand(left,out var a,out _) || !TryReadHand(right,out var b,out _)
+                // Reading a replacement device can release a hold. Recheck ownership
+                // after those reads before applying any two-hand transform.
+                || left.target==null || left.target!=right.target)
             {
                 if(pairTarget!=null)
                 {
                     foreach(var hand in new[]{left,right})
-                        if(hand.target!=null && TryReadHand(hand,out _,out var aim))
+                        if(hand.target!=null && TryReadHand(hand,out _,out var aim) && hand.target!=null)
                         {
                             hand.stableAim.SetPositionAndRotation(aim.position,aim.rotation);
                             RebasePlacement(hand,aim,new Pose(hand.target.position,hand.target.rotation));

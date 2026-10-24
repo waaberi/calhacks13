@@ -24,7 +24,7 @@ namespace SpatialModeling
             public Vector3 Normal => Pose.rotation * Vector3.forward;
         }
         struct RoomAnchor { public OVRAnchor Anchor; public OVRLocatable Locatable; public Guid Room; public string Kind; }
-        sealed class Level { public string Kind; public Transform Target, LabelRoot, Handle; public Vector2 Size; public Text Label; public Guid? Replaces; }
+        sealed class Level { public string Kind; public Transform Target, LabelRoot, Handle; public Vector2 Size; public Text Label; public Guid? Replaces; public bool IndependentPlane; public int Number; }
         readonly List<RoomAnchor> anchors = new List<RoomAnchor>();
         readonly HashSet<Guid> knownRooms = new HashSet<Guid>();
         readonly List<Surface> surfaces = new List<Surface>();
@@ -53,7 +53,7 @@ namespace SpatialModeling
         }
         public IReadOnlyList<Surface> Surfaces => surfaces;
         public bool AutomaticEnabled { get; private set; } = true;
-        public bool ShowDetected { get; private set; } = true;
+        public bool ShowDetected { get; private set; } = false;
         public string State => AutomaticEnabled ? message + "\n" + Counts(detected) + " · " + GeometrySummary + " · levels " + levels.Count
             : "Auto detection OFF · levels " + levels.Count;
         public int LevelCount => levels.Count;
@@ -63,7 +63,7 @@ namespace SpatialModeling
         string lastRoomEligibility;
         string pendingLevel;
         bool loading, disposed, reloadPending, wasPresent;
-        int generation, attempts, roomCount;
+        int generation, attempts, roomCount, nextPlaneNumber;
         float retryAt;
         Material levelMaterial, detectedMaterial, contrastMaterial;
         Transform Origin => Camera.main != null ? Camera.main.transform.parent : null;
@@ -334,15 +334,9 @@ namespace SpatialModeling
         public Pose ConstrainLevel(Transform target, Pose desired, bool free=false)
         {
             var level=levels.Find(l=>l.Target==target); if(level==null) return desired;
-            var result=LevelPose(level.Kind,desired);
-            if(AutomaticEnabled && !free && TryAttachLevel(level.Kind,result,detected,out var source,out var attached,level.Replaces))
-            {
-                bool changed=level.Replaces!=source.Id;
-                level.Replaces=source.Id;
-                if(changed) DrawLevel(level);
-                return attached;
-            }
-            return result;
+            // Manual correction is authoritative. Detection can seed a plane or
+            // explicitly align it once, but must never pull a later grab back.
+            return LevelPose(level.Kind,desired);
         }
         public static Vector3 ClosestPoint(Surface surface,Vector3 position)
         {
@@ -370,16 +364,99 @@ namespace SpatialModeling
             if(found) attached=LevelPose(kind,new Pose(ClosestPoint(source,desired.position)+source.Normal*.003f,source.Pose.rotation));
             return found;
         }
+        // An explicitly created horizontal plane can start on furniture or floor.
+        // Keep the historical semantic-specific attachment helper unchanged.
+        static bool TryAttachHorizontal(Pose desired,IReadOnlyList<Surface> values,out Surface source,out Pose attached,Guid? preferred)
+        {
+            var horizontal=new List<Surface>();
+            foreach(var value in values)
+            {
+                if(value.Name!="Desk" && value.Name!="Floor") continue;
+                var candidate=value; candidate.Name="Desk"; horizontal.Add(candidate);
+            }
+            bool found=TryAttachLevel("desk",desired,horizontal,out source,out attached,preferred);
+            if(found) foreach(var value in values) if(value.Id==source.Id) {source=value;break;}
+            return found;
+        }
+        bool TryChoosePlane(string kind,Vector3 eye,out Surface surface)
+        {
+            if(kind!="desk") return TryChooseDetected(kind,eye,out surface);
+            surface=default;float nearest=float.PositiveInfinity;bool found=false;
+            foreach(var candidate in detected)
+            {
+                if(candidate.Name!="Desk" && candidate.Name!="Floor") continue;
+                float distance=(ClosestPoint(candidate,eye)-eye).sqrMagnitude;
+                if(distance>=nearest) continue;
+                surface=candidate;nearest=distance;found=true;
+            }
+            return found;
+        }
         public Transform CreateLevel(string kind, Pose desired, Vector2? size = null, Guid? replaces = null)
+            => CreateLevelCore(kind,desired,size,replaces,false);
+
+        public Transform CreatePlane(string orientation, Pose desired, Vector2? size = null, Guid? replaces = null)
+            => CreateLevelCore(PlaneKind(orientation),desired,size,replaces,true);
+
+        static string PlaneKind(string orientation)
+        {
+            if(orientation=="horizontal") return "desk";
+            if(orientation=="vertical") return "wall";
+            throw new ArgumentException("Plane orientation must be horizontal or vertical",nameof(orientation));
+        }
+        public IReadOnlyList<Transform> PlaneTargets
+        {
+            get { var result=new List<Transform>(); foreach(var level in levels) result.Add(level.Target); return result; }
+        }
+        public string PlaneLabel(Transform target)
+        {
+            var level=levels.Find(l=>l.Target==target);
+            return level==null ? "Plane" : (level.Kind=="wall"?"Vertical":"Horizontal")+" plane "+level.Number;
+        }
+        public bool DeletePlane(Transform target)
+        {
+            var level=levels.Find(l=>l.Target==target); if(level==null) return false;
+            FindFirstObjectByType<WorkspaceInteraction>()?.CancelGrabs();
+            levels.Remove(level); DestroyObject(level.Target.gameObject);
+            RebuildSurfaces(); RefreshVisuals(); return true;
+        }
+        public bool AlignPlaneToDetected(Transform target)
+        {
+            var level=levels.Find(l=>l.Target==target); if(level==null || !AutomaticEnabled) return false;
+            var desired=new Pose(target.position,target.rotation);
+            Surface source; Pose attached;
+            bool found=level.IndependentPlane && level.Kind=="desk"
+                ? TryAttachHorizontal(desired,detected,out source,out attached,level.Replaces)
+                : TryAttachLevel(level.Kind,desired,detected,out source,out attached,level.Replaces);
+            if(!found) return false;
+            FindFirstObjectByType<WorkspaceInteraction>()?.CancelGrabs();
+            // Replaces is an identity override only, never a continuing pose constraint.
+            level.Replaces=source.Id; target.SetPositionAndRotation(attached.position,attached.rotation);
+            DrawLevel(level);UpdateLabel(level);RebuildSurfaces();RefreshVisuals();return true;
+        }
+        public void BeginPlane(string orientation)
+        {
+            pendingLevel=null;
+            string kind=PlaneKind(orientation);
+            var camera=Camera.main; if(camera==null) return;
+            var host=FindFirstObjectByType<HostScene>();
+            if(host!=null && !host.DisplayPlacementReady)
+            { pendingLevel="plane:"+orientation; message="Look ahead - waiting for workspace position"; return; }
+            FindFirstObjectByType<WorkspaceInteraction>()?.CancelGrabs();
+            if(AutomaticEnabled && TryChoosePlane(kind,camera.transform.position,out var surface))
+            {CreatePlane(orientation,surface.Pose,surface.Size,surface.Id);return;}
+            var facing=host!=null ? host.PlacementHeadPose.rotation : camera.transform.rotation;
+            CreatePlane(orientation,InitialLevelPose(kind,camera.transform.position,facing));
+        }
+        Transform CreateLevelCore(string kind, Pose desired, Vector2? size, Guid? replaces, bool multiple)
         {
             if (kind != "desk" && kind != "floor" && kind != "wall") throw new ArgumentException("Unknown level kind");
             EnsureMaterials();
-            var level = levels.Find(l => l.Kind == kind);
+            var level = multiple ? null : levels.Find(l => l.Kind == kind);
             if (level == null)
             {
                 var target = new GameObject(kind + " movable level").transform;
                 target.SetParent(Origin, false);
-                level = new Level { Kind = kind, Target = target, Size = kind == "desk" ? new Vector2(1.2f,.8f) : new Vector2(2.4f,2.4f) };
+                level = new Level { Kind = kind, Target = target, Number=++nextPlaneNumber, Size = kind == "desk" ? new Vector2(1.2f,.8f) : new Vector2(2.4f,2.4f) };
                 levels.Add(level);
                 // Double-stroke unlit lines stay readable against both light and dark desks.
                 var backing = MakeLine(target, contrastMaterial,.014f); backing.name="Grid contrast backing"; DrawGrid(backing,level.Size);
@@ -403,6 +480,7 @@ namespace SpatialModeling
                 level.Label.raycastTarget = false;
             }
             level.Replaces=replaces;
+            level.IndependentPlane=multiple;
             level.Size=size??(kind=="desk"?Vector2.one*.8f:new Vector2(2.4f,2.4f));
             DrawLevel(level);
             var pose = LevelPose(kind, desired); level.Target.SetPositionAndRotation(pose.position, pose.rotation);
@@ -411,10 +489,10 @@ namespace SpatialModeling
             RebuildSurfaces();
             return level.Target;
         }
-        static bool RoundLevel(Level level) => level.Kind=="desk" && !level.Replaces.HasValue;
+        static bool RoundLevel(Level level) => !level.IndependentPlane && level.Kind=="desk" && !level.Replaces.HasValue;
         static void DrawLevel(Level level)
         {
-            level.Label.text=level.Kind.ToUpperInvariant()+(level.Replaces.HasValue?" · ADJUST DETECTED":level.Kind=="desk"?" HEIGHT · MANUAL":" LEVEL · MANUAL")+"\nGrip move · stick click: free adjust";
+            level.Label.text=(level.Kind=="wall"?"VERTICAL":"HORIZONTAL")+" PLANE "+level.Number+" - MANUAL\nGrip move - stick rotate - independent";
             foreach(var stroke in level.Target.GetComponentsInChildren<LineRenderer>())
             {
                 bool border=stroke.name.StartsWith("Level outer border");
@@ -466,7 +544,7 @@ namespace SpatialModeling
             pendingLevel=null;
             FindFirstObjectByType<WorkspaceInteraction>()?.CancelGrabs();
             foreach (var level in levels) if (level.Target != null) DestroyObject(level.Target.gameObject);
-            levels.Clear(); surfaces.Clear();
+            levels.Clear(); RebuildSurfaces(); RefreshVisuals();
         }
         public Transform RaycastLevel(Ray ray, out float distance)
         {
@@ -501,7 +579,12 @@ namespace SpatialModeling
             if(pendingLevel!=null)
             {
                 var host=FindFirstObjectByType<HostScene>();
-                if(host!=null && host.DisplayPlacementReady) BeginLevel(pendingLevel);
+                if(host!=null && host.DisplayPlacementReady)
+                {
+                    var request=pendingLevel;pendingLevel=null;
+                    if(request.StartsWith("plane:",StringComparison.Ordinal)) BeginPlane(request.Substring(6));
+                    else BeginLevel(request);
+                }
             }
             detected.Clear(); var candidates = new List<(Guid room, Surface surface)>();
             var floors=new List<WorkspaceRoomLocalization.FloorCandidate>();
@@ -664,7 +747,8 @@ namespace SpatialModeling
             if (AutomaticEnabled) foreach (var surface in detected)
                 if (!IsOverridden(surface)) surfaces.Add(surface);
         }
-        bool IsOverridden(Surface surface) => levels.Exists(l=>l.Replaces.HasValue && l.Replaces.Value==surface.Id && Title(l.Kind)==surface.Name);
+        bool IsOverridden(Surface surface) => levels.Exists(l=>l.Replaces.HasValue && l.Replaces.Value==surface.Id
+            && (Title(l.Kind)==surface.Name || (l.IndependentPlane && l.Kind=="desk" && surface.Name=="Floor")));
         static string Title(string kind) => char.ToUpperInvariant(kind[0])+kind.Substring(1);
         static string Counts(List<Surface> values)
             => "Desk " + values.FindAll(s=>s.Name=="Desk").Count + " · floor " + values.FindAll(s=>s.Name=="Floor").Count + " · wall " + values.FindAll(s=>s.Name=="Wall").Count;

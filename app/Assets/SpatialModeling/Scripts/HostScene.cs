@@ -20,7 +20,6 @@ namespace SpatialModeling
 
         [Header("Display only. Never changes the native model.")]
         [SerializeField] Vector3 rootPosition = new Vector3(0f, 1f, 1.5f);
-        [SerializeField] float displayScale = 5f;
         [Tooltip("Initial placement is relative to the tracked headset, never Blender coordinates.")]
         [SerializeField] float viewingDistance = 1f;
         [SerializeField] float belowEyeHeight = 0.35f;
@@ -76,7 +75,9 @@ namespace SpatialModeling
         {
             root = new GameObject("HostSceneRoot").transform;
             root.position = rootPosition;
-            root.localScale = Vector3.one * displayScale;
+            // The host has already converted Blender lengths to metres. A
+            // Unity world unit is one metre; no serialized demo enlargement.
+            root.localScale = Vector3.one;
             root.gameObject.SetActive(false); // Wait for an actual tracked pose, not the startup origin.
             block = new MaterialPropertyBlock();
             table = GetComponent<TablePlacement>() ?? gameObject.AddComponent<TablePlacement>();
@@ -425,6 +426,7 @@ namespace SpatialModeling
                             FindFirstObjectByType<WorkspaceInteraction>()?.CancelGrabs();
                             ClearScene();
                             table.RequirePlacement();
+                            table.RestoreActualSize();
                             InvalidateUnconfirmedPlacement();
                         }
                         documentId = e.DocumentId;
