@@ -16,10 +16,12 @@ namespace SpatialModeling
     {
         public static readonly bool Enabled = Array.IndexOf(Environment.GetCommandLineArgs(), "--p1-profile") >= 0;
         static readonly Dictionary<string, Sample> samples = new Dictionary<string, Sample>();
+        static readonly List<object> requestTrace = new List<object>();
         readonly List<(string name, string unit, ProfilerRecorder recorder)> recorders = new List<(string, string, ProfilerRecorder)>();
         int frames;
         double began, intervalBegan, previousFrame;
         static string[] args => Environment.GetCommandLineArgs();
+        public static bool UseClaims => !Enabled || Array.IndexOf(args, "--p1-profile-legacy-fetch") < 0;
 
         sealed class Sample
         {
@@ -41,6 +43,18 @@ namespace SpatialModeling
             if (!Enabled) return;
             if (!samples.TryGetValue(name, out var sample)) samples[name] = sample = new Sample();
             sample.count++; sample.total += value; sample.max = Math.Max(sample.max, value);
+        }
+
+        public static double ElapsedMs(long at) => Enabled
+            ? (Stopwatch.GetTimestamp() - at) * 1000.0 / Stopwatch.Frequency : 0;
+
+        public static void TraceRequest(int lane, long at, double firstHeaderMs, bool beforeComplete,
+            string tag, string captured, long code, string result, bool discard)
+        {
+            if (!Enabled || requestTrace.Count >= 4096) return;
+            requestTrace.Add(new { lane, started_ms = at * 1000.0 / Stopwatch.Frequency,
+                first_header_ms = firstHeaderMs, header_before_complete = beforeComplete,
+                elapsed_ms = ElapsedMs(at), tag, captured, code, result, discard, claims_enabled = UseClaims });
         }
 
         public static string CaptureUrl()
@@ -70,7 +84,8 @@ namespace SpatialModeling
                 string lower = name.ToLowerInvariant();
                 if (!lower.Contains("upload") && !lower.Contains("decode") && !lower.Contains("jpeg")
                     && !lower.Contains("createtexture") && name != "Main Thread" && name != "Render Thread"
-                    && !name.Contains("Thread Frame Time") && name != "GPU Frame Time") continue;
+                    && !name.Contains("Thread Frame Time") && name != "GPU Frame Time"
+                    && name != "Texture Memory" && name != "Texture Count") continue;
                 Debug.Log("P1_PROFILE_AVAILABLE " + name + " unit=" + description.UnitType);
                 var recorder = ProfilerRecorder.StartNew(description.Category, name, 1);
                 if (recorder.Valid) recorders.Add((name, description.UnitType.ToString(), recorder));
@@ -105,6 +120,10 @@ namespace SpatialModeling
 
         void OnDisable()
         {
+            for (int first = 0; first < requestTrace.Count; first += 128)
+                Debug.Log("P1_REQUEST_TRACE " + JsonConvert.SerializeObject(
+                    requestTrace.GetRange(first, Math.Min(128, requestTrace.Count - first))));
+            requestTrace.Clear();
             foreach (var item in recorders) item.recorder.Dispose();
             recorders.Clear();
         }

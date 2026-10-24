@@ -373,15 +373,26 @@ namespace SpatialModeling
                 requests[lane] = request;
                 int ticket = requestLanes.Begin(lane);
                 request.timeout = 2;
-                string conditionalTag = requestLanes.ConditionalTag(etag);
+                bool useClaims = P1PipelineProfile.UseClaims;
+                string conditionalTag = useClaims ? requestLanes.ConditionalTag(etag) : etag;
                 if (conditionalTag != null) request.SetRequestHeader("If-None-Match", conditionalTag);
                 long requestAt = P1PipelineProfile.Now();
                 var operation = request.SendWebRequest();
                 bool discard = false;
                 bool yielded = false;
-                while (!operation.isDone)
+                double firstHeaderMs = -1;
+                bool headerBeforeComplete = false;
+                if (!useClaims) { yielded = true; yield return operation; }
+                while (useClaims && !operation.isDone)
                 {
                     var decision = ObserveResponseHeaders(lane, ticket, request);
+                    if (firstHeaderMs < 0 && (decision == CaptureRequestLanes.Decision.Continue
+                        || decision == CaptureRequestLanes.Decision.Duplicate))
+                    {
+                        firstHeaderMs = P1PipelineProfile.ElapsedMs(requestAt);
+                        headerBeforeComplete = true;
+                        P1PipelineProfile.End("first_fresh_headers_before_complete_ms", requestAt);
+                    }
                     if (decision == CaptureRequestLanes.Decision.Duplicate
                         || decision == CaptureRequestLanes.Decision.Invalidated)
                     {
@@ -392,9 +403,15 @@ namespace SpatialModeling
                     yielded = true;
                     yield return null;
                 }
-                if (!discard)
+                if (useClaims && !discard)
                 {
                     var decision = ObserveResponseHeaders(lane, ticket, request);
+                    if (firstHeaderMs < 0 && (decision == CaptureRequestLanes.Decision.Continue
+                        || decision == CaptureRequestLanes.Decision.Duplicate))
+                    {
+                        firstHeaderMs = P1PipelineProfile.ElapsedMs(requestAt);
+                        P1PipelineProfile.End("first_fresh_headers_after_complete_ms", requestAt);
+                    }
                     discard = decision == CaptureRequestLanes.Decision.Duplicate
                         || decision == CaptureRequestLanes.Decision.Invalidated;
                 }
@@ -408,8 +425,10 @@ namespace SpatialModeling
                     if (request.isDone && request.responseCode == 200
                         && request.result == UnityWebRequest.Result.Success)
                     {
+                        long discardedTextureAt = P1PipelineProfile.Now();
                         var unused = DownloadHandlerTexture.GetContent(request);
                         if (unused != null) Destroy(unused);
+                        P1PipelineProfile.End("get_destroy_discarded_texture_ms", discardedTextureAt);
                     }
                 }
                 else if (request.responseCode == 200 && request.result == UnityWebRequest.Result.Success)
@@ -488,6 +507,9 @@ namespace SpatialModeling
                 if (CaptureState != lastState && !CaptureState.StartsWith("Live Blender")) Debug.Log("P1_CAPTURE_STATE " + CaptureState);
                 lastState = CaptureState;
                 bool retryBackoff = !discard && request.responseCode != 200 && request.responseCode != 304;
+                P1PipelineProfile.TraceRequest(lane, requestAt, firstHeaderMs, headerBeforeComplete,
+                    request.GetResponseHeader("ETag"), request.GetResponseHeader("X-Captured-At"),
+                    request.responseCode, request.result.ToString(), discard);
                 requestLanes.End(lane, ticket);
                 long disposeAt = P1PipelineProfile.Now();
                 request.Dispose();
