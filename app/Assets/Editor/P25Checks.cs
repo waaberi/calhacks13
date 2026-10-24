@@ -19,6 +19,7 @@ public static class P25Checks
     public static void Run()
     {
         RunMapping(message => Debug.Log(message));
+        RunTransport(message => Debug.Log(message));
         RunSpatial(message => Debug.Log(message));
     }
 
@@ -55,7 +56,45 @@ public static class P25Checks
             Check(PreviewInputMapping.CanRoute(enabled, fresh, primary, gripping, hit) == expected,
                 "native routing requires current image and one hand, and excludes panel grabbing");
         }
+        Check(PreviewInputMapping.FrameMatches("helper-A", 4, "helper-A", 4), "same displayed/helper capture identity can admit input");
+        Check(!PreviewInputMapping.FrameMatches("helper-A", 3, "helper-A", 4), "old selected-window frame cannot operate the new capture target");
+        Check(!PreviewInputMapping.FrameMatches("helper-A", 4, "helper-B", 4), "helper restart cannot reuse previous image identity");
+        Check(!PreviewInputMapping.FrameMatches("", 0, "", 0), "missing image identity cannot authorize input");
+        Check(!PreviewInputMapping.FrameMatches("helper-A", -1, "helper-A", -1), "unset frame generation cannot authorize input");
         report("P25_MAPPING_CHECK PASS full-window/UV-crop/pan/pivot/finite/edge/stale/grip/hand routing; native runtime acceptance=False");
+    }
+
+    public static void RunTransport(Action<string> report)
+    {
+        var transport = new PreviewInputTransportState();
+        bool refused = false;
+        try { transport.TakeSequence(); } catch (InvalidOperationException) { refused = true; }
+        Check(refused, "no POST may be numbered before authoritative helper state");
+        transport.Observe("helper-A", 1);
+        Check(transport.TakeSequence() == 1, "first POST uses the helper's exact next number");
+        transport.Unknown();
+        refused = false;
+        try { transport.TakeSequence(); } catch (InvalidOperationException) { refused = true; }
+        Check(refused, "uncertain POST cannot advance to another action before a fresh GET");
+        // The network may fail before the helper consumes the request. A later
+        // cleanup release must use 1, even though local numbering reached 2.
+        transport.Observe("helper-A", 1);
+        Check(transport.TakeSequence() == 1, "unconsumed uncertain POST resets exactly to server sequence, rather than Math.Max");
+        transport.Unknown();
+        // The server may instead consume the same failed request. Its GET is
+        // authoritative here as well; neither assumption permits mutation replay.
+        transport.Observe("helper-A", 2);
+        Check(transport.TakeSequence() == 2, "consumed uncertain POST continues at server's next number");
+        transport.Observe("helper-B", 1);
+        Check(transport.Session == "helper-B" && transport.TakeSequence() == 1,
+            "new helper/session resets numbering without carrying a previous instance counter");
+        foreach (var invalid in new[] { 0L, -1L })
+        {
+            refused = false;
+            try { transport.Observe("helper-B", invalid); } catch (ArgumentException) { refused = true; }
+            Check(refused, "invalid helper next sequence is refused");
+        }
+        report("P25_TRANSPORT_CHECK PASS unknown-barrier/authoritative-consumed-or-unconsumed-number/helper-restart; HTTP runtime not exercised");
     }
 
     public static void RunSpatial(Action<string> report)

@@ -28,7 +28,13 @@ that a native Blender button or spatial drawing gesture works in the headset.
 image corners, an offset image pivot, and magnified/panned UV corners. It rejects
 outside and nonfinite points, zero dimensions and invalid crops. The complete
 routing truth table requires current input, the chosen controller, an actual
-image hit and no panel grip.
+image hit and no panel grip. Displayed/helper instance and selection-generation
+identity must also match before input can target the preview.
+
+`P25Checks.RunTransport` exercises the actual serialized transport's sequence
+barrier after an uncertain POST. Both possibilities (server consumed the number
+or did not receive it) must recover from the next authoritative GET, and a helper
+restart must reset the session. Mutation requests are not automatically replayed.
 
 `tests/p25/ManagedChecks.cs` checks the actual `NativeEditSession`: no native
 command while drafting, permission before mutation, matching grants, stale scene
@@ -72,8 +78,9 @@ Initial isolated verification on 2026-10-24:
 
 | Check | Result | Limit |
 | --- | --- | --- |
-| Full runtime C# and Editor C# offline compile | Pass, 19 runtime / 7 Editor sources | Compiler only; source generators/IL/shaders/Player build not run |
+| Full runtime C# and Editor C# offline compile | Pass, 20 runtime / 7 Editor sources | Compiler only; source generators/IL/shaders/Player build not run |
 | Actual compiled preview mapping/routing gates under Mono | Pass | Synthetic coordinates; no real controller/desktop input |
+| Actual compiled HTTP sequence barrier under Mono | Pass | Pure state gate; actual HTTP failure paths remain separate |
 | Actual compiled native edit session gates under Mono | Pass | Wire-state behavior only; no native geometry execution |
 | Dedicated launcher isolation tests | 5 passed and 7 subtests passed | Mocked preflight; no runtime launched |
 | Ruff for owned Python wrappers | Pass | Static style/import checks |
