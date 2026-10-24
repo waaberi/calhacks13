@@ -134,6 +134,11 @@ public static class P25Checks
         disabled["enabled"] = disabled["ready"] = disabled["focused"] = false;
         disabled["token"] = disabled["selection"] = disabled["capture_geometry"] = null;
         Check(PreviewInputProtocol.TryState(disabled.ToString(), out _), "disabled/no-window helper state remains readable for recovery");
+        Check(PreviewInputProtocol.TryState("{\"enabled\":false,\"ready\":false,\"reason\":\"input_disabled\"}", out var captureOnly)
+            && captureOnly["token"] == null && captureOnly["session"] == null,
+            "capture-only helper setup response is readable without creating input credentials");
+        Check(!PreviewInputProtocol.TryState("{\"enabled\":true,\"ready\":false,\"reason\":\"input_disabled\"}", out _),
+            "compact state never admits an enabled input helper");
         foreach (var invalid in new[] {
             new JObject { ["next_seq"] = "not-a-number" }, new JObject { ["next_seq"] = 0 },
             new JObject { ["next_seq"] = true }, new JObject { ["ready"] = "true" },

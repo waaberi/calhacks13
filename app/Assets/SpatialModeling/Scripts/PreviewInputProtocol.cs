@@ -33,6 +33,13 @@ namespace SpatialModeling
         {
             state = null;
             if (!Parse(json, out var p)) return false;
+            // The capture-only helper deliberately exposes no input credentials
+            // or identity. Admit its exact disabled shape for setup guidance;
+            // it cannot synchronize transport or authorize any native event.
+            if (p.Count == 3 && p["enabled"]?.Type == JTokenType.Boolean && !(bool)p["enabled"]
+                && p["ready"]?.Type == JTokenType.Boolean && !(bool)p["ready"]
+                && p["reason"]?.Type == JTokenType.String && (string)p["reason"] == "input_disabled")
+            { state = p; return true; }
             foreach (string name in new[] { "enabled", "ready", "focused", "release_error" })
                 if (p[name]?.Type != JTokenType.Boolean) return false;
             bool enabled = (bool)p["enabled"], ready = (bool)p["ready"];

@@ -107,6 +107,7 @@ public static class P25HttpChecks
 
     static IEnumerator Suite()
     {
+        yield return DisabledHelperState();
         yield return StateRecovery();
         yield return SendAcknowledgement(false);
         yield return SendAcknowledgement(true);
@@ -125,6 +126,45 @@ public static class P25HttpChecks
         ["selection"] = new JObject { ["hwnd"] = 123, ["pid"] = 456 }, ["windows"] = new JArray(),
         ["image"] = new JObject { ["width"] = 800, ["height"] = 600 }, ["frame"] = 1
     };
+
+    static IEnumerator DisabledHelperState()
+    {
+        using var server = new FakeServer(request => new Reply("{\"enabled\":false,\"ready\":false,\"reason\":\"input_disabled\"}"));
+        Environment.SetEnvironmentVariable("CALHACKS_CAPTURE_PORT", server.Port.ToString());
+        var go = new GameObject("P25 HTTP inactive capture-only helper reader"); go.SetActive(false);
+        try
+        {
+            var preview = go.AddComponent<PreviewInteraction>();
+            var transport = (PreviewInputTransportState)Field(preview, "transport");
+            // A capture-only response must also revoke a previously synchronized
+            // helper's credentials instead of leaving its authority available.
+            Set(preview, "session", FakeSession); Set(preview, "token", FakeToken);
+            transport.Observe(FakeSession, 1);
+            yield return Until(Routine(preview, "ReadState"), () => server.Gets >= 1
+                && !(bool)Field(preview, "readingState") && preview.Notice.Contains("--enable-input"));
+            Check(!transport.Synchronized, "compact disabled state cannot synchronize native input transport");
+            Check((string)Field(preview, "session") == "" && (string)Field(preview, "token") == "",
+                "capture-only helper exposes no credentials or native input authority");
+            Check(!(bool)Field(preview, "readingState"), "disabled response clears the actual reader barrier");
+            var events = (Queue<JObject>)Field(preview, "events");
+            events.Enqueue(new JObject { ["type"] = "release" });
+            var sender = Routine(preview, "SendEvents");
+            try
+            {
+                for (int frame = 0; frame < 3; frame++)
+                {
+                    Check(sender.MoveNext(), "disabled sender remains alive without admitting an event");
+                    yield return sender.Current;
+                }
+            }
+            finally { (sender as IDisposable)?.Dispose(); }
+            Check(server.Posts == 0 && events.Count == 1 && !(bool)Field(preview, "sendingEvent"),
+                "actual sender cannot POST even a queued release without synchronized credentials");
+            Check(server.Error == null, "fake server stayed healthy: " + server.Error);
+            Record("state_compact_input_disabled", "actual reader showed --enable-input, cleared its barrier and revoked synchronization; actual sender POSTs=0");
+        }
+        finally { UnityEngine.Object.DestroyImmediate(go); }
+    }
 
     static IEnumerator StateRecovery()
     {
