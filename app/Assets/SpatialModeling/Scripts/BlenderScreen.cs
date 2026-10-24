@@ -110,6 +110,13 @@ namespace SpatialModeling
             StartCoroutine(Poll(1));
         }
 
+        public static Vector2 ReadInspectionPan(InputAction action)
+        {
+            if (action == null || (PreviewInteraction.BlocksDesktopShortcuts && action.activeControl?.device is Keyboard))
+                return Vector2.zero;
+            return action.ReadValue<Vector2>();
+        }
+
         void OnDisable()
         {
             StopAllCoroutines();
@@ -173,8 +180,7 @@ namespace SpatialModeling
             if (Visible && Magnification > 1f && (interaction == null || !interaction.IsHolding)
                 && !(PreviewInteraction.Current?.CapturesScroll ?? false))
             {
-                var axis = PreviewInteraction.BlocksDesktopShortcuts && panAction.activeControl?.device is Keyboard
-                    ? Vector2.zero : panAction.ReadValue<Vector2>();
+                var axis = ReadInspectionPan(panAction);
                 if (axis.sqrMagnitude > 0.04f) pan += axis * (0.3f * Time.unscaledDeltaTime);
             }
             var crop = CropFor(Magnification, pan);
