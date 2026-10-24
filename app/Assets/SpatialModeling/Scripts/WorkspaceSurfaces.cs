@@ -476,11 +476,11 @@ namespace SpatialModeling
             foreach (var item in candidates) if (roomCount == 1 || item.room == currentRoom) detected.Add(item.surface);
             var counts=Counts(detected);
             if(counts!=lastCounts) { lastCounts=counts; Debug.Log("WORKSPACE_SURFACES localized " + counts); }
-            WriteRoomEvidence();
             if (!loading && anchors.Count > 0) message = detected.Count > 0 ? "Automatic surfaces · adjust if needed" : "Room not localized · look around or use a level";
             foreach (var level in levels)
                 UpdateLabel(level);
             RebuildSurfaces(); RefreshVisuals();
+            WriteRoomEvidence();
         }
         void WriteRoomEvidence()
         {
@@ -490,6 +490,9 @@ namespace SpatialModeling
             if(!head.TryGetFeatureValue(CommonUsages.isTracked,out bool tracked)||!tracked
                 ||!head.TryGetFeatureValue(CommonUsages.devicePosition,out Vector3 position)
                 ||!head.TryGetFeatureValue(CommonUsages.deviceRotation,out Quaternion rotation)) return;
+            evidenceWritten=true; // Optional diagnostics cannot throw every frame or interrupt placement.
+            try
+            {
             var meta=OVRPlugin.GetNodePose(OVRPlugin.Node.Head,OVRPlugin.Step.Render).ToOVRPose();
             var data=new RoomEvidence { trackingOrigin=OVRPlugin.GetTrackingOriginType().ToString(),
                 metaHead=new Pose(meta.position,meta.orientation),unityHead=new Pose(position,rotation),
@@ -500,13 +503,15 @@ namespace SpatialModeling
                 if(!item.Locatable.TryGetSceneAnchorPose(out var pose)||!pose.Position.HasValue||!pose.Rotation.HasValue) continue;
                 var entry=new AnchorEvidence {id=item.Anchor.Uuid.ToString(),kind=item.Kind,
                     trackingPose=new Pose(pose.Position.Value,pose.Rotation.Value)};
-                if(item.Anchor.TryGetComponent<OVRSemanticLabels>(out var semantic)) entry.labels=semantic.Labels;
-                if(item.Anchor.TryGetComponent<OVRBounded2D>(out var plane)) {entry.plane=true;entry.planeBounds=plane.BoundingBox;}
-                if(item.Anchor.TryGetComponent<OVRBounded3D>(out var volume)) {entry.volume=true;entry.volumeBounds=volume.BoundingBox;}
+                try { if(item.Anchor.TryGetComponent<OVRSemanticLabels>(out var semantic)) entry.labels=semantic.Labels; } catch(Exception) {entry.labels="unavailable";}
+                try { if(item.Anchor.TryGetComponent<OVRBounded2D>(out var plane)) {entry.planeBounds=plane.BoundingBox;entry.plane=true;} } catch(InvalidOperationException) {entry.plane=false;}
+                try { if(item.Anchor.TryGetComponent<OVRBounded3D>(out var volume)) {entry.volumeBounds=volume.BoundingBox;entry.volume=true;} } catch(InvalidOperationException) {entry.volume=false;}
                 data.anchors.Add(entry);
             }
             Directory.CreateDirectory(Path.GetDirectoryName(path)); File.WriteAllText(path,JsonUtility.ToJson(data,true));
-            evidenceWritten=true; Debug.Log("WORKSPACE_ROOM_EVIDENCE captured anchor_count="+data.anchors.Count);
+            Debug.Log("WORKSPACE_ROOM_EVIDENCE captured anchor_count="+data.anchors.Count);
+            }
+            catch(Exception error) {Debug.LogWarning("WORKSPACE_ROOM_EVIDENCE unavailable "+error.GetType().Name);}
         }
         static void UpdateLabel(Level level)
         {
