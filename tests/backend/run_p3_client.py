@@ -14,6 +14,7 @@ def main():
     parser.add_argument("--blender", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--scale", type=float, choices=(1.0, .001), required=True)
+    parser.add_argument("--ownership", action="store_true")
     args = parser.parse_args()
     output = Path(args.output).resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -21,7 +22,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="p3-client-") as tmp:
         folder = Path(tmp)
         (folder / "config.json").write_text(json.dumps({"token": secrets.token_hex(24),
-                                                       "scale": args.scale}))
+            "scale": args.scale, "ownership": args.ownership}))
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         with (output / "host.log").open("w", encoding="utf-8") as log:
             (folder / "host-temp").mkdir()

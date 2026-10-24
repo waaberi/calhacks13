@@ -1,10 +1,13 @@
 """P2 read-only Client role. Connect explicitly from a separate empty Blender."""
 
+import copy
 import queue
 
+from .presence import Presence
 from .state import SceneState
 
 state = SceneState()
+presence = Presence()
 _link = _mirror = None
 _draw_handle = None
 _can_edit = False
@@ -13,6 +16,17 @@ _can_edit = False
 def controlled_edit_enabled():
     """The actual welcomed host capability; never a locally inferred permission."""
     return bool(_can_edit and state.current and _link is not None and _link.healthy)
+
+
+def ownership_state():
+    """Full current leases, this mirror's actual actor ID, and honest scene status."""
+    if not state.current or _link is None or not _link.healthy:
+        return [], "", state.status
+    return copy.deepcopy(presence.leases), presence.actor_id, state.status
+
+
+def participants():
+    return copy.deepcopy(presence.participants) if ownership_state()[1] else []
 
 
 def connect(address, token, version, name="Blender viewer", port=8767, tls=True):
@@ -40,6 +54,7 @@ def poll():
         return None
     if not _link.thread.is_alive():
         _can_edit = False
+        presence.clear()
         state.stale("Connection stopped — reconnect explicitly; last scene is stale")
     try:
         for _ in range(32):
@@ -51,20 +66,36 @@ def poll():
                 state.receive(payload, kind == "scene.snapshot")
                 _mirror.apply(state)
             elif kind == "welcome":
+                presence.welcomed(payload)
                 _can_edit = payload.get("can_edit") is True
                 state.stale("Receiving a fresh host snapshot — read-only")
+            elif kind in ("session.update", "activity"):
+                # Presence changes must never invalidate an otherwise current
+                # scene or apply geometry/materials to the read-only mirror.
+                try:
+                    if kind == "session.update":
+                        presence.receive(payload)
+                    else:
+                        presence.activity(payload)
+                except (ValueError, KeyError, TypeError):
+                    presence.clear()
+                    _can_edit = False
             elif kind == "error":
                 _can_edit = False
+                presence.clear()
                 state.stale(f"Connection refused ({payload}) — reconnect explicitly")
             else:
                 _can_edit = False
+                presence.clear()
                 state.stale(payload or "Connecting — last scene is stale")
     except (ValueError, KeyError, TypeError, RuntimeError):
         _can_edit = False
+        presence.clear()
         state.stale("Scene could not be verified/applied — reconnect for a fresh snapshot")
         _link.stop()
     if state.current and not _link.healthy:
         _can_edit = False
+        presence.clear()
         state.stale("Host is not responding — last scene is stale")
     for window in bpy.context.window_manager.windows:
         for area in window.screen.areas:
@@ -82,6 +113,7 @@ def disconnect():
         _link.stop()
     _link = None
     _can_edit = False
+    presence.clear()
     if bpy.app.timers.is_registered(poll):
         bpy.app.timers.unregister(poll)
     state.stale("Disconnected — read-only mirror stopped")
