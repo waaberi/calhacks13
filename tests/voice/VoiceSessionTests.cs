@@ -236,6 +236,18 @@ namespace SpatialModeling.VoiceCore.Tests
             Assert.Equal(meters, f.Say(answer).Command.Meters.Value, 9);
         }
 
+        [Theory]
+        [InlineData("move it ten centimeters", "minus ten centimeters along x", -0.1)]
+        [InlineData("move it along x", "ten centimeters along negative x", -0.1)]
+        [InlineData("move it minus ten centimeters", "ten centimeters along x", -0.1)] // restated without the minus: kept
+        [InlineData("move it ten centimeters", "minus twenty along x", 0.1)]           // a different amount isn't an answer
+        public void AMinusOnARestatedKnownFieldStillCounts(string first, string answer, double meters)
+        {
+            var f = new Fixture(Cube);
+            Assert.Null(f.Say(first).Command);
+            Assert.Equal(meters, f.Say(answer).Command.Meters.Value, 9);
+        }
+
         [Fact]
         public void ACorrectedAmountAsksForItsUnitAgain()
         {
@@ -264,6 +276,7 @@ namespace SpatialModeling.VoiceCore.Tests
         [InlineData("scale this two fifty percent", "ask_factor")] // Vosk heard "to fifty" as "two fifty"
         [InlineData("rotate it one eighty degrees around z", "ask_angle")]
         [InlineData("rotate it one hundred and a degrees around z", "ask_angle")] // Vosk on "one hundred and eighty"
+        [InlineData("rotate it one hundred and a five degrees around z", "ask_angle")]
         public void TwoNumbersAreAmbiguousAndAskForTheAmount(string text, string question)
         {
             var f = new Fixture(Cube);

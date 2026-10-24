@@ -194,8 +194,11 @@ namespace SpatialModeling.VoiceCore
             return turn.Build();
         }
 
-        /// <summary>While a prompt plays, results are ignored so the app can't hear itself. Pause
-        /// <see cref="VoiceInput"/> at the same time, so no utterance spans the prompt.</summary>
+        /// <summary>
+        /// While a prompt plays, results are ignored so the app can't hear itself. Use it for a recognizer that listens by
+        /// itself (Windows speech). With <see cref="VoiceInput"/>, pause that instead (<see cref="VoiceInput.Paused"/>):
+        /// its results never contain a prompt, and speech that ended just before one is still heard.
+        /// </summary>
         public void SetPromptPlaying(bool playing) => promptPlaying = playing;
 
         /// <summary>Expires the pending command and lets a resting pointer answer "which object?".</summary>
@@ -312,10 +315,17 @@ namespace SpatialModeling.VoiceCore
                 draft.Axis = parsed.Axis;
                 draft.NegativeAxis = parsed.NegativeAxis; // "negative z"
             }
+            else if (parsed.Axis.HasValue && parsed.Axis == draft.Axis && parsed.NegativeAxis)
+                draft.NegativeAxis = true; // the known axis restated as "negative x"
             if ((missing & MissingFields.Amount) != 0 && parsed.Number.HasValue)
                 draft.SetAmount(parsed.Number.Value, parsed.NegativeAmount, parsed.Unit, turn); // "minus ten centimeters"
-            else if ((missing & MissingFields.Unit) != 0 && parsed.Unit.HasValue)
-                draft.SetUnit(parsed.Unit.Value, turn);
+            else
+            {
+                if (parsed.Number.HasValue && parsed.Number == draft.Magnitude && parsed.NegativeAmount)
+                    draft.NegativeAmount = true; // the known amount restated as "minus ten"
+                if ((missing & MissingFields.Unit) != 0 && parsed.Unit.HasValue)
+                    draft.SetUnit(parsed.Unit.Value, turn);
+            }
 
             Advance(turn);
         }

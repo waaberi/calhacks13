@@ -127,9 +127,10 @@ namespace SpatialModeling.VoiceCore
                     used[k] = true;
             }
 
-            if (numbers > 1)
+            if (numbers > 1 || (parsed.Number.HasValue && double.IsNaN(parsed.Number.Value)))
             {
-                parsed.Number = null; // "one eighty", or "to fifty" heard as "two fifty": ask for the amount
+                // "one eighty", "to fifty" heard as "two fifty", or "one hundred and a": ask for the amount
+                parsed.Number = null;
                 parsed.NegativeAmount = false;
             }
             if (parsed.Target == TargetRef.None && targetable)
