@@ -24,6 +24,25 @@ Other folders in the plan's ownership table (`spacetime/`, `scripts/windows-rele
 
 ## Getting started
 
+### Verified Windows P0 versions
+
+| Component | Version |
+| --- | --- |
+| Unity Editor / Windows x64 Player | 6000.6.5f1 |
+| Blender | 5.2.2 LTS |
+| Blender Python | 3.13.13 |
+| OpenXR package | 1.18.0 |
+| XR Interaction Toolkit | 3.6.1 |
+| Input System | 1.20.1 |
+| Universal Render Pipeline | 17.6.0 |
+| Blender OpenSSL | 3.5.6; TLS PSK support verified on Talia's Windows PC |
+
+Unity package versions are pinned in `app/Packages/manifest.json` and its lockfile.
+The P0 headset run uses Quest 3S through Meta OpenXR and USB Link; Air Link and
+two-PC event-network acceptance are separate checks. CAD Sketcher 0.32.1 with
+slvs 3.2 was checked on Talia's Blender; this does not establish second-PC CAD
+compatibility. Test evidence and outstanding gates are recorded in GitHub #5.
+
 - **Blender add-on:** link `blender_addon/spatial_modeling` into Blender's extensions folder (`extensions/user_default/`). Then enable it under Preferences > Add-ons and pick Host or Client.
 - **Unity app:** open `app/` with Unity 6000.6.5f1. VoiceCore is referenced from `app/Packages/manifest.json` as `"com.calhacks13.voicecore": "file:../../voice/VoiceCore"`.
 - **Checks:** `pip install ruff pytest jsonschema`, then run `ruff check .` and `pytest tests`. CI runs the same on every PR.
