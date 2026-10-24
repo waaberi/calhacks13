@@ -43,10 +43,12 @@ The native editing lane uses the existing exclusive lease as the host desktop ac
 
 The normal P2 launch stays unchanged. A P2.5 build requires this branch's add-on and helper. Do not point the new Player at P2's old add-on or silently reuse its old helper.
 
-1. Prepare a new isolated Blender process/profile and a copied `.blend` document using this branch's P2.5 bootstrap. Use an explicitly separate native port, for example 8769. CAD Sketcher 0.32.1/slvs 3.2 is required for spatial CAD; generic preview input does not require CAD.
+1. Prepare a new isolated Blender process/profile and a copied `.blend` document using this branch's `desktop-capture/bootstrap_p25.py`. Its exact command and private-profile setup are in the [capture helper instructions](../../desktop-capture/README.md). Use an explicitly separate native port, for example 8769. CAD Sketcher 0.32.1/slvs 3.2 is required for spatial CAD; generic preview input does not require CAD.
 2. Start this branch's capture helper on a separate port, for example 8768, with `--enable-input`. Explicitly select the same Blender process/window as the native host. Neither desktop fallback nor implicit window selection is used.
 3. `launch_p25.py --host-port 8769 --capture-port 8768 --diagnose` checks native document/process binding without input injection or Player launch.
 4. After P2's Player has been handed off cleanly, use `launch_p25.py` with the same ports, `--player <P2.5 Windows EXE>` and a new external `--session-dir`. It refuses to launch while another SpatialModeling Player exists.
 5. In VR choose Focus Blender, then use the whole image. Use the keyboard for input; finish/cancel native modal tools before Draw in VR.
 
 Do not use the existing P2 headset session to validate this branch without coordination. Existing P2 menu acceptance is retained, not requested again. See [verification and remaining runtime gates](P2_5_RESULTS.md) and [spatial/native integration contract](P2_5_SPATIAL_BRIDGE.md).
+
+The verified Windows candidate is the complete external `artifacts/p25-preview-spatial-v2` directory, built from app source `900b7a7`. Keep its executable, data directory and runtime dependencies together. It has been built and checked without launching a competing Player.
