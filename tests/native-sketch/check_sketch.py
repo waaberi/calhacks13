@@ -53,6 +53,7 @@ def main(args):
 
     def call(op, target=None, **kwargs):
         done = sketch.apply(op, target, kwargs)
+        bpy.context.view_layer.update()  # include the pinned add-on's real validation handlers
         sync.flush()
         report["checks"].append({"op": op, "solver": done.solver, "created": done.created})
         return done

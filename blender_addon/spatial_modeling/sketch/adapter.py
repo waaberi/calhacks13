@@ -70,6 +70,17 @@ def _unit():
     return scale if scale > 0 else 1.0
 
 
+def _invalidate_ids(api):
+    """Copied/replaced RNA wrappers may reuse an earlier Python object identity.
+
+    The pinned dependency keys UUID/index caches by id(Curves), not Blender's
+    persistent data identity. A stale same-length prefix can otherwise describe
+    a different sketch after staging, rollback, deletion or a fresh wrapper read.
+    Use its public invalidation API at each ownership/read boundary.
+    """
+    api["curves"].invalidate_curve_id_cache()
+
+
 def find(sketch_id):
     return next((obj for obj in bpy.context.view_layer.objects
                  if is_sketch(obj) and obj.get(ID_PROPERTY) == sketch_id), None)
@@ -118,6 +129,7 @@ def _check_frame(sketch):
 
 
 def _record(obj, api):
+    _invalidate_ids(api)
     sketch = api["sketch"].Sketch(obj)
     _check_frame(sketch)
     data = obj.data
@@ -339,6 +351,7 @@ def _edit(op, sketch, args, api):
 
 def apply(op, target_id, args):
     api = _api()
+    _invalidate_ids(api)
     if op == "sketch.create":
         data = bpy.data.hair_curves.new("Sketch")
         obj = bpy.data.objects.new("Sketch", data)
@@ -367,6 +380,7 @@ def apply(op, target_id, args):
     saved_props = {key: obj[key] for key in (ALIASES, FIXED, "solver_state", "dof", "geometry_solved") if key in obj}
     needs_solve = api["global"].needs_solve
     obj.data = staged
+    _invalidate_ids(api)
     try:
         created = _edit(op, sketch, args, api)
         if len(obj.data.curves) > MAX_ENTITIES or sum(1 for _ in sketch.constraints.all) > MAX_CONSTRAINTS:
@@ -385,6 +399,7 @@ def apply(op, target_id, args):
     except Exception:
         obj.data = original
         bpy.data.hair_curves.remove(staged)
+        _invalidate_ids(api)
         for key in tuple(bpy.context.scene.keys()):
             if key.startswith("slvs:") and key not in saved_keys:
                 del bpy.context.scene[key]
@@ -401,6 +416,7 @@ def apply(op, target_id, args):
             name = original.name
             bpy.data.hair_curves.remove(original)
             staged.name = name
+        _invalidate_ids(api)
         return result
     finally:
         api["global"].needs_solve = needs_solve
