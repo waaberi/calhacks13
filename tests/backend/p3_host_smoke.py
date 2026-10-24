@@ -36,6 +36,7 @@ SRV = None
 DOC = None
 SESS = None
 CMDS = None
+VIEWPORT = None
 STARTED = time.monotonic()
 DEADLINE = None
 LAST_REPORT = 0.0
@@ -140,6 +141,8 @@ def logged_command(msg, conn):
             stream.write(json.dumps(event, allow_nan=False) + "\n")
         if receipt is not None:
             RECEIPTS.append(receipt)
+            if VIEWPORT is not None:
+                VIEWPORT.observe_receipt(receipt)
         write_report()
         print("P3_SMOKE_COMMAND " + json.dumps({"request_id": msg.get("id"),
               "receipt": receipt, "exception": error}), flush=True)
@@ -147,8 +150,16 @@ def logged_command(msg, conn):
 
 def finish(reason, error=None):
     """Stop our server first; this script never finds or terminates other processes."""
-    if SRV is not None:
-        SRV.stop()
+    try:
+        if VIEWPORT is not None:
+            VIEWPORT.restore_original(time.monotonic(), reason)
+    except Exception:  # noqa: BLE001 - restoration failure must still stop the owned server
+        restore_error = traceback.format_exc()
+        REPORT["viewport_restore_error"] = restore_error
+        error = (error + "\n" if error else "") + restore_error
+    finally:
+        if SRV is not None:
+            SRV.stop()
     if OUTPUT is not None:
         REPORT.update(status="failed" if error else "stopped", stop_reason=reason,
                       error=error, stopped_utc=utc_now(), final_source_hashes=source_hashes())
@@ -182,6 +193,9 @@ def tick():
         SRV.drain()
         sync.poll()
         CMDS.poll()
+        if VIEWPORT is not None:
+            VIEWPORT.tick(time.monotonic(), sync.snapshot(DOC.describe())["sketches"],
+                          float(bpy.context.scene.unit_settings.scale_length))
         if time.monotonic() - LAST_REPORT >= 0.5:
             write_report()
             LAST_REPORT = time.monotonic()
@@ -192,7 +206,7 @@ def tick():
 
 
 def start():
-    global OUTPUT, SRV, DOC, SESS, CMDS, DEADLINE
+    global OUTPUT, SRV, DOC, SESS, CMDS, DEADLINE, VIEWPORT
     output = Path(os.environ["P3_SMOKE_OUTPUT"]).resolve()
     resources = Path(os.environ["BLENDER_USER_RESOURCES"]).resolve()
     if not output.is_absolute() or any("onedrive" in p.lower() for p in output.parts):
@@ -229,6 +243,12 @@ def start():
     # --factory-startup is mandatory: all scene changes below belong to this process only.
     if "--factory-startup" not in sys.argv:
         raise ValueError("Launch with --factory-startup to preserve personal Blender work")
+    frame = os.environ.get("P3_SMOKE_CAD_FRAME") == "1"
+    orbit = os.environ.get("P3_SMOKE_CAD_ORBIT") == "1"
+    if (frame or orbit) and os.environ.get("P3_SMOKE_CAD") != "1":
+        raise ValueError("C viewport flags require P3_SMOKE_CAD=1")
+    if orbit and not frame:
+        raise ValueError("P3_SMOKE_CAD_ORBIT requires P3_SMOKE_CAD_FRAME=1")
     capabilities = prepare_cad()
     for obj in list(bpy.data.objects):
         bpy.data.objects.remove(obj, do_unlink=True)
@@ -255,6 +275,13 @@ def start():
     SRV.handlers = ChainMap({"command": logged_command}, SRV.handlers)
     SRV.start()  # binding is the final authority if another process raced the probe
     sync.flush()
+    if frame:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from p3c_viewport_stimulus import OwnedCadViewport
+        VIEWPORT = OwnedCadViewport(OUTPUT, allow_orbit=orbit)
+        REPORT["viewport"] = VIEWPORT.report
+        REPORT["viewport_helper_sha256"] = hashlib.sha256(
+            (Path(__file__).parent / "p3c_viewport_stimulus.py").read_bytes()).hexdigest()
     DEADLINE = time.monotonic() + seconds
     REPORT.update(status="ready", fixture=str(fixture),
                   initial_fixture_sha256=hashlib.sha256(fixture.read_bytes()).hexdigest())
