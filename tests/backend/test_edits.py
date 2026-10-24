@@ -34,8 +34,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "blender_addon"))
 
 # isort: split
 from mathutils import Matrix, Quaternion, Vector
-from spatial_modeling import commands, document, edits, host, server, session, sync
+from spatial_modeling import commands, document, edits, host, leases, server, session, sync
 from test_commands import Peer, assert_rejected
+from test_leases import acquire
 
 pytestmark = pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 
@@ -160,8 +161,9 @@ def blender(scale_length=1.0, spy=False, client_can_edit=False):
     heartbeat, server.HEARTBEAT_TIMEOUT = server.HEARTBEAT_TIMEOUT, 120.0  # the peers don't ping
     try:
         editor = edits.Editor(Spy() if spy else sync, host.undoable, doc)
-        cmds = commands.Commands(sess, editor)
-        srv = cmds.attach(sess.attach(server.Server(port=0)))
+        lses = leases.Leases(sess, editor)
+        cmds = commands.Commands(sess, editor, leases=lses)
+        srv = lses.attach(cmds.attach(sess.attach(server.Server(port=0))))
         srv.start()
         try:
             yield Blender(srv, sess, cmds, doc)
@@ -577,3 +579,86 @@ def test_a_commands_dirty_flag_holds_until_the_next_tick():
     assert doc.describe()["dirty"] is True
     doc.tick()
     assert doc.describe()["dirty"] is bpy.data.is_dirty
+
+
+# Leases (P3B): linked data as Blender has it
+
+
+def linked_scene():
+    """Around the factory Cube: what a lease on it must also cover, and what it mustn't."""
+    cube = bpy.data.objects["Cube"]
+    collection = bpy.context.scene.collection
+
+    def new(name, data=None):
+        o = bpy.data.objects.new(name, data)
+        collection.objects.link(o)
+        return o
+
+    twin = new("Twin", cube.data)  # a linked duplicate: the same mesh
+    child = new("Child")
+    child.parent = cube
+    grandchild = new("Grandchild")
+    grandchild.parent = child
+    follower = new("Follower")
+    follower.constraints.new("COPY_LOCATION").target = cube
+    plate = new("Plate", bpy.data.meshes.new("Plate"))
+    plate.modifiers.new("Cut", "BOOLEAN").object = cube  # the Cube cuts the plate
+    mirrored = new("Mirrored", bpy.data.meshes.new("Mirrored"))
+    mirrored.modifiers.new("Mirror", "MIRROR").mirror_object = child
+    cutters = bpy.data.collections.new("Cutters")
+    collection.children.link(cutters)
+    tool = bpy.data.objects.new("Tool", bpy.data.meshes.new("Tool"))
+    cutters.objects.link(tool)
+    cube.modifiers.new("Tools", "BOOLEAN")
+    cube.modifiers["Tools"].operand_type = "COLLECTION"
+    cube.modifiers["Tools"].collection = cutters  # the Tool cuts the Cube, not the other way
+    scattered = new("Scattered", bpy.data.meshes.new("Scattered"))
+    tree = bpy.data.node_groups.new("Scatter", "GeometryNodeTree")
+    tree.interface.new_socket("Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
+    tree.interface.new_socket("Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
+    socket = tree.interface.new_socket("Instance", in_out="INPUT", socket_type="NodeSocketObject")
+    nodes = scattered.modifiers.new("Scatter", "NODES")
+    nodes.node_group = tree
+    getattr(nodes.properties.inputs, socket.identifier).value = grandchild  # a GN object input
+    twin_of_twin_user = new("Elsewhere", bpy.data.meshes.new("Elsewhere"))
+    bpy.ops.ed.undo_push(message="Linked data")
+    linked = {twin, child, grandchild, follower, plate, mirrored, scattered}
+    return linked, {tool, twin_of_twin_user, bpy.data.objects["Camera"]}
+
+
+def test_linked_data_is_shared_data_children_and_modifier_or_constraint_users():
+    with blender() as b:
+        linked, unlinked = linked_scene()
+        sync.flush()
+        ids = {sync.object_id(o): o.name for o in (*linked, *unlinked)}
+        got = b.cmds.leases.covered([CUBE])
+        assert got[0] == CUBE
+        assert {ids.get(i, i) for i in got[1:]} == {o.name for o in linked}
+        tool = next(i for i, name in ids.items() if name == "Tool")
+        assert b.cmds.leases.covered([tool]) == [tool, CUBE, *b.cmds.leases.covered([CUBE])[1:]]
+
+
+def test_leases_in_blender_cover_a_linked_duplicate_and_end_with_the_connection():
+    with blender() as b:
+        bpy.data.objects.new("Twin", bpy.data.objects["Cube"].data)
+        bpy.context.scene.collection.objects.link(bpy.data.objects["Twin"])
+        bpy.ops.ed.undo_push(message="Twin")
+        talia, other = b.peer("Talia"), b.peer("Jihyeon")
+        b.call(talia.expect, "session.update")
+        twin = sync.object_id(bpy.data.objects["Twin"])
+        _, reply = b.ask(talia, acquire(talia, "shared", [CUBE]))
+        lease = reply["payload"]["lease"]
+        assert reply["type"] == "lease.granted" and lease["targets"] == [CUBE, twin]
+        b.call(other.expect, "session.update")
+        x = bpy.data.objects["Twin"].location.x
+        error = assert_rejected(b.run(other, "object.move", twin, {"by": [1, 0, 0]}),
+                                "lease_conflict")
+        assert error["details"]["lease"] == lease
+        assert assert_rejected(b.run(other, "history.undo"), "lease_conflict")
+        assert bpy.data.objects["Twin"].location.x == x
+        assert b.run(other, "object.move", CAMERA, {"by": [1, 0, 0]})["outcome"] == "applied"
+        b.call(talia.expect, "scene.update", "activity")
+        talia.close()
+        b.call(other.expect, "session.update")
+        assert b.run(other, "object.move", twin, {"by": [1, 0, 0]})["outcome"] == "applied"
+        assert bpy.data.objects["Twin"].location.x == x + 1

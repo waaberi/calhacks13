@@ -368,15 +368,22 @@ class Editor:
 def _references(obj):
     """The objects obj's modifiers and constraints use (through Object or Collection fields)."""
     for item in (*obj.modifiers, *obj.constraints):
-        values = [getattr(item, prop.identifier, None) for prop in item.bl_rna.properties
-                  if prop.type == "POINTER" and prop.identifier != "rna_type"]
-        if getattr(item, "type", None) == "NODES":  # Geometry Nodes inputs are ID properties
-            values += [value for _key, value in item.items()]
+        values = _pointers(item)
+        inputs = getattr(getattr(item, "properties", None), "inputs", None)
+        if getattr(item, "type", None) == "NODES" and inputs is not None:
+            values += [getattr(socket, "value", None) for socket in _pointers(inputs)]
         for value in values:
             if isinstance(value, bpy.types.Object) and value != obj:
                 yield value
             elif isinstance(value, bpy.types.Collection):
                 yield from (o for o in value.all_objects if o != obj)
+
+
+def _pointers(struct):
+    """The values of struct's pointer properties: Geometry Nodes inputs in Blender 5 are
+    modifier.properties.inputs.<socket>.value."""
+    return [getattr(struct, prop.identifier, None) for prop in struct.bl_rna.properties
+            if prop.type == "POINTER" and prop.identifier != "rna_type"]
 
 
 # Reading and writing transforms
