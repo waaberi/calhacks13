@@ -136,12 +136,12 @@ cleared ownership, restored-frame/fresh-snapshot recovery, native sketch deletio
 and reconnect. Inbound Client messages were only hello/ping. These focused fault
 checks explicitly report dimension/native-reopen/mirror-reopen as not run.
 
-The strict combined roundtrip is **not passed**: native host reopen in run08
+The initial strict combined roundtrip **failed**: native host reopen in run08
 changed the angle sketch's implicit origin point UUID and its synthetic fixed
 constraint UUID. Native driving constraints, solved geometry and solver status
 otherwise matched. Subsequent runs09/10 unexpectedly rejected the solvable native
-45→60degree edit. The CAD owner is investigating these native defects; Client
-checks do not ignore the mismatch or convert those failed gates to passes. Runs06
+45→60degree edit. Client checks did not ignore the mismatch or convert those
+failed gates to passes. Runs06
 and07 also retain a corrected harness error (the first native point was the
 implicit origin, not the circle's referenced center). All raw failures remain.
 
@@ -154,3 +154,26 @@ preferences. `--faults-only` runs the independent baseline/ownership/fault/delet
 checks and explicitly makes no complete-roundtrip claim. The default keeps the
 strict native full-record reopen equality assertion. No phase, strict native
 lock, physical headset or real second-PC acceptance is established here.
+
+### Complete strict roundtrip after the native cache fix
+
+`run-14-c-native-cache-fix` passed the default complete check with Client source
+`eada61ff1b2af6ffa98ca139764b6326980582c7` and native CAD source published as
+`ed6c8f6b4b9a92d1bec79aa10ae8e3748afc7128`. The native adapter's SHA-256 was
+`9dbb57f92b07a31ad36a4a94ebceabe584d51020a47734d4b45f6b8071982500`;
+the full native production source hash map remained unchanged during this run.
+The native fix uses the pinned dependency's public UUID-cache invalidation API
+after staged native datablock changes and before editable record reads. Client
+source and strict equality assertions were unchanged.
+
+Both actual Host/Client process pairs passed: native100x60→120x60mm, diameter
+20→30mm, measured angle45→60degrees, rejected constraint invariance and native
+Save; fresh native host reopened exactly the same full entity/constraint IDs,
+values, solved geometry/status and re-edited130x60mm into a fresh Client.
+Both phases passed full-sketch ownership/names, serializer fault/stale/empty
+ownership, fresh-snapshot recovery, native deletion and explicit reconnect.
+Client inbound messages remained hello/ping only. A fifth, fresh solver-free
+Blender reopened the saved mirror copy and all3 complete JSON records matched
+exactly. Earlier failed runs remain preserved. This establishes these component
+software gates, with cumulative build and physical/second-PC checks still owned
+by the coordinator.
