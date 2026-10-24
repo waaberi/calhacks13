@@ -68,7 +68,9 @@ namespace SpatialModeling
             if (!moved || session.Revision != revision) { Fail("Inspection placement failed or changed native revision under another editor's lock"); yield break; }
             foreach (JObject l in session.Leases) if ((string)l["owner"]?["actor_id"] == session.ActorId) { Fail("Inspection acquired an editing lock"); yield break; }
             report["inspection_selection_table_move_without_native_lock"] = true;
-            ScreenCapture.CaptureScreenshot(Path.ChangeExtension(output, ".pink.png"));
+            yield return null;
+            if (!NativeSmokeWorkspace.Capture(Path.ChangeExtension(output, ".pink.png"))) { Fail("Actual placed ownership/menu camera capture failed"); yield break; }
+            report["screenshot_source"] = "Actual production camera/placed geometry/owner overlay rendered through URP; no XR eye or physical acceptance";
             peer.SendEnvelope(NativeEditSession.Envelope("lease.release", new JObject { ["lease_id"] = lease }));
             until = Time.realtimeSinceStartupAsDouble + 10;
             while (session.ConflictOwner(target) != null && Time.realtimeSinceStartupAsDouble < until) yield return null;
