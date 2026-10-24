@@ -61,3 +61,12 @@ For a development Windows build, set `CALHACKS_P1_BUILD_PATH` to an output EXE o
 ## Talia's USB acceptance
 
 Record the exact build and connection type. Observe a changing native Blender view inside our app, operate A/X and the visible button, toggle ten times, check text in both eyes, and run for five minutes. Minimize/restore Blender; close/reopen a saved test copy and reselect it. Confirm clear unavailable states and fresh recovery. Original wireless P1 acceptance stays deferred while using USB.
+
+
+## Optional P2.5 native interaction
+
+The view-only and GET-only descriptions above apply to the default P1/P2 launch. This feature branch adds input only when `capture_helper.py --enable-input` is explicitly selected. It then exposes native-client-only `/input/state` and authenticated sequenced `/input` endpoints; browser-origin requests are rejected. Without the flag those controls do not enable native editing.
+
+Use the separate P2.5 Player opt-in and a matching branch add-on. The controller maps only the actual displayed RawImage/crop to native pixels. Captured image instance, selection generation and geometry fingerprints bind the displayed JPEG to input; a fresh heartbeat is not a substitute for source identity or live pixels. Input uses exact selected Blender HWND/process validation, explicit focus, finite bounded coordinates and a held-input release watchdog. Other same-process Blender GHOST windows can be explicitly selected; non-GHOST OS dialogs have no desktop fallback.
+
+See [P2.5 controls, supported routes and remaining coverage](../docs/product-workflow/P2_5_PREVIEW_INTERACTION.md). `launch_p25.py` requires explicit isolated native/capture ports and refuses competing Players. It does not start Blender, install add-ons, start helpers or steal focus during preflight.
