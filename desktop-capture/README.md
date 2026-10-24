@@ -44,7 +44,7 @@ Capture preserves native pixels up to 3840×2400 while preserving aspect ratio; 
 python -m unittest discover -s desktop-capture -p 'test_*.py' -v
 ```
 
-The sixteen capture/launcher tests exercise headers/304, unavailable states, stale expiry despite HTTP activity, window switching, latest-only retention, exclusive port binding, refresh timing, independent ownership of callback pixels, out-of-order rejection and explicit selection/process guards. They are not GPU or headset acceptance. The Windows Player flag `--p1-smoke` requires real fresh pixels before and after ten panel toggles and magnification, then exits with a pass/fail code. A static window can pass this availability check; it cannot establish live motion.
+The seventeen capture/launcher tests exercise headers/304, unavailable states, stale expiry despite HTTP activity, window switching, latest-only retention, exclusive port binding, refresh timing, independent ownership of callback pixels, out-of-order rejection and explicit selection/process guards. They are not GPU or headset acceptance. The Windows Player flag `--p1-smoke` requires real fresh pixels before and after ten panel toggles and magnification, then exits with a pass/fail code. A static window can pass this availability check; it cannot establish live motion.
 
 For a separate live-motion check, run the following while deliberately orbiting the selected Blender viewport throughout the observation. Use a saved test copy, change the view only, and restore the angle afterward. If no motion was observed, keep that failed result and repeat with a synchronized stimulus; do not label a heartbeat or static image a live pass.
 
