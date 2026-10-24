@@ -2,14 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "receipt.query.schema.json",
   "title": "receipt.query",
-  "description": "Client to host. Ask for the outcome of earlier commands by request ID, for example after a reconnect. Never resend the command instead.",
+  "description": "Client to host. Ask for the outcome of earlier commands by request ID, for example after a reconnect. Never resend the command instead. host_epoch: the one the requests were sent under (from that connection's welcome); ask once per host_epoch.",
   "$ref": "envelope.schema.json",
   "properties": {
     "type": { "const": "receipt.query" },
     "payload": {
       "type": "object",
-      "required": ["request_ids"],
+      "required": ["host_epoch", "request_ids"],
       "properties": {
+        "host_epoch": { "$ref": "envelope.schema.json#/$defs/uuid" },
         "request_ids": {
           "type": "array",
           "items": { "$ref": "envelope.schema.json#/$defs/uuid" },

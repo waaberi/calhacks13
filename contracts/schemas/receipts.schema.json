@@ -2,17 +2,18 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "receipts.schema.json",
   "title": "receipts",
-  "description": "Host to client, answers receipt.query. missing lists the IDs the host has no record of.",
+  "description": "Host to client, answers receipt.query. missing: IDs the host never received in its current host_epoch; they were not applied and never will be. unknown: IDs it has no record of that it may have applied (sent before the host restarted, or dropped from its receipt store); trust the fresh snapshot.",
   "$ref": "envelope.schema.json",
   "required": ["re"],
   "properties": {
     "type": { "const": "receipts" },
     "payload": {
       "type": "object",
-      "required": ["receipts", "missing"],
+      "required": ["receipts", "missing", "unknown"],
       "properties": {
         "receipts": { "type": "array", "items": { "$ref": "result.schema.json#/$defs/receipt" }, "maxItems": 100 },
-        "missing": { "type": "array", "items": { "$ref": "envelope.schema.json#/$defs/uuid" }, "maxItems": 100, "uniqueItems": true }
+        "missing": { "type": "array", "items": { "$ref": "envelope.schema.json#/$defs/uuid" }, "maxItems": 100, "uniqueItems": true },
+        "unknown": { "type": "array", "items": { "$ref": "envelope.schema.json#/$defs/uuid" }, "maxItems": 100, "uniqueItems": true }
       },
       "additionalProperties": false
     }
