@@ -90,9 +90,11 @@ namespace SpatialModeling
         bool Click(string title) { if (menu.SmokeClick(title)) return true; Fail("Missing usable menu control: " + title); return false; }
         IEnumerator Receipt(string name, bool requireApplied = true)
         {
+            string expected = session.LastSubmittedId;
             double until = Time.realtimeSinceStartupAsDouble + 15;
             while (session.Busy && !session.OutcomeUnknown && Time.realtimeSinceStartupAsDouble < until) yield return null;
-            if (session.Busy || session.OutcomeUnknown) { Fail(name + ": no definitive native receipt: " + session.Notice); yield break; }
+            if (session.Busy || session.OutcomeUnknown || expected == null || (string)session.LastReceipt?["request_id"] != expected)
+            { Fail(name + ": no matching definitive native receipt: " + session.Notice); yield break; }
             Step(name, session.LastReceipt);
             if (requireApplied && (string)session.LastReceipt?["outcome"] != "applied") Fail(name + ": " + session.Notice);
         }

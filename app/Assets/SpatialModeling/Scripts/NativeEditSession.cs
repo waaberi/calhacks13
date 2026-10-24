@@ -15,6 +15,7 @@ namespace SpatialModeling
         public JObject Document { get; private set; } = new JObject();
         public JObject Draft { get; private set; }
         public JObject LastReceipt { get; private set; }
+        public string LastSubmittedId { get; private set; }
         public string SelectedId { get; private set; } = "";
         public string ActorId { get; private set; } = "";
         public string Notice { get; private set; } = "Waiting for Blender snapshot";
@@ -188,6 +189,7 @@ namespace SpatialModeling
             if (owner != null) return Reject(owner + " owns this edit. Inspection remains available.");
             // Freeze the draft's original generation/revision. A new snapshot must never silently retarget Apply.
             pendingCommand = Envelope("command", (JObject)Draft.DeepClone());
+            LastSubmittedId = (string)pendingCommand["id"];
             var acquire = (JObject)identity.DeepClone();
             acquire["mode"] = Mode == "shared" && target != null ? "shared" : "exclusive";
             acquire["targets"] = target != null && (string)acquire["mode"] == "shared" ? new JArray(target) : new JArray();
