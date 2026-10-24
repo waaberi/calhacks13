@@ -200,6 +200,14 @@ public static class P25Checks
 
     public static void RunKeyboardIsolation()
     {
+        // Input System 1.20.1 uses a separate Editor state buffer outside Play.
+        // Its first wasPressedThisFrame read requires the player update-step
+        // counter. The package's nonpersisted test flag runs real player input
+        // updates in edit mode, independently of Game View focus; no Play/XR.
+        const string playerUpdates = "RUN_PLAYER_UPDATES_IN_EDIT_MODE";
+        var inputSettings = InputSystem.settings;
+        bool previousPlayerUpdates = (bool)typeof(InputSettings).GetMethod("IsFeatureEnabled",
+            BindingFlags.Instance | BindingFlags.NonPublic).Invoke(inputSettings, new object[] { playerUpdates });
         var currentProperty = typeof(PreviewInteraction).GetProperty("Current", BindingFlags.Static | BindingFlags.Public);
         var currentSetter = currentProperty.GetSetMethod(true);
         var previousCurrent = PreviewInteraction.Current;
@@ -216,6 +224,7 @@ public static class P25Checks
         HostScene host = null;
         try
         {
+            inputSettings.SetInternalFeatureFlag(playerUpdates, true);
             preview = container.AddComponent<PreviewInteraction>();
             currentSetter.Invoke(null, new object[] { preview });
             host = container.AddComponent<HostScene>();
@@ -232,7 +241,9 @@ public static class P25Checks
                 InputSystem.Update();
                 InputSystem.QueueStateEvent(keyboard, new KeyboardState(key));
                 InputSystem.Update();
-                Check(keyboard[key].wasPressedThisFrame, "synthetic keyboard actually delivers a fresh key event");
+                Check(keyboard[key].wasPressedThisFrame, "synthetic keyboard actually delivers a fresh key event: "
+                    + key + " update=" + InputState.currentUpdateType + " pressed=" + keyboard[key].isPressed
+                    + " updated=" + keyboard.wasUpdatedThisFrame);
                 update.Invoke(table, null);
             };
             enabledField.SetValue(preview, true);
@@ -286,6 +297,7 @@ public static class P25Checks
             InputSystem.RemoveDevice(keyboard);
             InputSystem.RemoveDevice(gamepad);
             if (previousKeyboard != null && previousKeyboard.added) previousKeyboard.MakeCurrent();
+            inputSettings.SetInternalFeatureFlag(playerUpdates, previousPlayerUpdates);
             if (host != null && host.Placement != null) UnityEngine.Object.DestroyImmediate(host.Placement.gameObject);
             UnityEngine.Object.DestroyImmediate(container);
             UnityEngine.Object.DestroyImmediate(cameraObject);
