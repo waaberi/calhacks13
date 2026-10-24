@@ -189,15 +189,6 @@ namespace SpatialModeling
             h.gripDown = gripNow; h.triggerDown = triggerNow;
             device.TryGetFeatureValue(UnityEngine.XR.CommonUsages.primary2DAxisClick,out bool stickNow);
             bool stickPressed=stickNow&&!h.stickDown; h.stickDown=stickNow;
-            if(arrangement!=null && arrangement.Surfaces.Marking!=null)
-            {
-                if(triggerPressed) arrangement.Surfaces.CaptureMark(hand,Camera.main.transform.position);
-                if(gripPressed) arrangement.Surfaces.CancelMark();
-                Instruction=arrangement.Instruction;
-                h.hasHit=false; h.pointerDistance=.35f;
-                return true;
-            }
-
             float distance = 4f;
             var hitPart = scene.PickObject(ray, out float partDistance);
             bool hitScreen = screen.RaycastSurface(ray, out float screenDistance);
@@ -210,6 +201,10 @@ namespace SpatialModeling
             bool tableHit = table != null && table.RaycastControls(ray, out tableDistance);
             bool tableFirst = tableHit && tableDistance < distance;
             if (tableFirst) distance = tableDistance;
+            float levelDistance=float.PositiveInfinity;
+            var level=arrangement!=null?arrangement.Surfaces.RaycastLevel(ray,out levelDistance):null;
+            bool levelFirst=level!=null && levelDistance<distance;
+            if(levelFirst) distance=levelDistance;
 
             if (h.target != null)
             {
@@ -233,8 +228,16 @@ namespace SpatialModeling
                         : table != null && h.target == table.Menu ? "Aim to move menu · stick: distance · release grip: place"
                         : h.target == screen.Placement ? "Aim to move screen · stick: distance / size · release grip: place"
                         : "Aim to move whole build · release grip: place";
-                    if(arrangement!=null) Instruction="Aim: move · stick: rotate/distance · trigger: align to guide · stick click: "+(h.freePlacement?"surface help":"free placement");
+                    if(arrangement!=null) Instruction=arrangement.Surfaces.IsLevel(h.target)
+                        ? "Aim: move level · stick: turn/distance · two hands: resize · release grip: place"
+                        : "Aim: move · stick: rotate/distance · trigger: align to guide · stick click: "+(h.freePlacement?"surface help":"free placement");
                 }
+            }
+            else if(levelFirst)
+            {
+                Instruction="Grip the visible level · aim to position · release to place";
+                if(gripPressed && (other?.target==level || !Conflicts(other?.target,level)))
+                    Begin(h,level,null,aim,ray.GetPoint(distance));
             }
             else if (tableFirst)
             {
@@ -263,7 +266,7 @@ namespace SpatialModeling
                 Instruction = MoveIndividualParts ? "Grip: arrange " + hitPart.name + " in your view" : "Grip: move the whole build";
                 if (gripPressed && (other?.target==target || !Conflicts(other?.target, target))) Begin(h, target, MoveIndividualParts ? hitPart : null, aim, ray.GetPoint(distance));
             }
-            h.hasHit = tableFirst || hitScreen || hitPart != null;
+            h.hasHit = levelFirst || tableFirst || hitScreen || hitPart != null;
             h.pointerDistance = distance;
             return true;
         }

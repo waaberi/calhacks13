@@ -19,9 +19,7 @@ namespace SpatialModeling
         public bool AssistEnabled { get; private set; } = true;
         public bool EditModelAvailable => false;
         public WorkspaceSurfaces Surfaces { get; private set; }
-        public string Instruction => Surfaces != null && Surfaces.Marking != null
-            ? "Touch the " + Surfaces.Marking + " with a controller · trigger: mark · grip: cancel"
-            : "Grip: move · stick ←/→: rotate 15° · ↑/↓: distance · second grip: rotate/size";
+        public string Instruction => "Grip: move · stick ←/→: rotate 15° · ↑/↓: distance · second grip: rotate/size";
         public string SurfaceState => Surfaces != null ? Surfaces.State : "Checking surfaces";
         public Vector3 RotationAxis { get; private set; } = Vector3.up;
         HostScene scene;
@@ -134,6 +132,8 @@ namespace SpatialModeling
         }
         public Pose Apply(Transform target,Pose previous,Pose desired,bool align,bool bypass,Vector3? previousScale=null)
         {
+            if(Surfaces!=null && Surfaces.IsLevel(target))
+            { HideGuide(); return Surfaces.ConstrainLevel(target,desired); }
             if(!AssistEnabled || bypass || Surfaces==null) { HideGuide(); return desired; }
             var bounds=LocalBounds(target);
             foreach(var surface in Surfaces.Surfaces)
