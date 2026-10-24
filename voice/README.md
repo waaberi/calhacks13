@@ -6,7 +6,7 @@ Owner: Waaberi. The Unity side, `VoiceUiAdapter.cs` in `app/`, is Jihyeon's.
 
 | Path | What it is |
 | --- | --- |
-| `VoiceCore/Runtime/` | Assembly `SpatialModeling.VoiceCore`, no Unity or Vosk references: `VoiceSession` (conversation memory), `HostCommand` (mapping to the contract), `VoiceInput` (recognizer on a worker thread), `PcmConverter`, `Prompt`. |
+| `VoiceCore/Runtime/` | Assembly `SpatialModeling.VoiceCore`, no Unity or Vosk references: `VoiceSession` (conversation memory), `HostCommand` (mapping to the contract), `HostVoice.cs` (the host resolver's messages), `VoiceInput` (recognizer on a worker thread), `PcmConverter`, `Prompt`. |
 | `VoiceCore/Vosk/` | Assembly `SpatialModeling.VoiceCore.Vosk`: `VoskSpeechRecognizer` on libvosk's C API. It compiles without the native library. |
 | `VoiceCore/Prompts/Resources/VoiceCorePrompts/` | One clip per `Prompt`, made by `make-prompts.py`. |
 | `VoiceCore/Plugins/` | Vosk's native libraries, from `fetch-vosk.sh`. Not in Git. |
@@ -53,6 +53,73 @@ its `Command` if there is one.
   target's current `generation`. When the app can't send, play `Prompt.NotConnected`.
 - **Answers:** for the `result` (or an `error` whose `re` is the command), play
   `HostCommand.PromptFor(op, outcome, errorCode)`, and show the receipt's `summary` or the error's `message`.
+- **Push-to-talk audio:** `new VoiceInput(create, 16000, VoiceInput.RecommendedPrerollMs, VoiceInput.RecommendedPostrollMs)`
+  keeps 300 ms from before the press and 150 ms after the release. It needs `Write` every frame, also while the button
+  is up (see [Push-to-talk pre-roll](#push-to-talk-pre-roll)).
+
+### The host's resolver (P4)
+
+With `new VoiceSessionOptions { AskHost = true }`, words VoiceCore can't turn into a command by itself go to the host,
+which knows about 40 Blender operations ("add a monkey", "shade smooth", "subdivide, level two") and answers run, ask or
+reject (contracts/README.md, Voice). Without `AskHost` nothing changes.
+
+- **Grammar:** after `welcome`, send `voice.grammar_query` (`VoiceGrammar.QueryType`, payload `{}`). Pass the answer
+  to `session.SetHostGrammar(VoiceGrammar.FromJson(payloadJson))` and then `input.SetGrammar(session.GrammarPhrases())`.
+  An `error` `unknown_type` for the query means a host without voice: call `session.HostHasNoVoice()`.
+- **Resolve:** when a turn has `Resolve`, send a `voice.resolve` (`VoiceResolve.Type`) with payload
+  `turn.Resolve.Payload(generationOfTheTarget)`, then call `session.ResolveSent(turn.Resolve, messageId)` with the ID it
+  went out with, or null if it couldn't be sent. Show "thinking" while `session.WaitingForHost`.
+- **Candidates:** pass a `voice.candidates` to `session.HostAnswered(re, VoiceCandidates.FromJson(payloadJson))`, and an
+  `error` whose `re` is the resolve to `session.HostError(re, code)`. Late answers are dropped by `re`; after
+  `HostTimeout` (3 s) the words are handled as without a host. Show `turn.HostReason` ("Join isn't available by
+  voice.") next to the turn's prompts.
+- **Run:** a `Command` of kind `Run` goes out like the others: `HostCommand.From` gives op `voice.run` with args
+  `resolution` and `choice`, and a target only when the candidate needs one. Its `result` gets
+  `HostCommand.PromptFor("voice.run", ...)`; show the receipt's summary.
+- **Ask:** the turn says `ask_choice`. Show `session.Choice.Candidates` numbered ("1. Subdivision Surface, level 2"),
+  with buttons that call `session.Choose(n)` and a Cancel button (`session.Cancel()`).
+- **Grammar changes:** when a turn has `GrammarChanged` (a question began or ended), call
+  `input.SetGrammar(session.GrammarPhrases())`. While asking, the grammar is only the answers and "[unk]".
+- **A new command while asking:** words that aren't an answer and aren't only answer words, "[unk]" and fillers
+  ("make it thicker", "rotate this ninety degrees around z", "undo") drop the question and are handled as a new
+  command in the same turn, routed to the host as usual. The turn has `ChoiceDismissed` (hide the choice panel) and
+  `GrammarChanged`. Garbled answers ("[unk] two", "two please", "to") still ask again. The grammar stays answers-only:
+  with the host's phrases merged in, the TTS answers fell from 20/20 to 14/20 at 0.9 ("two" heard as "do"), so a
+  command said while asking usually reaches the session as a press without a result (next item), which also
+  dismisses the question, and saying it again gets the full grammar.
+- **A press without a result:** `VoiceInput.TryGetNoResult(out NoResultReason reason)` reports each push-to-talk
+  utterance that ended without any result. Drain it after `TryGetResult` and pass it to
+  `session.NothingRecognized(reason)`. The turn's `NoResult` is set: show a short "Didn't catch that". `Silence`
+  (an accidental tap, and the default for recognizers that don't say) has no prompt, so it never speaks and keeps any
+  question. `NotUnderstood` (speech that matched no phrase) says `low_confidence` and dismisses an open question. A
+  recognizer says which by implementing `IReportsNoResult` (raise `NoResult` from `Stop`, only when it raises no
+  result; the Whisper fast path should report a transcript that snapped onto nothing as `NotUnderstood`, and
+  silence hallucinations such as "you" as `Silence`). Empty words given to `Hear` are a `Silence` turn too.
+- **A delete waiting for its confirmation:** the newest request wins. When a turn has `CancelsDelete` (a command other
+  than Cancel, or a new question: a missing field or the host's "which one?"), drop the waiting delete and say
+  `replaced_pending` before the turn's own prompts. A delete and a question are then never shown at once, and the
+  trigger never confirms a delete the panel no longer shows. Words still waiting for the host don't cancel it; the
+  host's run or question does.
+
+Which words go to the host (`VoiceSession.Hear`), in order:
+
+1. While the host's question is pending, only an exact answer counts: "one", "first", "the first one", "option one",
+   "number one" (and two, three), "cancel" or "never mind", at confidence 0.9 or more, never with "[unk]". Garbled
+   answers (only answer words, "[unk]" and fillers) ask again; other words dismiss the question and go on below as a
+   new command.
+2. Two different command verbs are a mishearing (#142), and "[unk]" alone is nothing: neither goes to the host.
+3. Undo, redo and cancel never go to the host.
+4. To the host: no command verb ("shade smooth", "a monkey" when "add" was lost), words VoiceCore doesn't know after
+   the verb ("add a monkey", "select all"), or "apply" with more words ("apply the scale"). Below `MinConfidence`
+   they still go, marked low confidence, and the host may only ask: Vosk gives "two" about 0.5. Words with one of
+   VoiceCore's shapes but no verb ("selected cylinder" for "select the cylinder", "on cube" for "add a cube") also only
+   ask: on TTS the host otherwise ran "add a cylinder" for "select the cylinder" 3 times out of 15.
+5. Everything else stays on VoiceCore's path, as before. While a command waits for a field, answers keep priority:
+   only words without a verb that can't fill it go to the host, and none while it waits for its object (unknown words
+   are then a name, as before). The pending command is dropped only when the host runs or asks.
+
+Whenever the host can't help (reject, `unknown_type`, a send failure or the timeout), the words get exactly the turn
+they would get without a host.
 
 ```csharp
 using SpatialModeling.VoiceCore;
@@ -177,6 +244,31 @@ from speech for both flite voices, and for Piper with "the z axis" (`tests/voice
 `libvosk.so` in the build's `Plugins/`), and the ask_axis clip fed into a paused `VoiceInput` is never recognized
 (unpaused, Vosk hears "axis x y on z"). TTS is cleaner than a headset microphone, so treat this as an upper bound until
 the Windows recordings.
+
+## Push-to-talk pre-roll
+
+`VoiceInput`'s pre-roll keeps the last 300 ms of microphone audio while push-to-talk is up and feeds it first when the
+button goes down; the post-roll keeps listening 150 ms after the release, because Unity's microphone ring delivers the
+last frames late. Both are 0 unless the constructor asks for them. Measured on TTS with simulated push-to-talk
+(research, 10:50 PT): speaking right at the press, correct commands went from 169 to 238 of 250, and the leading "add"
+was lost 3 times instead of 65 of 80; releasing 50 ms early no longer lost short answers ("one", "two"). Pressing about
+300 ms before speaking does as well without it (255 of 270 exact), so it is cheap insurance for people who talk at the
+press. A prompt during the post-roll ends the utterance with what it has.
+
+## Routing to the host: measured
+
+Scripts and data in `/var/tmp/research-voicecore-route/` (not in Git), all through this branch's real `VoiceSession`:
+
+| Check | Result |
+| --- | --- |
+| Routing against the research's emulation (written before #142), on all 1,756 texts and Vosk transcripts it used | 1,748 agree; the 8 others are by design: 6 transcripts with two different verbs ("rotate add monkey grease random d") stay on the mishearing check, and empty or "[unk]"-only words don't go out |
+| A host reject gives exactly the turn VoiceCore gives without a host | 1,756 of 1,756 |
+| Today's 17 commands, 5 TTS voices, 3 runs (255), padded like the pre-roll, Cube selected | today's grammar, no host: 218 right. With the host's 407 phrases merged: 207 without routing, 201 with routing and the host's resolver (copy of codex/waaberi-p4-voice-ops at 12:50); without "to": 211 and 205 |
+| "Two" in "move it minus two centimeters along y", "scale it by two", "two" (45 clips) | median confidence 0.50 with today's grammar; 0.71 to 0.87 with the host's phrases; 0.72 to 1.0 with them and without "to" |
+| Answers to "which one?" on real speech (Speech Commands, from the real-voice run at 12:30) | exact phrase only: 69 of 71 right, 30 of 488 other words taken; at confidence 0.9: 68 right, 0 wrong, 13 taken |
+
+The merged grammar costs today's commands about 5 % on TTS (218 to 205 of 255): host phrases such as "delete loose"
+and "low" compete with "delete this" and "rotate the sphere". The host's phrase list decides that, so trim it there.
 
 ## Confidence threshold
 
