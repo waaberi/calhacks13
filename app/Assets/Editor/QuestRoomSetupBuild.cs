@@ -20,6 +20,8 @@ public static class QuestRoomSetupBuild
     {
         string output=Environment.GetEnvironmentVariable("CALHACKS_ROOM_SETUP_APK");
         if(string.IsNullOrEmpty(output)) throw new Exception("Set CALHACKS_ROOM_SETUP_APK outside the repository");
+        EditorUserBuildSettings.exportAsGoogleAndroidProject=
+            Environment.GetEnvironmentVariable("CALHACKS_ROOM_SETUP_EXPORT_PROJECT")=="1";
         RoomSetupChecks.Run();
         var perTarget=XRGeneralSettingsPerBuildTarget.XRGeneralSettingsForBuildTarget(BuildTargetGroup.Android);
         if(perTarget==null)
