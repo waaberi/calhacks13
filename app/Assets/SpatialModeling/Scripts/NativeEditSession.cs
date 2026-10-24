@@ -154,8 +154,13 @@ namespace SpatialModeling
             {
                 string id = (string)value["id"];
                 if (id == null) continue;
-                if (!records.TryGetValue(id, out var previous)) records[id] = (JObject)value.DeepClone();
-                else previous.Merge(value, new JsonMergeSettings { MergeArrayHandling = MergeArrayHandling.Replace, MergeNullValueHandling = MergeNullValueHandling.Merge });
+                // The scene renderer already owns mesh buffers. Numeric tools need only
+                // metadata; retaining/copying every vertex again would stall large updates.
+                var metadata = new JObject();
+                foreach (var property in value.Properties())
+                    if (property.Name != "mesh") metadata[property.Name] = property.Value.DeepClone();
+                if (!records.TryGetValue(id, out var previous)) records[id] = metadata;
+                else previous.Merge(metadata, new JsonMergeSettings { MergeArrayHandling = MergeArrayHandling.Replace, MergeNullValueHandling = MergeNullValueHandling.Merge });
             }
         }
 
