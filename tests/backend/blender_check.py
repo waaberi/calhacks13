@@ -24,6 +24,12 @@ The command check edits a millimeter scene from a VR-role client, reads every
 result back from Blender's own data, checks Undo/Redo, deduplication and
 receipts, saves, and reopens the file in a fresh Blender process. Then the
 Client role edits once with "Let the Client role edit (test only)" on.
+
+The recovery check (P5) drops the Client role between a command and its result,
+rejoins and gets the true receipt with receipt.query; forces an unknown outcome
+and sees writes refused on both ports until the add-on's timer sends both the
+fresh snapshot; and restarts the server, after which the old requests are
+answered `unknown`.
 """
 
 import json
@@ -793,9 +799,11 @@ def native_commands(prefs):
     assert stale["error"]["code"] == "stale_revision", stale
     assert stale["error"]["details"] == {"generation": mod("sync").generation(cube_id)}, stale
     assert tuple(bpy.data.objects["Cube"].location) == (15, 0, 0)
-    query = protocol.message("receipt.query", {"request_ids": [move_msg["id"], "0" * 32]})
+    query = protocol.message("receipt.query", {"host_epoch": welcome["host_epoch"],
+                                               "request_ids": [move_msg["id"], "0" * 32]})
     _, receipts = yield from ask(talia, query)
-    assert receipts["payload"] == {"receipts": [move], "missing": ["0" * 32]}, receipts
+    assert receipts["payload"] == {"receipts": [move], "missing": ["0" * 32], "unknown": []}, (
+        receipts)
     log("a repeated request ID gets the stored result and isn't applied twice; a changed one is "
         "duplicate_request; a stale generation is refused; receipt.query finds receipts")
 
@@ -865,6 +873,157 @@ def client_role_commands(prefs):
     lee.close()
     log("Client role: read-only (permission_denied) with the flag off; with it on, can_edit "
         "and its move applies in Blender and reaches VR as activity")
+
+
+def query(peer, host_epoch, *request_ids):
+    """receipt.query from peer; yields until the answer. Returns its payload."""
+    msg = protocol.message("receipt.query", {"host_epoch": host_epoch,
+                                             "request_ids": list(request_ids)})
+    _, reply = yield from ask(peer, msg)
+    assert reply["type"] == "receipts", reply
+    return reply["payload"]
+
+
+def quiet(peer):
+    """Nothing is waiting for peer: the next message answers a ping. Yields until it does."""
+    msg = protocol.message("ping")
+    before, reply = yield from ask(peer, msg)
+    assert before == [] and reply["type"] == "pong", (before, reply)
+
+
+def hang_up(peer, msg):
+    """Send msg and drop the connection without reading its result. Yields until closed."""
+
+    def run():
+        peer.send(msg)
+        peer.sock.shutdown(socket.SHUT_WR)
+        try:
+            while peer.sock.recv(65536):  # never read: the acknowledgement is lost
+                pass
+        except OSError:
+            pass
+        peer.close()
+
+    yield from off_thread(run, "the host to close the dropped connection")
+
+
+def recovery(prefs):
+    """P5: reconnect, lost acknowledgement, unknown outcome and host restart, on both ports."""
+    server = mod("server")
+    server.HEARTBEAT_TIMEOUT = 120.0  # these clients don't ping
+    prefs.client_edits = True  # restarts the server; the Client role may edit
+    try:
+        yield from recovered(prefs)
+    finally:
+        server.HEARTBEAT_TIMEOUT = 6.0
+        prefs.client_edits = False
+
+
+def recovered(prefs):
+    host = mod("host")
+    via_tls = {"port": LAN_PORT, "token": prefs.session_token}
+    cube_id = bpy.data.objects["Cube"][ID]
+    yield from nobody_joined()
+    talia, talia_welcome, _ = yield from joined("Talia")
+    lee, welcome, _ = yield from joined("Lee", via=via_tls, role="blender-client")
+    yield from next_update(talia, "Talia's session.update for Lee")
+
+    # Lost acknowledgement on the LAN port: the move applies, its result never reaches Lee.
+    x = bpy.data.objects["Cube"].location.x
+    lost = Commander(lee, welcome).command("object.move", cube_id, {"by": [0.001, 0, 0]})
+    yield from hang_up(lee, lost)
+    got = yield from off_thread(lambda: [talia.recv() for _ in range(3)], "Talia's messages")
+    assert [m["type"] for m in got] == ["scene.update", "activity", "session.update"], got
+    activity = got[1]["payload"]
+    assert activity["request_id"] == lost["id"] and activity["outcome"] == "applied", activity
+    assert bpy.data.objects["Cube"].location.x == f32(x + 1), "the lost move didn't apply"
+
+    again, again_welcome, _ = yield from joined("Lee", via=via_tls, role="blender-client")
+    yield from next_update(talia, "Talia's session.update for Lee's return")
+    assert again_welcome["actor_id"] != welcome["actor_id"]
+    scale = bpy.context.scene.unit_settings.scale_length
+    sent_x = SNAPSHOTS["Lee"]["Cube"]["transform"]["location"][0]
+    assert abs(sent_x - f32(x + 1) * scale) < 1e-6, "the fresh snapshot lacks the lost move"
+    yield from quiet(again)  # nothing replayed after the handshake
+    answer = yield from query(again, welcome["host_epoch"], lost["id"])
+    assert answer == {"receipts": [activity], "missing": [], "unknown": []}, answer
+    _, same = yield from ask(again, lost)  # the same request again, old actor_id and all
+    assert same["payload"] == activity, same
+    assert bpy.data.objects["Cube"].location.x == f32(x + 1), "a resent request applied twice"
+    yield from quiet(talia)
+    log("lost acknowledgement: Lee dropped before the result, rejoined over TLS with a fresh "
+        "snapshot and nothing replayed, and receipt.query gave the true receipt (old actor_id); "
+        "resending it returned that receipt and Blender moved once")
+
+    # A direct edit after the reconnect reaches both ports alike.
+    bpy.data.objects["Cube"].location.z += 3
+    updates = yield from off_thread(lambda: [talia.recv(), again.recv()], "the direct edit")
+    assert [m["type"] for m in updates] == ["scene.update"] * 2, updates
+    assert updates[0]["payload"] == updates[1]["payload"], "the two ports got different updates"
+    log("a direct edit in Blender reaches the Unity port and the LAN port as the same update")
+
+    # Unknown outcome: Blender applied it, the host lost track; writes freeze until reconciled.
+    editor, sess = host._commands, host._session
+    real_apply, real_snapshot = editor.editor.apply, sess.snapshot
+
+    def apply_then_fail(*args):
+        editor.editor.apply = real_apply
+        real_apply(*args)
+        raise RuntimeError("check: the host lost track after Blender committed")
+
+    def no_snapshot(document):
+        raise RuntimeError("check: the scene can't be read yet")
+
+    editor.editor.apply = apply_then_fail
+    sess.snapshot = no_snapshot
+    try:
+        vr = Commander(talia, talia_welcome)
+        unknown, before = yield from vr.send(vr.command("object.move", cube_id, {"by": [0.001, 0, 0]}))
+        assert unknown["outcome"] == "unknown" and editor.frozen, unknown
+        assert len(before) == 1, before
+        update = yield from next_update(again, "Lee's update for the unknown move")
+        assert update["payload"] == before[0], "the ports got different updates"
+        moved = bpy.data.objects["Cube"].location.x
+        for peer, w in ((talia, talia_welcome), (again, again_welcome)):
+            refused_write, _ = yield from Commander(peer, w).send(
+                Commander(peer, w).command("object.move", cube_id, {"by": [0.001, 0, 0]}))
+            assert refused_write["error"]["code"] == "permission_denied", refused_write
+        assert bpy.data.objects["Cube"].location.x == moved
+        yield from quiet(talia)
+        yield from quiet(again)
+    finally:
+        editor.editor.apply = real_apply
+        sess.snapshot = real_snapshot
+    # The add-on's timer re-reads the scene by itself and sends everyone the fresh snapshot.
+    snapshots = yield from off_thread(lambda: [talia.recv(), again.recv()], "the fresh snapshots")
+    assert [m["type"] for m in snapshots] == ["scene.snapshot"] * 2, snapshots
+    assert snapshots[0]["payload"] == snapshots[1]["payload"]
+    assert not editor.frozen
+    resumed, _, _ = yield from Commander(again, again_welcome).run(
+        "object.move", cube_id, {"by": [0.001, 0, 0]}, watcher=talia)
+    assert bpy.data.objects["Cube"].location.x == f32(moved + 1), "writes didn't resume"
+    log("unknown outcome: both ports' writes got permission_denied until the add-on's timer "
+        "re-read the scene and sent both the same fresh snapshot; then Lee's move applied")
+
+    # Host restart: receipts are gone, and the old ones come back unknown, never missing.
+    talia.close()
+    again.close()
+    yield from nobody_joined()
+    old_epoch = again_welcome["host_epoch"]
+    prefs.client_edits = False  # a preference change restarts the server
+    prefs.client_edits = True
+    after, after_welcome, _ = yield from joined("Lee", via=via_tls, role="blender-client")
+    assert after_welcome["host_epoch"] != old_epoch
+    ids = [lost["id"], unknown["request_id"], resumed["request_id"]]
+    answer = yield from query(after, old_epoch, *ids)
+    assert answer == {"receipts": [], "missing": [], "unknown": ids}, answer
+    x = bpy.data.objects["Cube"].location.x
+    old, _ = yield from Commander(after, after_welcome).send(lost)
+    assert old["outcome"] == "rejected", old
+    assert bpy.data.objects["Cube"].location.x == x, "an old request applied after the restart"
+    after.close()
+    log("host restart: the old host_epoch's requests are answered unknown (never missing); "
+        "resending one is refused and Blender doesn't change")
 
 
 def role_switch(prefs):
@@ -975,6 +1134,7 @@ def checks():
     yield from lan_checks(prefs)
     yield from live_scene(prefs)
     yield from commands(prefs)
+    yield from recovery(prefs)
     yield from role_switch(prefs)
     yield from document_identity(prefs)
 
