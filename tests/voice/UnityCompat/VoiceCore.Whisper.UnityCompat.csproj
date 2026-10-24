@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Compiles the Whisper assembly the way Unity 6 does, against VoiceCore and the Vosk assembly alone:
+       .NET Standard 2.1, C# 9. -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <AssemblyName>SpatialModeling.VoiceCore.Whisper</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../../../voice/VoiceCore/Whisper/**/*.cs" />
+    <ProjectReference Include="VoiceCore.UnityCompat.csproj" />
+    <ProjectReference Include="VoiceCore.Vosk.UnityCompat.csproj" />
+  </ItemGroup>
+
+</Project>

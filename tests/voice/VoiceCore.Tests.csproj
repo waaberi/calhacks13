@@ -12,6 +12,7 @@
   <ItemGroup>
     <Compile Include="../../voice/VoiceCore/Runtime/**/*.cs" Link="Runtime/%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="../../voice/VoiceCore/Vosk/**/*.cs" Link="Vosk/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../../voice/VoiceCore/Whisper/**/*.cs" Link="Whisper/%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Remove="UnityCompat/**" />
   </ItemGroup>
 
@@ -31,6 +32,7 @@
     <!-- Only has to compile: builds VoiceCore against Unity's API surface. -->
     <ProjectReference Include="UnityCompat/VoiceCore.UnityCompat.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="UnityCompat/VoiceCore.Vosk.UnityCompat.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="UnityCompat/VoiceCore.Whisper.UnityCompat.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>
