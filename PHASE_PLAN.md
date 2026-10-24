@@ -992,7 +992,7 @@ Waaberi owns the module and the host's SpacetimeDB adapter. Jihyeon owns the Uni
 
 **Where it runs:** the self-hosted server runs on Talia's PC and listens on localhost only, because self-hosted SpacetimeDB has no TLS. The Unity app and the host add-on reach it locally. The Client-role add-on on Lee Jae-yeon's PC gets presence and leases relayed by the host over the TLS LAN link, so the LAN has a single entry point.
 
-**Spike (90 minutes, Saturday morning once P1 passes, before P3B work):** Waaberi writes the module; Jihyeon connects the Unity SDK. It passes only if all of these work:
+**Spike:** Waaberi's side (the module, the Blender side, and a latency check through SpacetimeDB's C# SDK from a console app) runs Friday night. Jihyeon connects the Unity SDK once P1 passes. It passes only if all of these work:
 
 1. `spacetime start` runs on Talia's PC, and a module with participant, lease and activity tables publishes to it.
 2. The Unity app subscribes and shows a lease change within a quarter of a second.
