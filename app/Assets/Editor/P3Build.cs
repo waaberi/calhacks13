@@ -13,6 +13,7 @@ public static class P3Build
         if (full.StartsWith(repo + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) throw new Exception("P3 build output must remain outside the repository");
         P2Checks.Run();
         NativeEditingChecks.Run();
+        NativeHandChecks.Run();
         Debug.Log("P3_NATIVE_MENU_CHECKS PASS receipt correlation, stale drafts, cancellation, late permissions, owner conflict and scene admission");
         Environment.SetEnvironmentVariable("CALHACKS_P1_BUILD_PATH", full);
         P1Build.Windows(); // Real Unity ray/controller/startup/freshness checks and accepted graphics baseline.
