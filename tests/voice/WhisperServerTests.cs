@@ -656,6 +656,50 @@ namespace SpatialModeling.VoiceCore.Tests
         }
 
         [Fact]
+        public void SmallEnOnTheGpuTinyEnOnTheCpuUnlessChosen()
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "whisper-models-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            try
+            {
+                File.WriteAllText(Path.Combine(dir, WhisperServer.ExecutableName), "");
+                foreach (string model in new[] { WhisperServer.TinyModel, WhisperServer.BaseModel, WhisperServer.SmallModel })
+                    File.WriteAllText(Path.Combine(dir, model), "");
+                VoiceRecognizerSettings settings = VoiceRecognizerSettings.ForStreamingAssets(Path.GetDirectoryName(dir));
+                settings.WhisperFolder = dir;
+                Assert.Null(settings.WhisperModel); // auto by default
+                string Model() => Path.GetFileName(settings.ModelPath());
+
+                Assert.False(settings.UsesGpu()); // the CPU build
+                Assert.Equal(WhisperServer.TinyModel, Model());
+
+                File.WriteAllText(Path.Combine(dir, "ggml-cuda.dll"), ""); // fetch-whisper.sh --cuda
+                Assert.True(settings.UsesGpu());
+                Assert.Equal(WhisperServer.SmallModel, Model());
+
+                settings.WhisperUseGpu = false; // frames drop: back to the CPU, and to tiny.en
+                Assert.False(settings.UsesGpu());
+                Assert.Equal(WhisperServer.TinyModel, Model());
+                settings.WhisperUseGpu = null;
+
+                settings.WhisperModel = WhisperServer.TinyModel; // chosen: tiny.en on the GPU
+                Assert.Equal(WhisperServer.TinyModel, Model());
+                settings.WhisperModel = WhisperServer.BaseModel;
+                Assert.Equal(WhisperServer.BaseModel, Model());
+                settings.WhisperModel = null;
+
+                File.Delete(Path.Combine(dir, WhisperServer.SmallModel)); // a CUDA build fetched before small.en was
+                Assert.Equal(WhisperServer.TinyModel, Model());
+                File.Delete(Path.Combine(dir, WhisperServer.TinyModel));
+                Assert.Equal(WhisperServer.BaseModel, Model());
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        [Fact]
         public void AMissingExecutableIsReported()
         {
             string dir = Path.Combine(Path.GetTempPath(), "no-whisper-" + Guid.NewGuid().ToString("N"));
@@ -733,8 +777,10 @@ namespace SpatialModeling.VoiceCore.Tests
             }
         }
 
-        /// <summary>A Python stand-in for whisper-server: same arguments, /health and /inference.</summary>
-        static string FakeExecutable(string dir, string transcript, int exitCode = -1)
+        /// <summary>A Python stand-in for whisper-server: same arguments, /health and /inference. With
+        /// <paramref name="gpu"/> it is the CUDA build (ggml-cuda.dll next to it) and exits unless started without
+        /// <c>-ng</c> and with small.en.</summary>
+        static string FakeExecutable(string dir, string transcript, int exitCode = -1, bool gpu = false)
         {
             string python = new[] { "/usr/bin/python3", "/usr/local/bin/python3", "/opt/homebrew/bin/python3" }.FirstOrDefault(File.Exists);
             Skip.If(RuntimeInformation.IsOSPlatform(OSPlatform.Windows) || python == null, "Needs python3 on Linux or macOS");
@@ -743,7 +789,9 @@ namespace SpatialModeling.VoiceCore.Tests
 import sys, json, time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 args = sys.argv[1:]
-assert args[args.index('-m') + 1].endswith('.bin') and '-ng' in args, args
+" + (gpu
+                ? "assert args[args.index('-m') + 1].endswith('" + WhisperServer.SmallModel + "') and '-ng' not in args, args"
+                : "assert args[args.index('-m') + 1].endswith('.bin') and '-ng' in args, args") + @"
 if " + exitCode + @" >= 0:
     print('error: failed to initialize whisper context', file=sys.stderr); sys.exit(" + exitCode + @")
 time.sleep(0.3)  # loading the model
@@ -760,7 +808,38 @@ HTTPServer(('127.0.0.1', int(args[args.index('--port') + 1])), H).serve_forever(
             if (!OperatingSystem.IsWindows())
                 File.SetUnixFileMode(script, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             File.WriteAllText(Path.Combine(dir, WhisperServer.TinyModel), "not a real model");
+            if (gpu)
+            {
+                File.WriteAllText(Path.Combine(dir, WhisperServer.SmallModel), "not a real model");
+                File.WriteAllText(Path.Combine(dir, "ggml-cuda.dll"), "");
+            }
             return script;
+        }
+
+        [SkippableFact]
+        public void TheCudaBuildStartsOnTheGpuWithSmallEn()
+        {
+            string dir = Directory.CreateTempSubdirectory("whisper-fake-gpu").FullName;
+            try
+            {
+                string exe = FakeExecutable(dir, " Undo.", gpu: true); // exits unless -m ggml-small.en.bin without -ng
+                var log = new List<string>();
+                var settings = new VoiceRecognizerSettings
+                {
+                    Kind = RecognizerKind.Whisper, WhisperFolder = dir, WhisperPort = FreePort(), Log = log.Add,
+                };
+                using (ISpeechRecognizer whisper = VoiceRecognizers.Create(settings))
+                {
+                    Assert.Contains(log, l => l.Contains("Voice: Whisper only (" + WhisperServer.SmallModel + " on the GPU)"));
+                    Assert.Contains(log, l => l.StartsWith("Started " + exe) && !l.Contains(" -ng"));
+                    whisper.SetGrammar(new[] { "undo", "redo" });
+                    Assert.Equal("undo", Assert.Single(Utter((WhisperServerRecognizer)whisper)).Text);
+                }
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
         }
 
         [SkippableFact]

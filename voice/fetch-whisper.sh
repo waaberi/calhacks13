@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
 # Downloads whisper.cpp's whisper-server for Windows x64 (the prebuilt release b5454, checked by SHA-256) and the
-# ggml tiny.en and base.en models (a pinned revision, checked by SHA-256) into DEST/whisper/, the folder the app
-# starts whisper-server from (VoiceRecognizers.Create). About 240 MB, so it is never committed.
+# ggml tiny.en and base.en models (a pinned revision, checked by SHA-256; with --cuda also small.en) into
+# DEST/whisper/, the folder the app starts whisper-server from (VoiceRecognizers.Create). About 240 MB (1.9 GB with
+# --cuda), so it is never committed.
 #
 #   voice/fetch-whisper.sh app/Assets/StreamingAssets                # for the Unity app and its Windows build
 #   voice/fetch-whisper.sh                                           # into voice/models/whisper/, for the tests
 #   voice/fetch-whisper.sh --models-only [DEST]                      # just the models (Linux, macOS)
-#   voice/fetch-whisper.sh --cuda app/Assets/StreamingAssets         # the CUDA 12.4 build instead (NVIDIA GPU)
+#   voice/fetch-whisper.sh --cuda app/Assets/StreamingAssets         # the CUDA 12.4 build and small.en (NVIDIA GPU)
+#   voice/fetch-whisper.sh --models-only --cuda [DEST]               # the models with small.en, for a GPU build of your own
 #
-# --cuda: on a Windows PC with an NVIDIA GPU and a driver for CUDA 12.4 or later, the same release's CUDA 12.4 build
-# (685 MB zip, about 1.2 GB unpacked with cuBLAS). The app then decodes on the GPU (VoiceRecognizerSettings
-# .WhisperUseGpu). Without --cuda you get the 9 MB CPU build, which runs everywhere: use it with tiny.en when there is
-# no NVIDIA GPU. Running the script again with or without --cuda swaps the build in DEST/whisper.
+# --cuda: on a Windows PC with an NVIDIA GPU and a driver for CUDA 12.4 or later (the demo PC), the same release's
+# CUDA 12.4 build (685 MB zip, about 1.2 GB unpacked with cuBLAS) and the small.en model (488 MB). The app then
+# decodes on the GPU with small.en (VoiceRecognizerSettings.UsesGpu, WhisperModel). Without --cuda you get the 9 MB
+# CPU build, which runs everywhere, and the app uses tiny.en: small.en is too slow on a CPU. Running the script again
+# with or without --cuda swaps the build in DEST/whisper; small.en stays (unused by the CPU build; delete it to keep
+# it out of the Unity build).
 # The Windows binaries need the Microsoft Visual C++ 2015-2022 Redistributable (x64) on the PC that runs them:
 # https://aka.ms/vs/17/release/vc_redist.x64.exe (whisper-server.exe imports MSVCP140, VCRUNTIME140, VCRUNTIME140_1).
 # There is no prebuilt server for Linux or macOS: build one as voice/README.md describes.
@@ -29,6 +33,7 @@ MODEL_REVISION=5359861c739e955e79d9a303bcbc70fb988958b1                   # hugg
 MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/$MODEL_REVISION"
 MODELS="ggml-tiny.en.bin:921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f
 ggml-base.en.bin:a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002" # 78 MB and 148 MB
+GPU_MODELS="ggml-small.en.bin:c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d" # 487,614,201 bytes, checked 2026-10-24
 
 binaries=1
 cuda=0
@@ -97,7 +102,12 @@ if [ "$binaries" = 1 ]; then
   fi
 fi
 
-echo "$MODELS" | while IFS=: read -r name expected; do
+models="$MODELS"
+if [ "$cuda" = 1 ]; then
+  models="$MODELS
+$GPU_MODELS"
+fi
+echo "$models" | while IFS=: read -r name expected; do
   if [ -f "$dest/$name" ] && [ "$(sha256 "$dest/$name")" = "$expected" ]; then
     echo "$dest/$name already exists"
   else

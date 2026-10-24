@@ -31,10 +31,13 @@ namespace SpatialModeling.VoiceCore.Whisper
         public string WhisperFolder;
 
         /// <summary>
-        /// The model file in <see cref="WhisperFolder"/> (or a full path). If it is missing, the other model that
-        /// <c>voice/fetch-whisper.sh</c> downloads is used. tiny.en: see <see cref="WhisperServer.TinyModel"/>.
+        /// The model file in <see cref="WhisperFolder"/> (or a full path). Null (the default) picks by where it decodes
+        /// (<see cref="UsesGpu"/>): small.en on the GPU (<see cref="WhisperServer.SmallModel"/>), tiny.en on the CPU
+        /// (<see cref="WhisperServer.TinyModel"/>). Set it to override, for example tiny.en on the GPU. If the file is
+        /// missing, another model that <c>voice/fetch-whisper.sh</c> downloads is used: small.en falls back to tiny.en,
+        /// then base.en; tiny.en to base.en; anything else to tiny.en.
         /// </summary>
-        public string WhisperModel = WhisperServer.TinyModel;
+        public string WhisperModel;
 
         /// <summary>A whisper-server executable elsewhere, for example a Linux build; null for the one in the folder.</summary>
         public string WhisperExecutable;
@@ -47,7 +50,8 @@ namespace SpatialModeling.VoiceCore.Whisper
         /// <summary>
         /// Decode on the GPU: null (the default) does when <see cref="WhisperFolder"/> holds the CUDA build
         /// (<c>voice/fetch-whisper.sh --cuda</c>, see <see cref="WhisperServer.HasGpuBuild"/>); true or false forces it.
-        /// The CPU build always decodes on the CPU.
+        /// The CPU build always decodes on the CPU. It also picks the default <see cref="WhisperModel"/>: false gives
+        /// tiny.en, the way back to the CPU if the GPU build drops frames.
         /// </summary>
         public bool? WhisperUseGpu;
 
@@ -85,14 +89,29 @@ namespace SpatialModeling.VoiceCore.Whisper
                 Log = log,
             };
 
-        internal string ModelPath()
+        /// <summary>
+        /// Whisper decodes on the GPU: <see cref="WhisperUseGpu"/>, or when that is null, whether the executable's folder
+        /// holds the CUDA build (<see cref="WhisperServer.HasGpuBuild"/>). Decides <c>-ng</c> and the default model.
+        /// </summary>
+        public bool UsesGpu() => WhisperUseGpu ?? WhisperServer.HasGpuBuild(ExecutablePath());
+
+        /// <summary>The model file whisper-server gets: <see cref="WhisperModel"/>, or the default for
+        /// <see cref="UsesGpu"/>, or the first fallback that exists.</summary>
+        public string ModelPath()
         {
-            string chosen = Path.Combine(WhisperFolder ?? "", WhisperModel ?? WhisperServer.TinyModel);
+            string folder = WhisperFolder ?? "";
+            string chosen = Path.Combine(folder, WhisperModel ?? (UsesGpu() ? WhisperServer.SmallModel : WhisperServer.TinyModel));
             if (File.Exists(chosen))
                 return chosen;
-            string other = Path.Combine(WhisperFolder ?? "",
-                Path.GetFileName(chosen) == WhisperServer.TinyModel ? WhisperServer.BaseModel : WhisperServer.TinyModel);
-            return File.Exists(other) ? other : chosen;
+            string name = Path.GetFileName(chosen);
+            string[] fallbacks =
+                name == WhisperServer.SmallModel ? new[] { WhisperServer.TinyModel, WhisperServer.BaseModel } :
+                name == WhisperServer.TinyModel ? new[] { WhisperServer.BaseModel } :
+                new[] { WhisperServer.TinyModel };
+            foreach (string fallback in fallbacks)
+                if (File.Exists(Path.Combine(folder, fallback)))
+                    return Path.Combine(folder, fallback);
+            return chosen;
         }
 
         internal string ExecutablePath() => WhisperExecutable ?? Path.Combine(WhisperFolder ?? "", WhisperServer.ExecutableName);
@@ -104,12 +123,13 @@ namespace SpatialModeling.VoiceCore.Whisper
     /// Vosk and starting whisper-server happen side by side there, never on a frame.
     /// <para><b>GPU or CPU.</b> Which whisper-server runs is decided by what <c>voice/fetch-whisper.sh</c> put in
     /// StreamingAssets/whisper, not here. On a Windows PC with an NVIDIA GPU (the demo PC), prefer the CUDA 12.4 build
-    /// (<c>voice/fetch-whisper.sh --cuda app/Assets/StreamingAssets</c>, about 690 MB, needs an NVIDIA driver for
-    /// CUDA 12.4 or later): <see cref="VoiceRecognizerSettings.WhisperUseGpu"/> then lets it decode on the GPU
-    /// (a Linux GPU build took 18-22 ms for tiny.en on an idle RTX 5070 Ti, against about 460 ms on 4 CPU threads; the
-    /// Windows CUDA build and a GPU busy rendering VR are unmeasured, so set WhisperUseGpu = false if frames drop or
-    /// it fails to start, which falls back as below). Everywhere else use the CPU
-    /// build (the default download) with tiny.en (<see cref="VoiceRecognizerSettings.WhisperModel"/>). If
+    /// (<c>voice/fetch-whisper.sh --cuda app/Assets/StreamingAssets</c>: a 685 MB zip and the 488 MB small.en model,
+    /// needs an NVIDIA driver for CUDA 12.4 or later). With it <see cref="VoiceRecognizerSettings.UsesGpu"/> is true,
+    /// so whisper-server decodes on the GPU with small.en (a GPU build took about 0.2 s per utterance for small.en and
+    /// 18-22 ms for tiny.en on an idle RTX 5070 Ti; small.en takes 2.6-4 s on 4 CPU threads). The Windows CUDA build and
+    /// a GPU busy rendering VR are unmeasured: set WhisperUseGpu = false if frames drop or it fails to start (then
+    /// tiny.en on the CPU), or WhisperModel = tiny.en to stay on the GPU with a lighter model. Everywhere else use the
+    /// CPU build (the default download), which gets tiny.en (<see cref="VoiceRecognizerSettings.WhisperModel"/>). If
     /// whisper-server can't start at all (no driver, no VC++ runtime), FastPath falls back to Vosk alone and logs why.</para>
     /// </summary>
     public static class VoiceRecognizers
@@ -136,7 +156,7 @@ namespace SpatialModeling.VoiceCore.Whisper
                         server.Dispose();
                         throw;
                     }
-                    log("Voice: Whisper only (" + Path.GetFileName(settings.ModelPath()) + ")");
+                    log("Voice: Whisper only (" + Describe(settings) + ")");
                     return Recognizer(settings, server);
                 }
                 default:
@@ -170,13 +190,17 @@ namespace SpatialModeling.VoiceCore.Whisper
                 server.Dispose();
                 return vosk;
             }
-            log("Voice: Vosk with Whisper (" + Path.GetFileName(settings.ModelPath()) + ") when Vosk isn't sure");
+            log("Voice: Vosk with Whisper (" + Describe(settings) + ") when Vosk isn't sure");
             return new FastPathRecognizer(vosk, Recognizer(settings, server), settings.MinFastConfidence);
         }
 
+        /// <summary>"ggml-small.en.bin on the GPU", for the log.</summary>
+        static string Describe(VoiceRecognizerSettings settings) =>
+            Path.GetFileName(settings.ModelPath()) + (settings.UsesGpu() ? " on the GPU" : " on the CPU");
+
         static WhisperServer Server(VoiceRecognizerSettings settings, Action<string> log) =>
             new WhisperServer(settings.ExecutablePath(), settings.ModelPath(), settings.WhisperPort, settings.WhisperThreads,
-                settings.WhisperStartTimeoutMs, log, settings.WhisperUseGpu ?? WhisperServer.HasGpuBuild(settings.ExecutablePath()));
+                settings.WhisperStartTimeoutMs, log, settings.UsesGpu());
 
         static WhisperServerRecognizer Recognizer(VoiceRecognizerSettings settings, WhisperServer server) =>
             new WhisperServerRecognizer(settings.WhisperPort, settings.WhisperPrompt, settings.PromptWithGrammar,

@@ -12,7 +12,7 @@ Owner: Waaberi. The Unity side, `VoiceUiAdapter.cs` in `app/`, is Jihyeon's.
 | `VoiceCore/Prompts/Resources/VoiceCorePrompts/` | One clip per `Prompt`, made by `make-prompts.py`. |
 | `VoiceCore/Plugins/` | Vosk's native libraries, from `fetch-vosk.sh`. Not in Git. |
 | `fetch-model.sh`, `fetch-vosk.sh` | Download the pinned model and native libraries, with SHA-256 checks. |
-| `fetch-whisper.sh` | Downloads the pinned whisper-server for Windows and the tiny.en and base.en models, with SHA-256 checks. |
+| `fetch-whisper.sh` | Downloads the pinned whisper-server for Windows and the tiny.en and base.en models, with SHA-256 checks; `--cuda` gets the CUDA build and small.en instead ([GPU or CPU](#gpu-or-cpu)). |
 | `VoskSpike/` | Measures real recognition on audio files through the same path as the app. |
 
 ## Setup on every machine
@@ -27,7 +27,8 @@ voice/fetch-whisper.sh app/Assets/StreamingAssets  # whisper-server.exe and its 
 dotnet test tests/voice
 ```
 
-`fetch-whisper.sh` puts about 240 MB into `StreamingAssets/whisper/`, which is never committed. The Windows PC that
+`fetch-whisper.sh` puts about 240 MB into `StreamingAssets/whisper/`, which is never committed (on the demo PC with
+its NVIDIA GPU use `fetch-whisper.sh --cuda` instead, see [GPU or CPU](#gpu-or-cpu)). The Windows PC that
 runs the app needs the [Visual C++ 2015-2022 Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe)
 for whisper-server.exe; most PCs with games or Unity already have it. Without the download the app runs as before, on
 Vosk alone.
@@ -204,7 +205,7 @@ the paths of `fetch-model.sh` and `fetch-whisper.sh`; `log` (for example `Debug.
 
 | `Kind` | What it does |
 | --- | --- |
-| `FastPath` (default) | Vosk in grammar mode answers when it heard exactly one grammar phrase at confidence 0.9 or more (about 7 ms after release). Otherwise whisper tiny.en decodes the utterance (about 0.45 s on 4 CPU threads) and its transcript is snapped onto the grammar. If whisper-server can't start (no download, no VC++ runtime), it logs why and runs Vosk alone. |
+| `FastPath` (default) | Vosk in grammar mode answers when it heard exactly one grammar phrase at confidence 0.9 or more (about 7 ms after release). Otherwise Whisper decodes the utterance (tiny.en on the CPU, about 0.45 s on 4 threads; small.en on the GPU, see [GPU or CPU](#gpu-or-cpu)) and its transcript is snapped onto the grammar. While VoiceSession asks "which one?", Vosk hears only the answers and Whisper the answers and the full grammar. If whisper-server can't start (no download, no VC++ runtime), it logs why and runs Vosk alone. |
 | `Vosk` | Vosk alone, VoiceCore's behaviour before Whisper. Use it for an open microphone: the fast path answers on release only. |
 | `Whisper` | Whisper for every utterance. For measurements. |
 
@@ -245,8 +246,8 @@ The prompt is the Blender vocabulary prompt plus the grammar's other words (obje
 characters.
 
 **whisper-server.** `WhisperServer` starts `StreamingAssets/whisper/whisper-server.exe -m ggml-tiny.en.bin --host
-127.0.0.1 --port 8178 -t 4 -l en -nt -ng` (CPU only; without `-ng` for the CUDA build, see below) without a console window, while Vosk loads
-its model. It waits for `/health`, warms the model up with half a second of silence (about 0.5 s in total for tiny.en,
+127.0.0.1 --port 8178 -t 4 -l en -nt -ng` (CPU only; `-m ggml-small.en.bin` without `-ng` for the CUDA build, see
+below) without a console window, while Vosk loads its model. It waits for `/health`, warms the model up with half a second of silence (about 0.5 s in total for tiny.en,
 1 s for base.en) and is killed when VoiceInput is disposed. It runs at below-normal priority, so a decode never delays
 a VR frame. On Windows it first checks for the VC++ runtime DLLs: without them Windows would show a "DLL was not found"
 dialog on the desktop and the server would hang until someone closed it, so voice falls back to Vosk at once and the
@@ -254,17 +255,36 @@ log says what to install. Voice input isn't ready until the server is (at most `
 Vosk alone). A server already answering on the port, for example one left over from a crash, is reused. If the server
 dies or goes away, it is started again at the next utterance, once: if that fails, Vosk answers alone from then on. An
 utterance whose request fails or takes longer than 4 s gets Vosk's result instead. It listens on 127.0.0.1 only, so
-Windows asks no firewall question. Settings: `WhisperModel` (`ggml-tiny.en.bin`, or `ggml-base.en.bin`),
-`WhisperPort`, `WhisperThreads`, `WhisperTimeoutMs`, `WhisperStartTimeoutMs`, `PromptWithGrammar`,
-`WhisperGuessConfidence` (1 lets guesses run), `SnapThreshold`, `MinFastConfidence`, `WhisperUseGpu`.
+Windows asks no firewall question. Settings: `WhisperModel` (null: small.en on the GPU, tiny.en on the CPU; or
+`ggml-tiny.en.bin`, `ggml-base.en.bin`, `ggml-small.en.bin`), `WhisperPort`, `WhisperThreads`, `WhisperTimeoutMs`,
+`WhisperStartTimeoutMs`, `PromptWithGrammar`, `WhisperGuessConfidence` (1 lets guesses run), `SnapThreshold`,
+`MinFastConfidence`, `WhisperUseGpu`.
 
-**GPU or CPU.** On a Windows PC with an NVIDIA GPU, prefer the CUDA 12.4 build of the same release:
-`voice/fetch-whisper.sh --cuda app/Assets/StreamingAssets` (685 MB zip, SHA-256 pinned; about 1.2 GB unpacked with
-cuBLAS; needs an NVIDIA driver for CUDA 12.4 or later). With `ggml-cuda.dll` in the folder, `WhisperUseGpu` (null:
-auto) drops `-ng` and the GPU decodes; a Linux GPU build took 18-22 ms for tiny.en on an idle RTX 5070 Ti, against
-about 460 ms on the CPU. The Windows CUDA build and a GPU busy rendering VR are unmeasured: set `WhisperUseGpu = false`
-if frames drop. Without an NVIDIA GPU use the default CPU build with tiny.en. Running the script again with or without
-`--cuda` swaps the build.
+#### GPU or CPU
+
+The model follows where Whisper decodes (`VoiceRecognizerSettings.UsesGpu()`): small.en on the GPU, tiny.en on the
+CPU. small.en is the most accurate of the three (184 of 250 TTS commands before snapping, against 165 for tiny.en),
+it was tried on a GPU and kept, and it takes about 0.2 s per utterance on a GPU (Vulkan build, idle RTX 5070 Ti) but
+2.6-4 s on 4 CPU threads, so it is never used on the CPU. The log says which: `Voice: Vosk with Whisper
+(ggml-small.en.bin on the GPU) when Vosk isn't sure`.
+
+On the demo PC (Talia's: Windows, NVIDIA GPU), in Git Bash at the repository root:
+
+```sh
+voice/fetch-whisper.sh --cuda app/Assets/StreamingAssets   # CUDA 12.4 build (685 MB zip) and small.en (488 MB)
+```
+
+Both downloads are SHA-256 pinned; unpacked it is about 1.2 GB with cuBLAS, plus the models. It needs an NVIDIA driver
+for CUDA 12.4 or later. With `ggml-cuda.dll` in `StreamingAssets/whisper`, `WhisperUseGpu` (null: auto) drops `-ng`
+and the app loads small.en: check the Unity log for `Started ... -m ...ggml-small.en.bin ...` without `-ng`, then
+`... on the GPU`. A Linux GPU build took 18-22 ms for tiny.en on an idle RTX 5070 Ti, against about 460 ms on the CPU.
+The Windows CUDA build and a GPU busy rendering VR are unmeasured. If frames drop: `WhisperModel =
+WhisperServer.TinyModel` keeps the GPU with the lighter model; `WhisperUseGpu = false` goes back to the CPU with
+tiny.en. If the CUDA build doesn't start at all, FastPath runs Vosk alone and logs why; then run the script again
+without `--cuda` (`voice/fetch-whisper.sh app/Assets/StreamingAssets`), which swaps back to the CPU build (small.en
+stays in the folder, unused: delete `ggml-small.en.bin` to keep it out of the Unity build). Without an NVIDIA GPU use
+the default CPU build, which gets tiny.en. A CUDA build fetched before small.en was added falls back to tiny.en on the
+GPU until the script is run again with `--cuda`.
 
 **In the Unity adapter** the change is one line, plus `using SpatialModeling.VoiceCore.Whisper;`:
 
@@ -324,8 +344,8 @@ loses on clean and distant audio, and runs fewer wrong commands and less chatter
 Vosk's small model with today's word grammar got 3 of 20 intended commands in #93; the team's own recordings are the
 test that decides.
 
-tiny.en is the default: base.en is no more accurate here (2 more right of 1,008 real clips, 3 fewer of 270 on the TTS
-corpus) and takes twice as long and twice the CPU. Whisper alone on real single words is worse than Vosk (909 of 1,008),
+tiny.en is the default on the CPU (small.en on the GPU, see [GPU or CPU](#gpu-or-cpu)): base.en is no more accurate
+here (2 more right of 1,008 real clips, 3 fewer of 270 on the TTS corpus) and takes twice as long and twice the CPU. Whisper alone on real single words is worse than Vosk (909 of 1,008),
 which is why Vosk answers first. The grammar words in the prompt are worth 9 of 270 for 38 ms. All but the Speech
 Commands rows are TTS, so treat them as a proxy for real voices; the Quest microphone over Air Link is unmeasured.
 On the demo PC the CPU also runs Unity and Blender, so expect whisper to be slower there.

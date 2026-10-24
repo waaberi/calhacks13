@@ -35,11 +35,19 @@ namespace SpatialModeling.VoiceCore.Whisper
         public const string FolderName = "whisper";
 
         /// <summary>
-        /// Models <c>voice/fetch-whisper.sh</c> downloads. tiny.en is the default: on 1,008 real Speech Commands clips the
-        /// fast path got 962 right with tiny.en and 964 with base.en, and base.en takes about twice as long on the CPU
-        /// (voice/README.md).
+        /// Models <c>voice/fetch-whisper.sh</c> downloads. tiny.en is the default on the CPU: on 1,008 real Speech
+        /// Commands clips the fast path got 962 right with tiny.en and 964 with base.en, and base.en takes about twice
+        /// as long on the CPU (voice/README.md).
         /// </summary>
         public const string BaseModel = "ggml-base.en.bin", TinyModel = "ggml-tiny.en.bin";
+
+        /// <summary>
+        /// The default on the GPU (<c>voice/fetch-whisper.sh --cuda</c> downloads it, 488 MB): the most accurate of the
+        /// three on the TTS corpus (184 of 250 commands before snapping, against 165 for tiny.en) and the one the team
+        /// tried on a GPU and kept. About 0.2 s per utterance on a GPU (Vulkan, idle RTX 5070 Ti), but 2.6-4 s on 4
+        /// CPU threads, so never on the CPU.
+        /// </summary>
+        public const string SmallModel = "ggml-small.en.bin";
 
         static bool IsWindows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
 
