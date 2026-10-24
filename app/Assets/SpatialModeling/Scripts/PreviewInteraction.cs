@@ -16,7 +16,7 @@ namespace SpatialModeling
     public sealed class PreviewInteraction : MonoBehaviour
     {
         public static PreviewInteraction Current { get; private set; }
-        public static bool BlocksDesktopShortcuts => Current != null && (Current.inputEnabled || Current.focusRequested
+        public static bool BlocksDesktopShortcuts => Current != null && (Current.inputEnabled || Current.focusRequested || Current.endAfterRelease
             || (Current.Drawing != null && Current.Drawing.IsNativeUiOwned));
         public static bool Requested => Environment.GetEnvironmentVariable("CALHACKS_P25") == "1"
             || Array.IndexOf(Environment.GetCommandLineArgs(), "--p25") >= 0;
