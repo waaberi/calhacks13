@@ -115,11 +115,12 @@ def start():
         except OSError as e:
             if extra is None:
                 raise
-            lan_status = f"Not listening: {e}"  # the error names the address that failed
+            srv = _start_server(None)  # raises again if the localhost port is the problem
+            lan_status = f"Not listening: {e}"  # so it was the LAN port
             extra = None
-            srv = _start_server(None)  # the Unity app's port works without the LAN one
     except OSError as e:
         status = f"Could not listen on {server.HOST}:{server.PORT}: {e}"
+        lan_status = "Off: the host server could not start" if lan_status != "Off" else "Off"
         print("Spatial Modeling:", status)
         return
     finally:
