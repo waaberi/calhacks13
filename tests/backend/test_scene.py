@@ -461,6 +461,52 @@ def test_undo_and_redo_send_what_changed_and_ids_survive(host):
     nothing_sent(host)
 
 
+def test_a_move_to_another_collection_is_a_change(host):
+    """The Outliner's drag and drop, and M, change only the collections holding an object.
+
+    The wire has no collections, but the object changed: it gets a new generation, so
+    gate.py sees the change (#80) and an older command on it is stale_revision.
+    """
+    scene_collection = bpy.context.scene.collection
+    parts = bpy.data.collections.new("Parts")
+    scene_collection.children.link(parts)
+    cube = box("Cube", (2, 2, 2))
+    box("Other", (1, 1, 1), (5, 0, 0))
+    bpy.ops.ed.undo_push(message="Set up")
+    before = snapshot()
+    cube_id = before["Cube"]["id"]
+    changes = []
+    sync.on_change = lambda changed, removed, everything: changes.append(
+        (changed, removed, everything))
+    try:
+        parts.objects.link(cube)  # what the Outliner's drag and drop does
+        scene_collection.objects.unlink(cube)
+        bpy.ops.ed.undo_push(message="Move to Parts")
+        u = update(host)
+        [moved] = u["objects"]
+        assert moved["generation"] == u["document"]["revision"] == sync.generation(cube_id)
+        assert "mesh" not in moved and u["removed"] == []
+        assert {k: v for k, v in moved.items() if k != "generation"} == {
+            k: v for k, v in before["Cube"].items() if k not in ("generation", "mesh")}
+        assert changes == [([cube_id], {}, False)]
+
+        parts.name = "Renamed"  # the collection, not the object
+        nothing_sent(host)
+        scene_collection.objects.link(cube)  # Ctrl+drag: linked to a second collection
+        assert [o["id"] for o in update(host)["objects"]] == [cube_id]
+
+        bpy.ops.ed.undo()  # back in the scene's collection only; Other unchanged
+        assert [o["id"] for o in update(host)["objects"]] == [cube_id]
+        assert [c.name for c in sync.find_object(cube_id).users_collection] == [
+            bpy.context.scene.collection.name]  # Undo replaced the data-blocks: look up again
+        bpy.ops.ed.redo()
+        assert [o["id"] for o in update(host)["objects"]] == [cube_id]
+        nothing_sent(host)
+        assert len(changes) == 4 and all(c == ([cube_id], {}, False) for c in changes[2:])
+    finally:
+        sync.on_change = None
+
+
 def test_a_unit_change_sends_a_fresh_snapshot(host):
     set_units(1.0, "METERS")
     box("Cube", (0.1, 0.1, 0.1))

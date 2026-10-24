@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "voice.grammar.schema.json",
+  "title": "voice.grammar",
+  "description": "Host to client, answers voice.grammar_query. The phrases for the recognizer's grammar (Vosk grammar mode): the host's voice operations, their numbers and units, the choice words and the client's own command words. The client adds its object names and \"[unk]\".",
+  "$ref": "envelope.schema.json",
+  "required": ["re"],
+  "properties": {
+    "type": { "const": "voice.grammar" },
+    "payload": {
+      "type": "object",
+      "required": ["version", "phrases"],
+      "properties": {
+        "version": { "description": "Changes whenever the phrases do.", "type": "string", "minLength": 1, "maxLength": 64 },
+        "phrases": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z]+( [a-z]+)*$", "maxLength": 128 },
+          "minItems": 1,
+          "maxItems": 5000,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

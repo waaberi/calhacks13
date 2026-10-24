@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "voice.resolve.schema.json",
+  "title": "voice.resolve",
+  "description": "Client to host. What the recognizer heard, for the host to match against its voice operations. The host answers voice.candidates and changes nothing. A host without voice answers error unknown_type: the client falls back to its own commands.",
+  "$ref": "envelope.schema.json",
+  "properties": {
+    "type": { "const": "voice.resolve" },
+    "payload": {
+      "type": "object",
+      "required": ["text", "confidence"],
+      "properties": {
+        "text": { "description": "The transcript, as heard.", "type": "string", "minLength": 1, "maxLength": 500 },
+        "confidence": { "description": "The recognizer's confidence in the transcript (Vosk: its lowest word's).", "type": "number", "minimum": 0, "maximum": 1 },
+        "target": { "description": "The object the user means (selected or pointed at), with the generation the client has. Leave out when there is none.", "$ref": "command.schema.json#/$defs/target" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

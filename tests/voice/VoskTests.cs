@@ -14,17 +14,17 @@ namespace SpatialModeling.VoiceCore.Tests
     /// </summary>
     public class VoskTests
     {
-        const string Shaft = "fd7bd4ddae444528a4fedbc562fe018b";
+        internal const string Shaft = "fd7bd4ddae444528a4fedbc562fe018b";
         static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
 
-        static string ModelPath =>
+        internal static string ModelPath =>
             Environment.GetEnvironmentVariable("VOSK_MODEL") ?? Path.Combine(Contract.Root, "voice", "models", VoskSpeechRecognizer.ModelName);
 
         static void SkipWithoutModel() =>
             Skip.IfNot(Directory.Exists(ModelPath), "No Vosk model at " + ModelPath + "; run voice/fetch-model.sh");
 
         /// <summary>Decoded like Unity's AudioClip.GetData: floats at the file's rate.</summary>
-        static (float[] samples, int rate) Audio(string path)
+        internal static (float[] samples, int rate) Audio(string path)
         {
             using (var vorbis = new NVorbis.VorbisReader(path))
             {
@@ -36,13 +36,13 @@ namespace SpatialModeling.VoiceCore.Tests
             }
         }
 
-        static string Fixture(string name) => Path.Combine(Contract.Root, "tests", "voice", "audio", name + ".ogg");
+        internal static string Fixture(string name) => Path.Combine(Contract.Root, "tests", "voice", "audio", name + ".ogg");
 
         static string Clip(Prompt prompt) =>
             Path.Combine(Contract.Root, "voice", "VoiceCore", "Prompts", "Resources", prompt.ClipResource + ".ogg");
 
         /// <summary>Push-to-talk around the audio, in 20 ms microphone frames, with a little silence after it.</summary>
-        static void Speak(VoiceInput input, string path, bool pausedForPrompt = false)
+        internal static void Speak(VoiceInput input, string path, bool pausedForPrompt = false)
         {
             (float[] samples, int rate) = Audio(path);
             samples = samples.Concat(new float[rate / 2]).ToArray();
@@ -62,7 +62,7 @@ namespace SpatialModeling.VoiceCore.Tests
         }
 
         /// <summary>Everything recognized since the last call, as one result with the lowest confidence.</summary>
-        static RecognitionResult Heard(VoiceInput input)
+        internal static RecognitionResult Heard(VoiceInput input)
         {
             Assert.True(input.WaitIdle(Timeout));
             Assert.Null(input.Error);
@@ -82,7 +82,7 @@ namespace SpatialModeling.VoiceCore.Tests
             return input;
         }
 
-        static VoiceSession ExampleScene()
+        internal static VoiceSession ExampleScene()
         {
             var session = new VoiceSession();
             session.SetObjects(Contract.SnapshotObjects());
@@ -122,7 +122,7 @@ namespace SpatialModeling.VoiceCore.Tests
         }
 
         /// <summary>What a session does with the result, with the shaft selected.</summary>
-        static string Outcome(RecognitionResult result)
+        internal static string Outcome(RecognitionResult result)
         {
             VoiceSession session = ExampleScene();
             session.SetSelection(new[] { Shaft });
