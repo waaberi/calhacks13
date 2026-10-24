@@ -101,8 +101,9 @@ reject (contracts/README.md, Voice). Without `AskHost` nothing changes.
   (an accidental tap, and the default for recognizers that don't say) has no prompt, so it never speaks and keeps any
   question. `NotUnderstood` (speech that matched no phrase) says `low_confidence` and dismisses an open question. A
   recognizer says which by implementing `IReportsNoResult` (raise `NoResult` from `Stop`, only when it raises no
-  result; the Whisper fast path should report a transcript that snapped onto nothing as `NotUnderstood`, and
-  silence hallucinations such as "you" as `Silence`). Empty words given to `Hear` are a `Silence` turn too.
+  result). `WhisperServerRecognizer` and `FastPathRecognizer` do: a transcript that snapped onto nothing is
+  `NotUnderstood`; a silent press and silence hallucinations such as "you" are `Silence`. Vosk alone doesn't say,
+  so every press without a result is `Silence`. Empty words given to `Hear` are a `Silence` turn too.
 - **A delete waiting for its confirmation:** the newest request wins. When a turn has `CancelsDelete` (a command other
   than Cancel, or a new question: a missing field or the host's "which one?"), drop the waiting delete and say
   `replaced_pending` before the turn's own prompts. A delete and a question are then never shown at once, and the
@@ -161,6 +162,8 @@ void Update()
     }
     while (input.TryGetResult(out RecognitionResult result))
         Handle(session.Hear(result));
+    while (input.TryGetNoResult(out NoResultReason why))                // after the results: "Didn't catch that"
+        Handle(session.NothingRecognized(why));
     Handle(session.Tick());
 }
 
@@ -213,16 +216,18 @@ phrases the way Vosk chains them, whichever is closer. Repeated words ("left, le
   the LowConfidence prompt; once results below `MinConfidence` reach the host, the host may only ask about it;
 - a word the grammar knows is never turned into another form of it: "make it smooth." can't become "make it smoother"
   (with "make it smooth" in the host grammar, #147, it is exact);
-- similarity under 0.65: speech that is no command. It raises `WhisperServerRecognizer.NoResult`, a result with text
-  "" and confidence 0, so the app can say "didn't catch that" (`WhisperServerRecognizer.IsNoResult`).
-  `VoiceSession.Hear` ignores a result without text, so nothing changes for a session that doesn't look for it.
+- similarity under 0.65: speech that is no command. No result is raised; `NoResult` (`IReportsNoResult`) says
+  `NotUnderstood`, so `VoiceInput.TryGetNoResult` reports it and `session.NothingRecognized` says "Sorry, I didn't
+  catch that" (see [A press without a result](#the-hosts-resolver-p4)).
 
-**No speech raises nothing.** Before Whisper is asked, a speech gate needs three 30 ms frames at RMS 100 (-50 dBFS) or
+**No speech says nothing.** Before Whisper is asked, a speech gate needs three 30 ms frames at RMS 100 (-50 dBFS) or
 more (`WhisperServerRecognizer.DefaultMinSpeechRms`; the quietest of 1,100 real Speech Commands clips reached 293, the
 silent press of the Unity run 0). Whisper's silence hallucinations ("you", "thank you", "thanks for watching", "bye",
 "[BLANK_AUDIO]", "(music)", a lone "um") are dropped too; in `FastPath` only when Vosk heard nothing, so a "you" that
-Vosk also heard goes out. So an accidental press of push-to-talk says nothing; `FastPathRecognizer.LastOutcome` is
-`Silence`.
+Vosk also heard goes out. Both raise no result and `NoResult` `Silence`, so an accidental press of push-to-talk never
+speaks (the UI may show "Didn't catch that"); `FastPathRecognizer.LastOutcome` is `Silence`. A decode that failed
+(server down, timeout) raises no reason: Vosk's results go out instead, and if Vosk heard nothing VoiceInput counts it
+as `Silence`.
 
 Measured on whisper tiny.en's transcripts (290 TTS clips, 48 chatter clips, the 16 of the Unity run) against the host
 grammar the Unity run used: the TTS commands that run and the chatter accepted are unchanged (chatter 18 of 68

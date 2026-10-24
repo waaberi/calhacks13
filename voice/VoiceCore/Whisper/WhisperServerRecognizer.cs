@@ -27,21 +27,23 @@ namespace SpatialModeling.VoiceCore.Whisper
     /// raises the snapped phrases with their similarity as confidence (capped below 0.5 when the snap had to replace
     /// words, see <see cref="DefaultGuessConfidence"/>). Three answers, so the app can tell them apart:
     /// <list type="bullet">
-    /// <item>a phrase: the snap was accepted;</item>
-    /// <item><see cref="NoResult"/> (text "", confidence 0): speech was heard but none of it is in the grammar
-    /// (chatter, or a command Whisper misheard beyond the snap), so the app can say "didn't catch that";</item>
-    /// <item>nothing at all: no speech. The utterance was silent (<see cref="MinSpeechRms"/>, checked before Whisper
-    /// is asked) or Whisper wrote one of its silence hallucinations ("you", "thank you", "[BLANK_AUDIO]", see
-    /// <see cref="IsSilenceHallucination"/>), so an accidental press says nothing.</item>
+    /// <item>a phrase (<see cref="Recognized"/>): the snap was accepted;</item>
+    /// <item><see cref="NoResult"/> with <see cref="NoResultReason.NotUnderstood"/>: speech was heard but none of it
+    /// is in the grammar (chatter, or a command Whisper misheard beyond the snap), so the session says "didn't catch
+    /// that" (<see cref="VoiceInput.TryGetNoResult"/>, then <see cref="VoiceSession.NothingRecognized"/>);</item>
+    /// <item><see cref="NoResult"/> with <see cref="NoResultReason.Silence"/>: no speech. The utterance was silent
+    /// (<see cref="MinSpeechRms"/>, checked before Whisper is asked) or Whisper wrote one of its silence
+    /// hallucinations ("you", "thank you", "[BLANK_AUDIO]", see <see cref="IsSilenceHallucination"/>), so an
+    /// accidental press says nothing.</item>
     /// </list>
-    /// VoiceSession.Hear ignores a result with no text, so <see cref="NoResult"/> changes nothing for a session that
-    /// doesn't look for it. Whisper is trained on real speech, so it hears
+    /// Whisper is trained on real speech, so it hears
     /// real voices far better than Vosk's small model; the snap keeps its output inside what VoiceCore understands.
     /// It talks HTTP over a plain socket because Unity refuses <c>http://</c> in UnityWebRequest
     /// (<c>insecureHttpOption</c> 0), and it has no native code in Unity: if the server is down or slow the
-    /// utterance fails (<see cref="LastStopFailed"/>) and nothing is raised.
+    /// utterance fails (<see cref="LastStopFailed"/>) and nothing is raised, not even <see cref="NoResult"/> (it may
+    /// have been noise, so VoiceInput counts it as silence).
     /// </summary>
-    public sealed class WhisperServerRecognizer : IFallibleRecognizer
+    public sealed class WhisperServerRecognizer : IFallibleRecognizer, IReportsNoResult
     {
         /// <summary>
         /// The vocabulary prompt from the voice-asr-alternatives study: with it whisper tiny.en got 165 instead of 108
@@ -64,15 +66,6 @@ namespace SpatialModeling.VoiceCore.Whisper
         /// 4-6 to 1-4 per 108 commands, with as many commands run or asked right.
         /// </summary>
         public const float DefaultGuessConfidence = 0.49f;
-
-        /// <summary>
-        /// "Speech was heard, but nothing in it is a command": raised instead of a phrase when the transcript snaps to
-        /// nothing. Text "" and confidence 0; test with <see cref="IsNoResult"/>.
-        /// </summary>
-        public static readonly RecognitionResult NoResult = new RecognitionResult("", 0f);
-
-        /// <summary>The result is <see cref="NoResult"/> (no text).</summary>
-        public static bool IsNoResult(RecognitionResult result) => result.Text.Length == 0;
 
         /// <summary>
         /// The speech gate: an utterance is speech only if at least <see cref="MinSpeechFrames"/> of its 30 ms frames
@@ -132,6 +125,13 @@ namespace SpatialModeling.VoiceCore.Whisper
         }
 
         public event Action<RecognitionResult> Recognized;
+
+        /// <summary>
+        /// Raised from <see cref="Stop"/> instead of <see cref="Recognized"/>: <see cref="NoResultReason.Silence"/> for no
+        /// speech (<see cref="LastWasSilence"/>), <see cref="NoResultReason.NotUnderstood"/> for speech that snapped onto
+        /// no phrase. Not raised for a failed decode (<see cref="LastStopFailed"/>).
+        /// </summary>
+        public event Action<NoResultReason> NoResult;
 
         /// <summary>What Whisper wrote for the last utterance, before snapping (for logs and measurements).</summary>
         public string LastTranscript { get; private set; } = "";
@@ -200,14 +200,14 @@ namespace SpatialModeling.VoiceCore.Whisper
             LastWasHallucination = false;
             if (pcm.Count < rate / 10)
             {
-                LastWasSilence = true;
                 pcm.Clear();
-                return; // under 0.1 s: a click, not speech (whisper.cpp ignores it too)
+                Silent(); // under 0.1 s: a click, not speech (whisper.cpp ignores it too)
+                return;
             }
             if (!HasSpeech(pcm, rate, MinSpeechRms))
             {
-                LastWasSilence = true; // Whisper would write "you": don't ask it
                 pcm.Clear();
+                Silent(); // Whisper would write "you": don't ask it
                 return;
             }
 
@@ -246,26 +246,40 @@ namespace SpatialModeling.VoiceCore.Whisper
             LastTranscript = text.Trim();
             if (PhraseSnapper.Normalize(LastTranscript).Length == 0 && !IsSilenceHallucination(LastTranscript))
             {
-                LastWasSilence = true; // Whisper heard no words
+                Silent(); // Whisper heard no words
                 return;
             }
             LastWasHallucination = IsSilenceHallucination(LastTranscript);
             if (LastWasHallucination && DropSilenceHallucinations)
             {
-                LastWasSilence = true;
+                Silent();
                 return;
             }
             if (snapper == null)
             {
                 string words = PhraseSnapper.Normalize(LastTranscript);
-                Recognized?.Invoke(words.Length == 0 ? NoResult : new RecognitionResult(words, 1f));
+                if (words.Length == 0)
+                    NoResult?.Invoke(NoResultReason.NotUnderstood);
+                else
+                    Recognized?.Invoke(new RecognitionResult(words, 1f));
                 return;
             }
             LastSnap = snapper.Snap(LastTranscript);
-            Recognized?.Invoke(!LastSnap.Accepted
-                ? NoResult
-                : new RecognitionResult(LastSnap.Text,
-                    LastSnap.WordForWord ? LastSnap.Similarity : Math.Min(LastSnap.Similarity, guessConfidence)));
+            if (!LastSnap.Accepted)
+            {
+                NoResult?.Invoke(NoResultReason.NotUnderstood); // speech, but no command: "didn't catch that"
+                return;
+            }
+            Recognized?.Invoke(new RecognitionResult(LastSnap.Text,
+                LastSnap.WordForWord ? LastSnap.Similarity : Math.Min(LastSnap.Similarity, guessConfidence)));
+        }
+
+        /// <summary>No speech: sets <see cref="LastWasSilence"/> and raises <see cref="NoResult"/> with
+        /// <see cref="NoResultReason.Silence"/>.</summary>
+        void Silent()
+        {
+            LastWasSilence = true;
+            NoResult?.Invoke(NoResultReason.Silence);
         }
 
         /// <summary>

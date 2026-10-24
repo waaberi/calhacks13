@@ -13,11 +13,13 @@ namespace SpatialModeling.VoiceCore.Whisper
     /// top-1 vs 151 for Vosk alone, 0/20 and 0/48 chatter accepted, and 65% of utterances on the fast path.
     /// Needs push-to-talk: results come out at <see cref="Stop"/>, so with an open microphone (Start once, never
     /// Stop) use Vosk alone.
-    /// No speech raises nothing: Whisper's speech gate drops a silent press, and a silence hallucination ("you",
-    /// "thank you") is dropped here unless Vosk heard something too. Speech that is no command raises
-    /// <see cref="WhisperServerRecognizer.NoResult"/> (see there).
+    /// An utterance without a result raises <see cref="NoResult"/> (<see cref="IReportsNoResult"/>):
+    /// <see cref="NoResultReason.Silence"/> for no speech (Whisper's speech gate dropped a silent press, or Whisper
+    /// wrote a silence hallucination such as "you" that Vosk didn't back up: <see cref="FastPathOutcome.Silence"/>),
+    /// and the slow recognizer's reason otherwise: <see cref="NoResultReason.NotUnderstood"/> when Whisper's
+    /// transcript snapped onto no phrase. Nothing when Whisper failed and Vosk heard nothing either.
     /// </summary>
-    public sealed class FastPathRecognizer : ISpeechRecognizer
+    public sealed class FastPathRecognizer : ISpeechRecognizer, IReportsNoResult
     {
         /// <summary>The measured fast-path gate.</summary>
         public const float DefaultMinFastConfidence = 0.9f;
@@ -28,6 +30,7 @@ namespace SpatialModeling.VoiceCore.Whisper
         readonly List<RecognitionResult> fastResults = new List<RecognitionResult>();
         readonly List<RecognitionResult> slowResults = new List<RecognitionResult>();
         HashSet<string> phrases = new HashSet<string>(StringComparer.Ordinal);
+        NoResultReason? slowReason; // the slow recognizer's NoResult during this Stop
         int rate = 16000;
 
         public FastPathRecognizer(ISpeechRecognizer fast, ISpeechRecognizer slow, float minFastConfidence = DefaultMinFastConfidence)
@@ -37,11 +40,16 @@ namespace SpatialModeling.VoiceCore.Whisper
             this.minFastConfidence = minFastConfidence;
             fast.Recognized += fastResults.Add;
             slow.Recognized += slowResults.Add;
+            if (slow is IReportsNoResult reporter)
+                reporter.NoResult += reason => slowReason = reason; // passed on, or overruled, in Stop
             if (slow is WhisperServerRecognizer whisper)
                 whisper.DropSilenceHallucinations = false; // dropped in Stop, unless Vosk heard speech too
         }
 
         public event Action<RecognitionResult> Recognized;
+
+        /// <summary>Raised from <see cref="Stop"/> when it raises no result; see the class summary.</summary>
+        public event Action<NoResultReason> NoResult;
 
         /// <summary>Vosk, for logs and measurements.</summary>
         public ISpeechRecognizer Fast => fast;
@@ -86,11 +94,12 @@ namespace SpatialModeling.VoiceCore.Whisper
                 return;
             }
 
+            slowReason = null;
             slow.Stop();
             if (slow is IFallibleRecognizer fallible && fallible.LastStopFailed)
             {
                 LastOutcome = FastPathOutcome.SlowFailed;
-                Raise(fastResults);
+                Raise(fastResults); // none: nothing to report, it may have been noise
                 return;
             }
             if (slow is WhisperServerRecognizer whisper &&
@@ -98,11 +107,11 @@ namespace SpatialModeling.VoiceCore.Whisper
             {
                 LastOutcome = FastPathOutcome.Silence; // an accidental press: say nothing
                 slowResults.Clear();
-                Raise(slowResults);
+                Raise(slowResults, NoResultReason.Silence);
                 return;
             }
             LastOutcome = FastPathOutcome.Slow;
-            Raise(slowResults);
+            Raise(slowResults, slowReason);
         }
 
         public void Dispose()
@@ -111,11 +120,16 @@ namespace SpatialModeling.VoiceCore.Whisper
             slow.Dispose();
         }
 
-        void Raise(List<RecognitionResult> results)
+        /// <summary>Raises <paramref name="results"/>, or if there are none, <see cref="NoResult"/> with
+        /// <paramref name="otherwise"/> (nothing for null).</summary>
+        void Raise(List<RecognitionResult> results, NoResultReason? otherwise = null)
         {
             var copy = new List<RecognitionResult>(results);
             fastResults.Clear();
             slowResults.Clear();
+            slowReason = null;
+            if (copy.Count == 0 && otherwise.HasValue)
+                NoResult?.Invoke(otherwise.Value);
             foreach (RecognitionResult result in copy)
                 Recognized?.Invoke(result);
         }
@@ -129,13 +143,15 @@ namespace SpatialModeling.VoiceCore.Whisper
         /// <summary>The fast recognizer heard one whole grammar phrase and answered.</summary>
         Fast,
 
-        /// <summary>The slow recognizer answered (possibly with nothing, for chatter).</summary>
+        /// <summary>The slow recognizer answered (for chatter with no result, and its reason:
+        /// <see cref="NoResultReason.NotUnderstood"/>).</summary>
         Slow,
 
         /// <summary>The slow recognizer failed; the fast recognizer's results went out instead.</summary>
         SlowFailed,
 
-        /// <summary>No speech: too quiet for Whisper, or a silence hallucination Vosk didn't back up. Nothing went out.</summary>
+        /// <summary>No speech: too quiet for Whisper, or a silence hallucination Vosk didn't back up. No result went out,
+        /// only <see cref="NoResultReason.Silence"/>.</summary>
         Silence,
     }
 }

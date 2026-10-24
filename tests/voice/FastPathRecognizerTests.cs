@@ -9,14 +9,18 @@ namespace SpatialModeling.VoiceCore.Tests
     /// <summary>Vosk first, Whisper when Vosk isn't sure, Vosk again when Whisper fails (fake recognizers).</summary>
     public class FastPathRecognizerTests
     {
-        sealed class Fake : IFallibleRecognizer
+        sealed class Fake : IFallibleRecognizer, IReportsNoResult
         {
             public readonly List<RecognitionResult> OnStop = new List<RecognitionResult>();
             public int Starts, Stops, Samples;
             public bool Fail, Disposed;
             public IReadOnlyList<string> Grammar;
 
+            /// <summary>Raised at Stop when <see cref="OnStop"/> is empty; null raises nothing.</summary>
+            public NoResultReason? Reason;
+
             public event Action<RecognitionResult> Recognized;
+            public event Action<NoResultReason> NoResult;
             public bool LastStopFailed { get; private set; }
             public string LastError => LastStopFailed ? "IOException: down" : null;
 
@@ -31,6 +35,8 @@ namespace SpatialModeling.VoiceCore.Tests
                 if (!Fail)
                     foreach (RecognitionResult r in OnStop)
                         Recognized?.Invoke(r);
+                if (!Fail && OnStop.Count == 0 && Reason.HasValue)
+                    NoResult?.Invoke(Reason.Value);
             }
 
             public void Dispose() => Disposed = true;
@@ -102,6 +108,34 @@ namespace SpatialModeling.VoiceCore.Tests
             Utter(hybrid);
             Assert.Empty(heard);
             Assert.Equal(FastPathOutcome.Slow, hybrid.LastOutcome);
+        }
+
+        [Fact]
+        public void WhisperHearingNoCommandIsPassedOnAsItsReason()
+        {
+            var (hybrid, vosk, whisper, heard) = Make();
+            var reasons = new List<NoResultReason>();
+            hybrid.NoResult += reasons.Add;
+            whisper.Reason = NoResultReason.NotUnderstood;
+
+            vosk.OnStop.Add(new RecognitionResult("this", 0.6f)); // chatter: Whisper snapped it onto nothing
+            Utter(hybrid);
+            Assert.Empty(heard);
+            Assert.Equal(new[] { NoResultReason.NotUnderstood }, reasons);
+
+            vosk.OnStop.Clear();
+            vosk.OnStop.Add(new RecognitionResult("add a cube", 0.95f)); // the fast path: Whisper isn't asked
+            Utter(hybrid);
+            Assert.Equal(new[] { "add a cube" }, heard.Select(r => r.Text));
+            Assert.Single(reasons);
+
+            vosk.OnStop.Clear();
+            vosk.OnStop.Add(new RecognitionResult("this", 0.6f));
+            whisper.Fail = true; // Whisper failed and Vosk's result goes out: no reason
+            Utter(hybrid);
+            Assert.Equal(new[] { "add a cube", "this" }, heard.Select(r => r.Text));
+            Assert.Equal(FastPathOutcome.SlowFailed, hybrid.LastOutcome);
+            Assert.Single(reasons);
         }
 
         [Fact]

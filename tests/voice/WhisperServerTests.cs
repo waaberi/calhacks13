@@ -124,6 +124,14 @@ namespace SpatialModeling.VoiceCore.Tests
             return heard;
         }
 
+        /// <summary>Every <see cref="IReportsNoResult.NoResult"/> the recognizer raises from now on.</summary>
+        static List<NoResultReason> Reasons(IReportsNoResult recognizer)
+        {
+            var reasons = new List<NoResultReason>();
+            recognizer.NoResult += reasons.Add;
+            return reasons;
+        }
+
         /// <summary>A 200 Hz tone, RMS about 1,400 (-27 dBFS): loud enough for the speech gate, like a voice.</summary>
         static short[] Tone(int samples, float amplitude = 2000f)
         {
@@ -162,7 +170,9 @@ namespace SpatialModeling.VoiceCore.Tests
             {
                 var whisper = new WhisperServerRecognizer(server.Port);
                 whisper.SetGrammar(Commands);
+                List<NoResultReason> reasons = Reasons(whisper);
                 Assert.Empty(Utter(whisper, silent: true)); // a second of digital silence, like the Unity run's press
+                Assert.Equal(new[] { NoResultReason.Silence }, reasons); // said nowhere, only shown
                 Assert.True(whisper.LastWasSilence);
                 Assert.False(whisper.LastStopFailed);
                 Assert.Empty(server.Requests);
@@ -178,18 +188,21 @@ namespace SpatialModeling.VoiceCore.Tests
                 whisper.SetGrammar(Commands);
                 var heard = new List<RecognitionResult>();
                 whisper.Recognized += heard.Add;
+                List<NoResultReason> reasons = Reasons(whisper);
 
                 whisper.Start(16000);
                 whisper.AcceptAudio(Tone(16000, amplitude: 40f), 16000); // RMS 28, -61 dBFS: room noise
                 whisper.Stop();
                 Assert.Empty(heard);
                 Assert.Empty(server.Requests);
+                Assert.Equal(new[] { NoResultReason.Silence }, reasons);
 
                 whisper.Start(16000);
                 whisper.AcceptAudio(Tone(16000, amplitude: 300f), 16000); // RMS 212: quieter than any real clip measured
                 whisper.Stop();
                 Assert.Equal("undo", Assert.Single(heard).Text);
                 Assert.Single(server.Requests);
+                Assert.Single(reasons); // a result, so no reason
             }
         }
 
@@ -220,7 +233,9 @@ namespace SpatialModeling.VoiceCore.Tests
             {
                 var whisper = new WhisperServerRecognizer(server.Port);
                 whisper.SetGrammar(Commands); // "you" is a grammar word, as in the host's grammar
+                List<NoResultReason> reasons = Reasons(whisper);
                 Assert.Empty(Utter(whisper));
+                Assert.Equal(new[] { NoResultReason.Silence }, reasons);
                 Assert.True(whisper.LastWasHallucination);
                 Assert.True(whisper.LastWasSilence);
             }
@@ -245,12 +260,14 @@ namespace SpatialModeling.VoiceCore.Tests
                 hybrid.SetGrammar(Commands);
                 var heard = new List<RecognitionResult>();
                 hybrid.Recognized += heard.Add;
+                List<NoResultReason> reasons = Reasons(hybrid);
 
                 hybrid.Start(16000);
                 hybrid.AcceptAudio(Tone(16000), 16000); // noise loud enough for the gate; Vosk heard no words
                 hybrid.Stop();
                 Assert.Empty(heard);
                 Assert.Equal(FastPathOutcome.Silence, hybrid.LastOutcome);
+                Assert.Equal(new[] { NoResultReason.Silence }, reasons);
 
                 vosk.OnStop.Add(new RecognitionResult("you", 0.7f)); // Vosk heard speech too: "you" is what was said
                 hybrid.Start(16000);
@@ -258,6 +275,7 @@ namespace SpatialModeling.VoiceCore.Tests
                 hybrid.Stop();
                 Assert.Equal("you", Assert.Single(heard).Text);
                 Assert.Equal(FastPathOutcome.Slow, hybrid.LastOutcome);
+                Assert.Single(reasons);
             }
         }
 
@@ -273,6 +291,7 @@ namespace SpatialModeling.VoiceCore.Tests
                 hybrid.SetGrammar(Commands);
                 var heard = new List<RecognitionResult>();
                 hybrid.Recognized += heard.Add;
+                List<NoResultReason> reasons = Reasons(hybrid);
 
                 hybrid.Start(16000);
                 hybrid.AcceptAudio(new short[16000], 16000); // silence: Whisper isn't asked, Vosk's guess doesn't go out
@@ -280,14 +299,53 @@ namespace SpatialModeling.VoiceCore.Tests
                 Assert.Empty(heard);
                 Assert.Equal(FastPathOutcome.Silence, hybrid.LastOutcome);
                 Assert.Empty(server.Requests);
+                Assert.Equal(new[] { NoResultReason.Silence }, reasons);
 
                 reply = " This is our project.";
                 hybrid.Start(16000);
                 hybrid.AcceptAudio(Tone(16000), 16000);
                 hybrid.Stop();
-                Assert.True(WhisperServerRecognizer.IsNoResult(Assert.Single(heard)));
+                Assert.Empty(heard); // speech that is no command: no result, and "didn't catch that"
+                Assert.Equal(new[] { NoResultReason.Silence, NoResultReason.NotUnderstood }, reasons);
                 Assert.Equal(FastPathOutcome.Slow, hybrid.LastOutcome);
             }
+        }
+
+        [Fact]
+        public void TheFastPathCallsAHallucinationThatSnapsToNothingSilence()
+        {
+            // Whisper keeps hallucinations in the fast path and snaps them: "thanks for watching" snaps onto no phrase,
+            // which alone would be "didn't catch that". Vosk heard nothing, so it is an accidental press after all.
+            using (var server = new FakeHttpServer { Respond = _ => (200, Reply(" Thanks for watching!")) })
+            {
+                var hybrid = new FastPathRecognizer(new FakeVosk(), new WhisperServerRecognizer(server.Port));
+                hybrid.SetGrammar(Commands);
+                var heard = new List<RecognitionResult>();
+                hybrid.Recognized += heard.Add;
+                List<NoResultReason> reasons = Reasons(hybrid);
+                hybrid.Start(16000);
+                hybrid.AcceptAudio(Tone(16000), 16000);
+                hybrid.Stop();
+                Assert.Empty(heard);
+                Assert.Equal(new[] { NoResultReason.Silence }, reasons);
+                Assert.Equal(FastPathOutcome.Silence, hybrid.LastOutcome);
+            }
+        }
+
+        [Fact]
+        public void WhenWhisperFailsAndVoskHeardNothingTheFastPathGivesNoReason()
+        {
+            var hybrid = new FastPathRecognizer(new FakeVosk(), new WhisperServerRecognizer(FreePort(), timeoutMs: 1000));
+            hybrid.SetGrammar(Commands);
+            var heard = new List<RecognitionResult>();
+            hybrid.Recognized += heard.Add;
+            List<NoResultReason> reasons = Reasons(hybrid);
+            hybrid.Start(16000);
+            hybrid.AcceptAudio(Tone(16000), 16000);
+            hybrid.Stop();
+            Assert.Empty(heard);
+            Assert.Empty(reasons); // VoiceInput reports it as silence: it may have been noise
+            Assert.Equal(FastPathOutcome.SlowFailed, hybrid.LastOutcome);
         }
 
         [Fact]
@@ -349,14 +407,55 @@ namespace SpatialModeling.VoiceCore.Tests
             {
                 var whisper = new WhisperServerRecognizer(server.Port);
                 whisper.SetGrammar(new[] { "add a cone", "undo", "[unk]" });
-                RecognitionResult heard = Assert.Single(Utter(whisper)); // speech, but no command: "didn't catch that"
-                Assert.True(WhisperServerRecognizer.IsNoResult(heard));
-                Assert.Equal("", heard.Text);
-                Assert.Equal(0f, heard.Confidence);
-                Assert.Empty(new VoiceSession().Hear(heard).Prompts); // a session that doesn't look for it ignores it
+                List<NoResultReason> reasons = Reasons(whisper);
+                Assert.Empty(Utter(whisper)); // speech, but no command: "didn't catch that"
+                Assert.Equal(new[] { NoResultReason.NotUnderstood }, reasons);
                 Assert.False(whisper.LastWasSilence);
                 Assert.False(whisper.LastStopFailed);
                 Assert.False(whisper.LastSnap.Accepted);
+            }
+        }
+
+        [Fact]
+        public void ThroughVoiceInputChatterSaysDidntCatchThatAndASilentPressSaysNothing()
+        {
+            using (var server = new FakeHttpServer { Respond = _ => (200, Reply(" This is our project.")) })
+            {
+                var whisper = new WhisperServerRecognizer(server.Port);
+                var input = new VoiceInput(() => whisper, 16000, 0, 0);
+                var session = new VoiceSession();
+                try
+                {
+                    Assert.True(input.WaitIdle(TimeSpan.FromSeconds(5)) && input.Ready, input.Error);
+                    input.SetGrammar(session.GrammarPhrases());
+
+                    void Press(float amplitude)
+                    {
+                        var audio = new float[16000];
+                        for (int i = 0; i < audio.Length; i++)
+                            audio[i] = amplitude * (float)Math.Sin(2 * Math.PI * 200 * i / 16000.0);
+                        input.StartUtterance();
+                        input.Write(audio, audio.Length, 16000);
+                        input.StopUtterance();
+                        Assert.True(input.WaitIdle(TimeSpan.FromSeconds(10)));
+                        Assert.False(input.TryGetResult(out _));
+                    }
+
+                    Press(0.06f); // speech that is no command
+                    Assert.True(input.TryGetNoResult(out NoResultReason reason));
+                    Assert.Equal(NoResultReason.NotUnderstood, reason);
+                    Assert.Equal(new[] { Prompt.LowConfidence.Id }, Fixture.Prompts(session.NothingRecognized(reason)));
+
+                    Press(0f); // an accidental press
+                    Assert.True(input.TryGetNoResult(out reason));
+                    Assert.Equal(NoResultReason.Silence, reason);
+                    Assert.Empty(session.NothingRecognized(reason).Prompts);
+                    Assert.Single(server.Requests); // the silent press never reached Whisper
+                }
+                finally
+                {
+                    input.Dispose();
+                }
             }
         }
 
@@ -365,7 +464,9 @@ namespace SpatialModeling.VoiceCore.Tests
         {
             var whisper = new WhisperServerRecognizer(FreePort(), timeoutMs: 1000);
             whisper.SetGrammar(new[] { "undo" });
+            List<NoResultReason> reasons = Reasons(whisper);
             Assert.Empty(Utter(whisper));
+            Assert.Empty(reasons); // it may have been noise: VoiceInput counts it as silence
             Assert.True(whisper.LastStopFailed);
             Assert.NotNull(whisper.LastError);
         }
@@ -402,7 +503,9 @@ namespace SpatialModeling.VoiceCore.Tests
             using (var server = new FakeHttpServer())
             {
                 var whisper = new WhisperServerRecognizer(server.Port);
+                List<NoResultReason> reasons = Reasons(whisper);
                 Assert.Empty(Utter(whisper, samples: 800)); // 50 ms
+                Assert.Equal(new[] { NoResultReason.Silence }, reasons);
                 Assert.False(whisper.LastStopFailed);
                 Assert.Empty(server.Requests);
             }
