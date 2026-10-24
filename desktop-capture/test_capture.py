@@ -1,6 +1,7 @@
 """HTTP contract and stale-frame/selection regression tests. No desktop is captured."""
 
 import http.client
+import json
 import threading
 import time
 import unittest
@@ -36,7 +37,7 @@ class CaptureContractTests(unittest.TestCase):
             Image.new("RGB", (64, 48), "blue"),
             "Blender",
             10,
-            int(time.time() * 1000),
+            max(int(time.time() * 1000), self.latest.captured_ms + 1),
         )
 
     def test_no_window_returns_unavailable_not_stale_image(self):
@@ -74,12 +75,27 @@ class CaptureContractTests(unittest.TestCase):
         self.assertEqual(self.get("/frame")[0], 503)
         self.assertEqual(self.latest.snapshot()[0]["window"], "New window")
 
+    def test_selection_identity_is_separate_from_status_schema(self):
+        self.latest.select({"hwnd": 123, "pid": 456, "title": "Blender"})
+        code, _, body = self.get("/selection")
+        self.assertEqual(code, 200)
+        self.assertEqual(json.loads(body), {"hwnd": 123, "pid": 456, "title": "Blender"})
+        self.assertNotIn("hwnd", json.loads(self.get("/status")[2]))
+
     def test_latest_only_never_queues(self):
         for _ in range(20):
             self.publish()
         code, headers, _ = self.get("/frame")
         self.assertEqual(code, 200)
         self.assertEqual(headers["ETag"], '"20"')
+
+    def test_slow_encoder_cannot_publish_older_pixels_after_a_newer_frame(self):
+        self.assertTrue(self.latest.publish_jpeg(0, b"new", 10, 10, "Blender", 40, 200))
+        self.assertFalse(self.latest.publish_jpeg(0, b"old", 10, 10, "Blender", 40, 100))
+        status, jpeg, captured = self.latest.snapshot()
+        self.assertEqual((status["frame"], jpeg, captured), (1, b"new", 200))
+        self.latest.select({"title": "New document window"})
+        self.assertTrue(self.latest.publish_jpeg(1, b"next", 10, 10, "New", 40, 150))
 
     def test_host_header_rejects_nonlocal_origin_and_unknown_path(self):
         self.assertEqual(self.get("/status", {"Host": "attacker.invalid"})[0], 403)

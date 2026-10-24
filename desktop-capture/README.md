@@ -18,7 +18,7 @@ Use the absolute Python executable if Python is not on PATH. The launcher:
 3. Opens the capture picker. Select the intended Blender window and click **Capture selected window**. Selection is restricted to actual Blender application windows, not arbitrary windows containing "Blender" in their title.
 4. Waits for a real frame, then starts the supplied Windows EXE. Logs and launch identity go in a new temporary session directory; `--session-dir` can choose another directory outside the repo.
 
-Close an earlier test Player before launching another. If capture is already running, the launcher attaches to it; confirm its selected window in the picker. Closing the picker stops the helper, while Blender and the Player remain open. The launcher does not stop or save Blender when it exits. Supply `--diagnose` for a read-only report instead of launching. `--window HWND` explicitly preselects a known Blender window; `capture_helper.py --list` lists available identities.
+Close an earlier test Player before launching another. The launcher refuses an existing Player process, including one that has lost its window during shutdown. If capture is already running, the launcher attaches to it; confirm its selected window in the picker. An explicit `--window HWND` must match the helper's read-only `GET /selection` identity, otherwise launch stops with instructions to select the intended window. Older helpers without this endpoint must be restarted before an explicit-window attach. Closing the picker stops the helper, while Blender and the Player remain open. The launcher does not stop or save Blender when it exits. Supply `--diagnose` for a read-only report instead of launching. `capture_helper.py --list` lists available identities.
 
 ## In VR
 
@@ -41,10 +41,10 @@ Capture preserves native pixels up to 3840×2400 while preserving aspect ratio; 
 ## Verification
 
 ```powershell
-python -m unittest discover -s desktop-capture -p test_capture.py -v
+python -m unittest discover -s desktop-capture -p 'test_*.py' -v
 ```
 
-The eleven tests exercise headers/304, unavailable states, stale expiry despite HTTP activity, window switching, latest-only retention, exclusive port binding, refresh timing and independent ownership of callback pixels. They are not GPU or headset acceptance. The Windows Player flag `--p1-smoke` requires real fresh pixels before and after ten panel toggles and magnification, then exits with a pass/fail code. A static window can pass this availability check; it cannot establish live motion.
+The sixteen capture/launcher tests exercise headers/304, unavailable states, stale expiry despite HTTP activity, window switching, latest-only retention, exclusive port binding, refresh timing, independent ownership of callback pixels, out-of-order rejection and explicit selection/process guards. They are not GPU or headset acceptance. The Windows Player flag `--p1-smoke` requires real fresh pixels before and after ten panel toggles and magnification, then exits with a pass/fail code. A static window can pass this availability check; it cannot establish live motion.
 
 For a separate live-motion check, run the following while deliberately orbiting the selected Blender viewport throughout the observation. Use a saved test copy, change the view only, and restore the angle afterward. If no motion was observed, keep that failed result and repeat with a synchronized stimulus; do not label a heartbeat or static image a live pass.
 

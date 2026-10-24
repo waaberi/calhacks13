@@ -464,7 +464,7 @@ namespace SpatialModeling
             passed &= Magnification == 1f;
             passed &= CaptureIsFresh(lastCaptured, lastConfirmed, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
             Debug.Log($"P1_SCREEN_SMOKE {(passed ? "PASS" : "FAIL")} frames={ReceivedFrames} toggles={ToggleCount} current_pixel_age_ms={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - lastCaptured}");
-            Application.Quit(passed ? 0 : 1);
+            WorkspaceShutdown.Quit(passed ? 0 : 1);
         }
 
         public static bool CaptureIsFresh(long captured, long alive, long now) => captured > 0 && alive >= captured
