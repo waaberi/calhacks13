@@ -72,7 +72,7 @@ namespace SpatialModeling
             yield return null; yield return null;
             bool label = false; foreach (var text in FindObjectsByType<Text>(FindObjectsSortMode.None)) if (text.isActiveAndEnabled && text.GetComponentInParent<Canvas>()?.isActiveAndEnabled == true && text.text == "Ownership test participant is editing") label = true;
             bool pink = false; foreach (var line in FindObjectsByType<LineRenderer>(FindObjectsSortMode.None))
-                if (line.gameObject.name == "Temporary ownership overlay" && line.isActiveAndEnabled && line.positionCount > 0 && line.sharedMaterial != null) pink = true;
+                if (line.gameObject.name == "Temporary ownership overlay" && line.enabled && line.gameObject.activeInHierarchy && line.positionCount > 0 && line.sharedMaterial != null) pink = true;
             if (!label || !pink) { Fail("Active actual-owner world canvas / pink line renderer missing"); yield break; }
             report["real_owner_label"] = true; report["lease"] = lease;
             session.Select(target); menu.Home(); if (!Click("Move object") || !Click("Apply")) yield break;
