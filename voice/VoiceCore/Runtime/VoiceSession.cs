@@ -195,7 +195,7 @@ namespace SpatialModeling.VoiceCore
         public VoiceTurn Hear(RecognitionResult result)
         {
             var turn = Begin();
-            if (promptPlaying || result.Text.Trim().Length == 0)
+            if (promptPlaying || string.IsNullOrWhiteSpace(result.Text))
                 return turn.Build();
             if (result.Confidence < options.MinConfidence)
             {

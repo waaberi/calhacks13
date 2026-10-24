@@ -428,6 +428,14 @@ namespace SpatialModeling.VoiceCore.Tests
         }
 
         [Fact]
+        public void EmptyResultsAreIgnored()
+        {
+            var f = new Fixture(Cube);
+            Assert.Empty(f.Session.Hear(default(RecognitionResult)).Prompts);
+            Assert.Empty(f.Say("  ").Prompts);
+        }
+
+        [Fact]
         public void UnsupportedWordingGivesAnExample()
         {
             var f = new Fixture(Cube);
