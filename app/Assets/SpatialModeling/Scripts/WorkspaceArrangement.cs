@@ -143,7 +143,7 @@ namespace SpatialModeling
         {
             RotationAxis=Vector3.up; // A previous wall contact must not leak its rotation axis into the next grab/level.
             if(Surfaces!=null && Surfaces.IsLevel(target))
-            { HideGuide(); return Surfaces.ConstrainLevel(target,desired); }
+            { HideGuide(); return Surfaces.ConstrainLevel(target,desired,bypass || !AssistEnabled); }
             if(!AssistEnabled || bypass || Surfaces==null) { HideGuide(); return desired; }
             var bounds=LocalBounds(target);
             foreach(var surface in Surfaces.Surfaces)

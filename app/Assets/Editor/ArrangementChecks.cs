@@ -44,6 +44,15 @@ public static class ArrangementChecks
         Check(WorkspaceArrangement.Assist(cube,Vector3.one*2,scalingPose,scalingPose,desk,false,out var enlarged,out _,Vector3.one),"two-hand enlargement respects previous geometry at contact");
         Check(WorkspaceArrangement.MinimumDistance(cube,Vector3.one*2,enlarged,desk)>=.0029f,"enlarging a model does not bury it in the desk");
         var wall=new WorkspaceSurfaces.Surface {Name="Wall",Pose=new Pose(Vector3.forward,Quaternion.LookRotation(Vector3.back,Vector3.up)),Size=new Vector2(3,3)};
+        wall.Id=Guid.NewGuid();
+        var sideWall=new WorkspaceSurfaces.Surface {Name="Wall",Id=Guid.NewGuid(),Pose=new Pose(new Vector3(2,1,0),Quaternion.LookRotation(Vector3.left,Vector3.up)),Size=new Vector2(4,2)};
+        var nearSide=new Pose(new Vector3(1.9f,1,.3f),Quaternion.LookRotation(Vector3.back,Vector3.up));
+        Check(WorkspaceSurfaces.TryAttachLevel("wall",nearSide,new[]{wall,sideWall},out var selectedWall,out var onWall)
+            &&selectedWall.Id==sideWall.Id,"wall guide selects the nearby finite Meta wall, including a perpendicular wall");
+        Near(onWall.position,new Vector3(1.997f,1,.3f),"wall guide projects onto actual wall with only3mm visual clearance");
+        Check(Vector3.Dot(onWall.rotation*Vector3.forward,Vector3.left)>.999f,"wall guide adopts the selected wall normal instead of keeping pickup heading");
+        Check(!WorkspaceSurfaces.TryAttachLevel("wall",new Pose(new Vector3(2,5,0),Quaternion.identity),new[]{sideWall},out _,out _),"finite wall attachment does not invent a wall beyond scanned bounds");
+        Check(!WorkspaceSurfaces.TryAttachLevel("desk",nearSide,new[]{sideWall},out _,out _),"desk height guide cannot attach to vertical wall data");
         before=new Pose(new Vector3(0,0,.4f),Quaternion.identity);
         desired=new Pose(new Vector3(.1f,0,2),Quaternion.Euler(0,38,0));
         Check(WorkspaceArrangement.Assist(bounds,Vector3.one,before,desired,wall,false,out stopped,out suggested),"one-frame crossing cannot tunnel straight through wall");
@@ -110,6 +119,10 @@ public static class ArrangementChecks
             Check(level.Find("Visible level grip handle").GetComponent<Renderer>()!=null
                 && level.GetComponentInChildren<Image>().color.a>.9f,"handle is physical visible geometry and instructions have a dark backing");
             Check(Vector3.Dot(level.forward,Vector3.up)>.999f,"desk level stays horizontal despite wrist tilt");
+            var circularRim=level.Find("Level outer border").GetComponent<LineRenderer>();
+            Check(circularRim.loop&&circularRim.positionCount==64,"unscanned desk uses a circular height level with no misleading guessed desk-edge yaw");
+            for(int i=0;i<circularRim.positionCount;i++)
+                Check(Mathf.Abs(circularRim.GetPosition(i).magnitude-Mathf.Sqrt(.4f*.4f+.0012f*.0012f))<.0001f,"manual height-level rim is rotation invariant");
             RenderLevelPreview(level,cameraObject.GetComponent<Camera>());
             var moved=arrangement.Apply(level,new Pose(level.position,level.rotation),new Pose(new Vector3(0,.5f,.4f),Quaternion.Euler(50,60,70)),false,false);
             Near(moved.position,new Vector3(0,.5f,.4f),"level itself is not blocked by existing surface assistance");
@@ -121,6 +134,16 @@ public static class ArrangementChecks
             typeof(WorkspaceSurfaces).GetMethod("LateUpdate",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(provider,null);
             Near(provider.Surfaces.Single().Pose.position,moved.position,"placed plane reads the moved grid's world pose exactly once");
             var detectedSurfaces=(List<WorkspaceSurfaces.Surface>)typeof(WorkspaceSurfaces).GetField("detected",BindingFlags.Instance|BindingFlags.NonPublic).GetValue(provider);
+            var attachmentGuide=provider.CreateLevel("wall",nearSide);
+            detectedSurfaces.Add(sideWall);
+            var autoGuide=arrangement.Apply(attachmentGuide,nearSide,nearSide,false,false);
+            Check(Vector3.Dot(autoGuide.rotation*Vector3.forward,Vector3.left)>.999f,"actual guide constraint path uses Meta wall orientation");
+            var manualGuide=arrangement.Apply(attachmentGuide,autoGuide,nearSide,false,true);
+            Near(manualGuide.position,nearSide.position,"free-adjust bypass allows correcting an inaccurate scan without being pulled back");
+            Check(Quaternion.Angle(manualGuide.rotation,nearSide.rotation)<.001f,"free-adjust preserves deliberate wall yaw while remaining upright");
+            provider.ClearLevels();
+            level=provider.CreateLevel("desk",new Pose(moved.position,moved.rotation));
+            detectedSurfaces.Clear();
             detectedSurfaces.Add(desk); detectedSurfaces.Add(wall);
             var secondDesk=desk; secondDesk.Id=Guid.NewGuid(); secondDesk.Pose.position+=Vector3.right*5;
             detectedSurfaces.Add(secondDesk);
@@ -230,6 +253,15 @@ public static class ArrangementChecks
             rebase.Invoke(null,new object[]{leftHand,changedAim,new Pose(movedModel.position,twoHandRotation)});
             held=(Quaternion)handType.GetField("placementRotation").GetValue(leftHand);
             Check(Quaternion.Angle(WorkspaceInteraction.FollowPlacementRay(pickupAim,relative,0,true,held,Quaternion.identity).rotation,twoHandRotation)<.001f,"two-hand handoff retains its deliberately chosen orientation");
+            detectedSurfaces.Add(sideWall);
+            var heldGuide=provider.CreateLevel("wall",nearSide);
+            begin.Invoke(interaction,new object[]{leftHand,heldGuide,null,pickupAim,nearSide.position});
+            var adopted=arrangement.Apply(heldGuide,nearSide,nearSide,false,false);
+            rebase.Invoke(null,new object[]{leftHand,pickupAim,adopted});
+            relative=(Pose)handType.GetField("rayRelative").GetValue(leftHand);held=(Quaternion)handType.GetField("placementRotation").GetValue(leftHand);
+            var away=WorkspaceInteraction.FollowPlacementRay(new Pose(Vector3.left,Quaternion.Euler(0,-20,0)),relative,0,true,held,Quaternion.identity);
+            Check(Vector3.Dot(away.rotation*Vector3.forward,Vector3.left)>.999f,"actual guide pickup and automatic orientation rebase cannot revert to its original wall heading on moving away");
+            provider.ClearLevels();detectedSurfaces.Clear();
             begin.Invoke(interaction,new object[]{leftHand,screen.Placement,null,pickupAim,screen.Placement.position});
             Check(!(bool)handType.GetField("preserveRotation").GetValue(leftHand),"screen keeps accepted legacy grip orientation mapping");
             var legacy=WorkspaceInteraction.FollowPlacementRay(changedAim,relative,0,false,held,Quaternion.identity);

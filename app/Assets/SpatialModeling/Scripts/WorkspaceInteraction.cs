@@ -231,7 +231,7 @@ namespace SpatialModeling
                         : h.target == screen.Placement ? "Aim to move screen · stick: distance / size · release grip: place"
                         : "Aim to move whole build · release grip: place";
                     if(arrangement!=null) Instruction=arrangement.Surfaces.IsLevel(h.target)
-                        ? "Aim: move level · stick: turn/distance · two hands: resize · release grip: place"
+                        ? "Aim: move level · "+(h.freePlacement?"free adjust":"auto surface alignment")+" · stick click: switch · release: place"
                         : "Aim: move · stick: rotate/distance · trigger: align to guide · stick click: "+(h.freePlacement?"surface help":"free placement");
                 }
             }
@@ -391,9 +391,11 @@ namespace SpatialModeling
                 h.previousHandPose = hand;
                 var pose = FollowPlacementRay(new Pose(h.stableAim.position, h.stableAim.rotation), h.rayRelative,
                     h.depth,h.preserveRotation,h.placementRotation,h.rotationOffset);
+                var unconstrained=pose;
                 if(arrangement!=null) pose=arrangement.Apply(h.target,new Pose(h.target.position,h.target.rotation),pose,h.alignRequested,h.freePlacement);
                 if(arrangement!=null) h.rotationAxis=arrangement.RotationAxis;
-                if(h.alignRequested)
+                if(h.alignRequested || (arrangement!=null && arrangement.Surfaces.IsLevel(h.target)
+                    && (Quaternion.Angle(unconstrained.rotation,pose.rotation)>.01f || Vector3.Distance(unconstrained.position,pose.position)>.0001f)))
                 {
                     RebasePlacement(h,new Pose(h.stableAim.position,h.stableAim.rotation),pose);
                 }
@@ -482,12 +484,14 @@ namespace SpatialModeling
             float ratio=left.part!=null ? 1f : Mathf.Clamp(vector.magnitude/pairVector.magnitude,.25f,4f);
             var turn=frame*Quaternion.Inverse(pairFrame);
             var pose=new Pose(midpoint+turn*(pairOffset*ratio),turn*pairRotation);
+            var unconstrained=pose;
             var previousScale=pairTarget.lossyScale;
             pairTarget.localScale=pairScale*ratio;
             if(pairTarget==scene.Placement) scene.Table.RememberDisplayScale();
             if(arrangement!=null) pose=arrangement.Apply(pairTarget,new Pose(pairTarget.position,pairTarget.rotation),pose,
                 left.alignRequested||right.alignRequested,left.freePlacement||right.freePlacement,previousScale);
-            if(left.alignRequested||right.alignRequested)
+            if(left.alignRequested||right.alignRequested || (arrangement!=null && arrangement.Surfaces.IsLevel(pairTarget)
+                && (Quaternion.Angle(unconstrained.rotation,pose.rotation)>.01f || Vector3.Distance(unconstrained.position,pose.position)>.0001f)))
             {
                 pairVector=vector; pairFrame=frame; pairRotation=pose.rotation;
                 pairOffset=pose.position-midpoint; pairScale=pairTarget.localScale;

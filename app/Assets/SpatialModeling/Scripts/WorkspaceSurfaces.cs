@@ -268,8 +268,39 @@ namespace SpatialModeling
                 : Quaternion.LookRotation(Vector3.up, axis));
         }
         public bool IsLevel(Transform target) => levels.Exists(l => l.Target == target);
-        public Pose ConstrainLevel(Transform target, Pose desired)
-        { var level = levels.Find(l => l.Target == target); return level == null ? desired : LevelPose(level.Kind, desired); }
+        public Pose ConstrainLevel(Transform target, Pose desired, bool free=false)
+        {
+            var level=levels.Find(l=>l.Target==target); if(level==null) return desired;
+            var result=LevelPose(level.Kind,desired);
+            if(AutomaticEnabled && !free && TryAttachLevel(level.Kind,result,detected,out var source,out var attached))
+            {
+                bool changed=level.Replaces!=source.Id;
+                level.Replaces=source.Id;
+                if(changed) DrawLevel(level);
+                return attached;
+            }
+            return result;
+        }
+        public static Vector3 ClosestPoint(Surface surface,Vector3 position)
+        {
+            var local=Quaternion.Inverse(surface.Pose.rotation)*(position-surface.Pose.position);
+            local=new Vector3(Mathf.Clamp(local.x,-surface.Size.x*.5f,surface.Size.x*.5f),Mathf.Clamp(local.y,-surface.Size.y*.5f,surface.Size.y*.5f),0);
+            return surface.Pose.position+surface.Pose.rotation*local;
+        }
+        public static bool TryAttachLevel(string kind,Pose desired,IReadOnlyList<Surface> values,out Surface source,out Pose attached)
+        {
+            source=default;attached=desired;float distance=.3f;bool found=false;
+            foreach(var surface in values)
+            {
+                if(surface.Name!=Title(kind)) continue;
+                var point=ClosestPoint(surface,desired.position);
+                float separation=Vector3.Distance(point,desired.position);
+                if(separation>=distance) continue;
+                distance=separation;source=surface;found=true;
+                attached=LevelPose(kind,new Pose(point+surface.Normal*.003f,surface.Pose.rotation));
+            }
+            return found;
+        }
         public Transform CreateLevel(string kind, Pose desired, Vector2? size = null, Guid? replaces = null)
         {
             if (kind != "desk" && kind != "floor" && kind != "wall") throw new ArgumentException("Unknown level kind");
@@ -303,17 +334,26 @@ namespace SpatialModeling
                 level.Label.raycastTarget = false;
             }
             level.Replaces=replaces;
-            level.Size=size??(kind=="desk"?new Vector2(1.2f,.8f):new Vector2(2.4f,2.4f));
-            foreach(var stroke in level.Target.GetComponentsInChildren<LineRenderer>())
-                if(stroke.name=="Level outer border") DrawBorder(stroke,level.Size,.0012f);
-                else if(stroke.name=="Level outer border contrast") DrawBorder(stroke,level.Size,.0006f);
-                else DrawGrid(stroke,level.Size);
-            level.Label.text=kind.ToUpperInvariant()+(replaces.HasValue?" · ADJUST DETECTED":" LEVEL · MANUAL")+"\nGrip move · stick turn · release place";
+            level.Size=size??(kind=="desk"?Vector2.one*.8f:new Vector2(2.4f,2.4f));
+            DrawLevel(level);
             var pose = LevelPose(kind, desired); level.Target.SetPositionAndRotation(pose.position, pose.rotation);
             level.Target.localScale = Vector3.one;
             UpdateLabel(level);
             RebuildSurfaces();
             return level.Target;
+        }
+        static bool RoundLevel(Level level) => level.Kind=="desk" && !level.Replaces.HasValue;
+        static void DrawLevel(Level level)
+        {
+            level.Label.text=level.Kind.ToUpperInvariant()+(level.Replaces.HasValue?" · ADJUST DETECTED":level.Kind=="desk"?" HEIGHT · MANUAL":" LEVEL · MANUAL")+"\nGrip move · stick click: free adjust";
+            foreach(var stroke in level.Target.GetComponentsInChildren<LineRenderer>())
+            {
+                bool border=stroke.name.StartsWith("Level outer border");
+                float depth=stroke.name=="Level outer border"?.0012f:stroke.name=="Level outer border contrast"?.0006f:.0005f;
+                if(RoundLevel(level)) DrawCircle(stroke,Mathf.Min(level.Size.x,level.Size.y)*(border?.5f:.32f),depth);
+                else if(border) DrawBorder(stroke,level.Size,depth);
+                else DrawGrid(stroke,level.Size);
+            }
         }
         public void BeginLevel(string kind)
         {
@@ -346,7 +386,7 @@ namespace SpatialModeling
             foreach(var candidate in detected)
             {
                 if(candidate.Name!=Title(kind)) continue;
-                float distance=(candidate.Pose.position-eye).sqrMagnitude;
+                float distance=(ClosestPoint(candidate,eye)-eye).sqrMagnitude;
                 if(distance>=nearest) continue;
                 nearest=distance; surface=candidate; found=true;
             }
@@ -379,7 +419,8 @@ namespace SpatialModeling
                 var plane = new Plane(level.Target.forward, center);
                 if (!plane.Raycast(ray, out float hit) || hit >= distance) continue;
                 var local = level.Target.InverseTransformPoint(ray.GetPoint(hit));
-                if (Mathf.Abs(local.x) <= level.Size.x*.5f && Mathf.Abs(local.y) <= level.Size.y*.5f)
+                if (RoundLevel(level)?new Vector2(local.x,local.y).magnitude<=Mathf.Min(level.Size.x,level.Size.y)*.5f
+                    :Mathf.Abs(local.x) <= level.Size.x*.5f && Mathf.Abs(local.y) <= level.Size.y*.5f)
                 { distance = hit; target = level.Target; }
             }
             return target;
@@ -522,8 +563,14 @@ namespace SpatialModeling
             line.SetPositions(new[]{new Vector3(-size.x*.5f,-size.y*.5f,depth),new Vector3(-size.x*.5f,size.y*.5f,depth),
                 new Vector3(size.x*.5f,size.y*.5f,depth),new Vector3(size.x*.5f,-size.y*.5f,depth)});
         }
+        static void DrawCircle(LineRenderer line,float radius,float depth)
+        {
+            line.loop=true;line.positionCount=64;
+            for(int i=0;i<64;i++) {float angle=i*Mathf.PI*2/64;line.SetPosition(i,new Vector3(Mathf.Cos(angle)*radius,Mathf.Sin(angle)*radius,depth));}
+        }
         static void DrawGrid(LineRenderer line, Vector2 size)
         {
+            line.loop=false;
             var points=new List<Vector3>();
             for(int i=0;i<=6;i++) {float u=i/6f-.5f,sign=i%2==0?1:-1;
                 points.Add(new Vector3(u*size.x,-sign*size.y*.5f,.0005f)); points.Add(new Vector3(u*size.x,sign*size.y*.5f,.0005f));}
