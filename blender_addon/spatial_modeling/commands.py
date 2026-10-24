@@ -97,11 +97,12 @@ _FENCED = object()  # stored digest of a request ID that receipt.query reported 
 class Refused(Exception):
     """Raised by an editor when Blender changed nothing: the result is `rejected`."""
 
-    def __init__(self, code, message, details=None):
+    def __init__(self, code, message, details=None, solver=None):
         super().__init__(message)
         self.code = code
         self.message = message
         self.details = details
+        self.solver = solver
 
 
 @dataclass
@@ -114,6 +115,7 @@ class Applied:
     summary: str
     created: list = field(default_factory=list)
     revision: int = 0
+    solver: dict | None = None
 
 
 # Step 1: the schema, by hand.
@@ -482,9 +484,9 @@ class Commands:
     # The checks, in the contract's order (step 1 and 2 are in command()).
 
     def _run(self, rid, p, conn):
-        def rejected(code, text, details=None):
+        def rejected(code, text, details=None, solver=None):
             return self._receipt(conn, rid, p, "rejected", revision,
-                                 error=_error(code, text, details))
+                                 error=_error(code, text, details), solver=solver)
 
         try:
             revision = self.editor.flush()  # pending changes go out first; generations are current
@@ -514,7 +516,7 @@ class Commands:
             return rejected("wrong_document", f"The host has {name} open now. Rejoin to get it.",
                             {"document": current})
         op = p["op"]
-        if op in SKETCH_OPS:
+        if op in SKETCH_OPS and not getattr(self.editor, "supports_sketches", False):
             return rejected("failed", "Sketches aren't available on this host yet.")
         # 5. Target and revision
         target = p.get("target")
@@ -541,12 +543,12 @@ class Commands:
             with self.session.commit():
                 done = self.editor.apply(op, target and target["id"], p["args"])
         except Refused as e:
-            return rejected(e.code, e.message, e.details)
+            return rejected(e.code, e.message, e.details, e.solver)
         except Exception as e:  # including a flush that failed after the change
             log.exception("%s failed halfway", op)
             return self._unknown(conn, rid, p, e)
         return self._receipt(conn, rid, p, "applied", done.revision, summary=done.summary,
-                             created=done.created)
+                             created=done.created, solver=done.solver)
 
     def _unknown(self, conn, rid, p, exc):
         """Blender may or may not have changed: stop writes until _reconcile() succeeds."""
@@ -584,7 +586,8 @@ class Commands:
             log.exception("could not read the document's revision")
             return 0
 
-    def _receipt(self, conn, rid, p, outcome, revision, summary=None, created=None, error=None):
+    def _receipt(self, conn, rid, p, outcome, revision, summary=None, created=None, error=None,
+                 solver=None):
         receipt = {"request_id": rid, "op": p["op"]}
         if "target" in p:
             receipt["target"] = p["target"]["id"]
@@ -592,6 +595,8 @@ class Commands:
         receipt.update(actor=dict(actor), source=p["source"], outcome=outcome, revision=revision)
         if created:
             receipt["created"] = list(created)
+        if solver is not None:
+            receipt["solver"] = dict(solver)
         if summary:
             receipt["summary"] = summary[:1024]
         if error is not None:
