@@ -133,6 +133,7 @@ public static class ArrangementChecks
             // Run the real menu callback with a camera looking to the left. The
             // existing calibrated guide must never reset to that click-time gaze.
             string oldTag=cameraObject.tag; cameraObject.tag="MainCamera";
+            cameraObject.GetComponent<Camera>().enabled=true; // Preview rendering disabled it; Camera.main requires an enabled camera.
             cameraObject.transform.rotation=Quaternion.Euler(35,-70,12);
             var calibrated=new Pose(new Vector3(.2f,.75f,.9f),level.rotation);
             level.SetPositionAndRotation(calibrated.position,calibrated.rotation);
