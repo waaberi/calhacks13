@@ -1,4 +1,10 @@
-"""Background read-only connection. Reuses the host's framing and TLS-PSK helpers."""
+"""Background connection to the host. Reuses the host's framing and TLS-PSK helpers.
+
+Receives the scene for the mirror and, for Client edits (requests.py), sends the
+messages handed to send(): commands and receipt.query. Nothing is queued while
+disconnected: send() refuses, and anything not yet written when the connection
+drops is discarded, never sent on the next connection.
+"""
 
 import queue
 import re
@@ -14,6 +20,8 @@ class ReadOnlyLink:
                  tls=True, retry=2.0):
         self.events = queue.Queue(maxsize=128)
         self.expected = None
+        self._outbox = queue.Queue()
+        self._hello_id = None
         self._stop = threading.Event()
         self._socket = None
         self.last_received = 0
@@ -25,6 +33,20 @@ class ReadOnlyLink:
     def healthy(self):
         return (self._socket is not None and self.thread.is_alive()
                 and time.monotonic() - self.last_received < 6)
+
+    def send(self, msg):
+        """Queue msg for the current connection. False (nothing queued) when not connected."""
+        if self._socket is None or self._stop.is_set():
+            return False
+        self._outbox.put(msg)
+        return True
+
+    def _drain_outbox(self):
+        while True:
+            try:
+                self._outbox.get_nowait()
+            except queue.Empty:
+                return
 
     def stop(self):
         self._stop.set()
@@ -62,12 +84,21 @@ class ReadOnlyLink:
                         payload["token"] = token
                     if self.expected:
                         payload["document"] = self.expected.copy()
-                    sock.sendall(protocol.encode(protocol.message("hello", payload)))
+                    self._drain_outbox()  # never carry an edit over to a new connection
+                    hello = protocol.message("hello", payload)
+                    self._hello_id = hello["id"]
+                    sock.sendall(protocol.encode(hello))
                     self._post("connecting", None)
                     buffer = bytearray()
                     received = pinged = time.monotonic()
                     while not self._stop.is_set():
                         now = time.monotonic()
+                        while True:
+                            try:
+                                outgoing = self._outbox.get_nowait()
+                            except queue.Empty:
+                                break
+                            sock.sendall(protocol.encode(outgoing))
                         if now - pinged >= 2:
                             sock.sendall(protocol.encode(protocol.message("ping")))
                             pinged = now
@@ -100,7 +131,13 @@ class ReadOnlyLink:
                                     self._post("error", "wrong_document")
                                     self._stop.set()
                                     break
-                            if kind == "error":
+                            reply_to = msg.get("re")
+                            if kind == "error" and reply_to and reply_to != self._hello_id:
+                                # An error answering one of our commands or queries: it
+                                # concerns that request, not the connection or the scene.
+                                code = body.get("code")
+                                self._post("reply_error", (reply_to, code if isinstance(code, str) else ""))
+                            elif kind == "error":
                                 # Error text is intentionally not echoed: a remote host
                                 # can send arbitrary text. Codes are sufficient for UI.
                                 code = body.get("code", "invalid_message")
@@ -112,8 +149,10 @@ class ReadOnlyLink:
                                     self._stop.set()
                                     break
                             elif kind in ("welcome", "scene.snapshot", "scene.update",
-                                          "session.update", "activity"):
+                                          "session.update", "activity", "result"):
                                 self._post(kind, body)
+                            elif kind == "receipts":
+                                self._post(kind, (reply_to, body))
                         if len(buffer) > protocol.MAX_LINE_BYTES:
                             raise protocol.ProtocolError("Host message exceeds size limit")
             except (OSError, ValueError, KeyError, TypeError, AttributeError, NotImplementedError):
@@ -121,4 +160,5 @@ class ReadOnlyLink:
                 self._post("disconnected", "Disconnected — reconnecting; last scene is stale")
             finally:
                 self._socket = None
+                self._drain_outbox()
             self._stop.wait(retry)

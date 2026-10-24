@@ -1,13 +1,19 @@
-"""P2 read-only Client role. Connect explicitly from a separate empty Blender."""
+"""Client role. Connect explicitly from a separate empty Blender.
+
+The mirror is read-only: every edit is a request to the host (requests.py), and
+the local scene changes only when the host's scene.update arrives.
+"""
 
 import copy
 import queue
 
 from .presence import Presence
+from .requests import EditBlocked, RequestTracker
 from .state import SceneState
 
 state = SceneState()
 presence = Presence()
+requests = RequestTracker()
 _link = _mirror = None
 _draw_handle = None
 _can_edit = False
@@ -25,17 +31,54 @@ def ownership_state():
     return copy.deepcopy(presence.leases), presence.actor_id, state.status
 
 
+def edit_blocked():
+    """None when a Client edit may be sent now, otherwise the reason to show."""
+    if _link is None:
+        return "Not connected to the host"
+    return requests.blocked(state.current, _can_edit, _link.healthy)
+
+
+def send_edit(op, label, args=None, target_id=None):
+    """Send one edit request to the host. Returns its request ID; raises EditBlocked."""
+    reason = edit_blocked()
+    if reason:
+        raise EditBlocked(reason)
+    target = None
+    if target_id is not None:
+        target = state.objects.get(target_id)
+        if target is None:
+            raise EditBlocked("That object isn't in the host scene any more")
+    msg = requests.build(op, label, state.document, args, target)
+    if not _link.send(msg):
+        requests.disconnected()
+        raise EditBlocked("Not connected to the host")
+    return msg["id"]
+
+
+def acknowledge_unknown():
+    requests.acknowledge_unknown()
+
+
+def _send_queries(payloads):
+    from .. import protocol
+    for payload in payloads:
+        query = protocol.message("receipt.query", payload)
+        if _link.send(query):
+            requests.query_sent(query["id"], payload)
+
+
 def participants():
     return copy.deepcopy(presence.participants) if ownership_state()[1] else []
 
 
 def connect(address, token, version, name="Blender viewer", port=8767, tls=True):
-    global _link, _mirror, state
+    global _link, _mirror, state, requests
     from .mirror import Mirror
     from .transport import ReadOnlyLink
     disconnect()
     _mirror = Mirror()
     state = SceneState()
+    requests = RequestTracker()
     try:
         _link = ReadOnlyLink(address, token, version, name, port, tls)
     except Exception:
@@ -53,6 +96,7 @@ def poll():
     if _link is None:
         return None
     if not _link.thread.is_alive():
+        requests.disconnected()
         _can_edit = False
         presence.clear()
         state.stale("Connection stopped — reconnect explicitly; last scene is stale")
@@ -69,6 +113,13 @@ def poll():
                 presence.welcomed(payload)
                 _can_edit = payload.get("can_edit") is True
                 state.stale("Receiving a fresh host snapshot — read-only")
+                _send_queries(requests.welcomed(payload))
+            elif kind == "result":
+                requests.on_result(payload)
+            elif kind == "receipts":
+                requests.on_receipts(*payload)
+            elif kind == "reply_error":
+                requests.on_reply_error(*payload)
             elif kind in ("session.update", "activity"):
                 # Presence changes must never invalidate an otherwise current
                 # scene or apply geometry/materials to the read-only mirror.
@@ -81,12 +132,15 @@ def poll():
                     presence.clear()
                     _can_edit = False
             elif kind == "error":
+                requests.disconnected()
                 _can_edit = False
                 presence.clear()
                 state.stale("Host scene unavailable — last scene is stale; awaiting a fresh snapshot"
                             if payload == "failed" else
                             f"Connection refused ({payload}) — reconnect explicitly")
             else:
+                if kind == "disconnected":
+                    requests.disconnected()
                 _can_edit = False
                 presence.clear()
                 state.stale(payload or "Connecting — last scene is stale")
@@ -96,6 +150,7 @@ def poll():
         state.stale("Scene could not be verified/applied — reconnect for a fresh snapshot")
         _link.stop()
     if state.current and not _link.healthy:
+        requests.disconnected()
         _can_edit = False
         presence.clear()
         state.stale("Host is not responding — last scene is stale")
@@ -114,6 +169,7 @@ def disconnect():
     if _link is not None:
         _link.stop()
     _link = None
+    requests.disconnected()
     _can_edit = False
     presence.clear()
     if bpy.app.timers.is_registered(poll):
