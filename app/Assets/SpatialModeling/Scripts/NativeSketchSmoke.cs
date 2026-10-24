@@ -12,6 +12,9 @@ namespace SpatialModeling
     {
         WorkspaceNativeMenu menu; NativeSketchEditor editor; NativeEditSession session;
         string output; bool failed;
+        HostLink ownershipPeer;
+        JObject peerWelcome;
+        string peerLease;
         readonly JObject report = new JObject { ["physical_headset"] = "not tested", ["second_pc"] = "not tested", ["steps"] = new JArray() };
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         static void Install() { if (Array.Exists(Environment.GetCommandLineArgs(), a => a == "-p3-sketch-smoke")) new GameObject("Native CAD menu smoke").AddComponent<NativeSketchSmoke>(); }
@@ -21,6 +24,15 @@ namespace SpatialModeling
             int.TryParse(Environment.GetEnvironmentVariable("CALHACKS_HOST_PORT"), out var port);
             if (string.IsNullOrEmpty(output) || !Path.IsPathRooted(output) || port < 1024 || port == 8765) { WorkspaceShutdown.Quit(3); return; }
             StartCoroutine(Run());
+        }
+        void Update()
+        {
+            if (ownershipPeer == null) return;
+            while (ownershipPeer.Events.TryDequeue(out var e)) if (e.RawMessage?["payload"] is JObject p)
+            {
+                if ((string)e.RawMessage["type"] == "welcome") peerWelcome = p;
+                if ((string)e.RawMessage["type"] == "lease.granted") peerLease = (string)p["lease"]?["lease_id"];
+            }
         }
         IEnumerator Run()
         {
@@ -60,6 +72,7 @@ namespace SpatialModeling
             if (!Extent(rectangle, 0.1, 0.06)) { Fail("Undo did not restore100x60"); yield break; }
             menu.Home(); if (!Click("Redo") || !Click("Apply")) yield break; yield return Receipt("redo dimension"); if (failed) yield break;
             if (!Extent(rectangle, 0.12, 0.06)) { Fail("Redo did not restore120x60"); yield break; }
+            yield return PeerSketchOwnership(rectangle, widthDimension, horizontal); if (failed) yield break;
             yield return NewSketch(); if (failed) yield break;
             string circleSketch = session.SelectedId; SketchHome(); if (!Click("Circle") || !Click("Apply")) yield break;
             yield return Receipt("native circle"); if (failed) yield break;
@@ -91,6 +104,46 @@ namespace SpatialModeling
             yield return new WaitForSecondsRealtime(2); WorkspaceShutdown.Quit(0);
         }
         IEnumerator NewSketch() { menu.Home(); if (!Click("Sketch") || !Click("New sketch") || !Click("XY") || !Click("Apply")) yield break; yield return Receipt("create native XY sketch"); }
+        IEnumerator PeerSketchOwnership(string sketch, string widthDimension, string horizontal)
+        {
+            const string name = "Sketch ownership test participant";
+            int port = int.Parse(Environment.GetEnvironmentVariable("CALHACKS_HOST_PORT"));
+            ownershipPeer = new HostLink("127.0.0.1", port, new JObject { ["role"] = "vr", ["name"] = name,
+                ["app"] = new JObject { ["name"] = "Native sketch ownership smoke", ["version"] = "1" } });
+            double until = Time.realtimeSinceStartupAsDouble + 10;
+            while (peerWelcome == null && Time.realtimeSinceStartupAsDouble < until) yield return null;
+            if (peerWelcome == null) { Fail("Second local sketch editor did not join"); yield break; }
+            var request = new JObject { ["session_id"] = peerWelcome["session_id"], ["host_epoch"] = peerWelcome["host_epoch"],
+                ["document_id"] = peerWelcome["document"]["id"], ["open_epoch"] = peerWelcome["document"]["open_epoch"],
+                ["actor_id"] = peerWelcome["actor_id"], ["mode"] = "shared", ["targets"] = new JArray(sketch) };
+            ownershipPeer.SendEnvelope(NativeEditSession.Envelope("lease.acquire", request));
+            var overlay = menu.GetComponent<NativeOwnershipOverlay>();
+            until = Time.realtimeSinceStartupAsDouble + 10;
+            while ((peerLease == null || session.ConflictOwner(sketch) != name || !overlay.HasVisibleTarget(sketch))
+                && Time.realtimeSinceStartupAsDouble < until) yield return null;
+            if (peerLease == null || session.ConflictOwner(sketch) != name || !overlay.HasVisibleTarget(sketch))
+            { Fail("Whole-sketch lease did not produce an active actual-owner overlay on solved geometry"); yield break; }
+            long revision = session.Revision;
+            string geometry = session.Sketches[sketch]["entities"].ToString();
+            SketchHome(); editor.SmokeChoose(horizontal, constraint: widthDimension);
+            if (!Click("Edit dimension")) yield break; menu.SmokeNumber(0, "130"); if (!Click("Apply")) yield break;
+            if (session.Busy || !session.Notice.Contains(name) || session.Revision != revision
+                || session.Sketches[sketch]["entities"].ToString() != geometry)
+            { Fail("Foreign whole-sketch ownership did not block the real dimension Apply without native mutation"); yield break; }
+            yield return null;
+            if (!NativeSmokeWorkspace.Capture(Path.ChangeExtension(output, ".sketch-pink.png")))
+            { Fail("Actual solved-sketch pink ownership camera image missing"); yield break; }
+            report["whole_sketch_peer_owner"] = new JObject { ["name"] = name, ["sketch"] = sketch,
+                ["image"] = Path.ChangeExtension(output, ".sketch-pink.png"), ["native_revision_unchanged"] = true };
+            ownershipPeer.SendEnvelope(NativeEditSession.Envelope("lease.release", new JObject { ["lease_id"] = peerLease }));
+            until = Time.realtimeSinceStartupAsDouble + 10;
+            while ((session.ConflictOwner(sketch) != null || overlay.HasVisibleTarget(sketch))
+                && Time.realtimeSinceStartupAsDouble < until) yield return null;
+            if (session.ConflictOwner(sketch) != null || overlay.HasVisibleTarget(sketch))
+            { Fail("Released sketch ownership did not clear its temporary overlay"); yield break; }
+            report["whole_sketch_overlay_released"] = true;
+            session.Cancel(); ownershipPeer.Stop(); ownershipPeer = null;
+        }
         void SketchHome() { menu.Home(); Click("Sketch"); }
         IEnumerator Constrain(string kind, string first, string value = null, string second = null, bool reject = false)
         {
@@ -115,7 +168,8 @@ namespace SpatialModeling
         static Dictionary<string, Vector2> Points(JArray entities) { var result = new Dictionary<string, Vector2>(); foreach (JObject e in entities) if ((string)e["kind"] == "point") result[(string)e["id"]] = new Vector2((float)e["at"][0], (float)e["at"][1]); return result; }
         bool Click(string title) { if (failed) return false; if (menu.SmokeClick(title)) return true; Fail("Missing usable menu control: " + title); return false; }
         void Write() { Directory.CreateDirectory(Path.GetDirectoryName(output)); File.WriteAllText(output, report.ToString()); }
-        void Fail(string error) { failed = true; report["passed"] = false; report["error"] = error; if (output != null) Write(); Debug.LogError("P3_CAD_PLAYER_SMOKE FAIL " + error); WorkspaceShutdown.Quit(2); }
+        void Fail(string error) { failed = true; report["passed"] = false; report["error"] = error; if (output != null) Write(); Debug.LogError("P3_CAD_PLAYER_SMOKE FAIL " + error); ownershipPeer?.Stop(); WorkspaceShutdown.Quit(2); }
+        void OnDestroy() => ownershipPeer?.Stop();
     }
 }
 
