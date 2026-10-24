@@ -12,11 +12,15 @@ restarts the server, which closes every connection; clients reconnect.
 
 Every start makes a new Document (a new open epoch) and a new Session (a new
 host_epoch), so stopping always closes every connection and clients rejoin.
+Scene sync (sync.py) starts with them at revision 0; the drain timer also
+polls it, so direct edits in this Blender reach every client as scene.update.
 
 Undo: operators run from a timer don't push their own undo step, so an edit
 silently merges into the previous one and a single Undo reverts both. Register
 every handler that changes Blender data through undoable(), which pushes one
 named step after it succeeds. Read-only handlers such as ping must not push.
+A handler that changes the scene calls sync.flush() before it returns its
+result, so every client has the scene.update before the sender has the result.
 """
 
 import functools
@@ -25,7 +29,8 @@ import uuid
 import bpy
 from bpy.app.handlers import persistent
 
-from . import document, lan, scene, server, session
+from . import document, lan, server, session
+from . import sync as scene_sync  # host.sync() is the role switch below
 
 DRAIN_INTERVAL = 0.02  # seconds between queue drains
 LAN_ROLES = ("blender-client",)  # 8765 admits only the Unity app (server.Listener's default)
@@ -99,6 +104,7 @@ def _drain():
     if _server is None:
         return None  # unregisters this timer
     _server.drain()
+    scene_sync.poll()  # direct edits in this Blender reach clients as scene.update
     return DRAIN_INTERVAL
 
 
@@ -146,8 +152,9 @@ def start():
     _starting = True  # setting a generated token must not restart us from its update callback
     extra = None
     doc = document.Document()
-    sess = session.Session(
-        doc.describe, scene.snapshot, _get_session_id(), on_change=_participants_changed
+    sess = session.Session(  # hello gets the document and snapshot from scene sync
+        scene_sync.describe, scene_sync.snapshot, _get_session_id(),
+        on_change=_participants_changed,
     )
     try:
         extra = _lan_listener(_prefs())
@@ -168,6 +175,7 @@ def start():
     finally:
         _starting = False
     _server, _session, _document = srv, sess, doc
+    scene_sync.start(doc, sess)
     status = f"Listening on {srv.host}:{srv.port}"
     if extra is not None:
         lan_status = _describe_lan(extra)
@@ -179,6 +187,7 @@ def stop():
     global _server, _session, _document, status, lan_status
     if bpy.app.timers.is_registered(_drain):
         bpy.app.timers.unregister(_drain)
+    scene_sync.stop()
     if _server is not None:
         _server.stop()
         _server = None
@@ -232,6 +241,7 @@ _HANDLERS = (
 def register():
     for handlers, fn in _HANDLERS:
         handlers.append(fn)
+    scene_sync.register()
     sync()
 
 
@@ -240,3 +250,4 @@ def unregister():
         if fn in handlers:
             handlers.remove(fn)
     stop()
+    scene_sync.unregister()
