@@ -45,11 +45,13 @@ warning in Blender, an entry in `bypasses`, and the host stops command writes
 until it has re-read the scene and sent every client a fresh scene.snapshot, as
 after an unknown outcome. Strict locking did not pass for that route.
 
-Known limit (#80): a bypass is caught after the change, whatever made it (sync.py
-diffs the scene itself, collection membership included), but not reverted: the
-change stays in host Blender, and a drag started from a menu or F3 runs to its
-end, each step caught. Vetoing those routes needs a hook Blender doesn't have,
-and reverting would restore arbitrary data behind Blender's Undo history.
+Known limits (#80): a bypass is caught after the change, whatever made it, since
+sync.py diffs the scene itself; but only what clients get and the collections
+holding each object, so data the wire leaves out (custom properties, render
+settings) isn't watched. It isn't reverted either: the change stays in host
+Blender, and a drag started from a menu or F3 runs to its end, each step
+caught. Vetoing those routes needs a hook Blender doesn't have, and reverting
+would restore arbitrary data behind Blender's Undo history.
 """
 
 import logging

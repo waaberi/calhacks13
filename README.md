@@ -18,7 +18,7 @@ Built at CalHacks 13 by Waaberi Ibrahim, Lee Jae-yeon, Jihyeon and Talia.
 - **Hands-on editing.** Move, rotate, scale, add and delete objects with the controllers. A hand menu takes exact numbers when you need precision, and it works for left- and right-handed users.
 - **Voice commands.** Say "rotate this 90 degrees". If something is missing, it asks a short question, such as which axis, and then finishes the command. Recognition runs offline.
 - **Two people, one scene.** A second person joins from Blender on their own PC over an encrypted LAN connection. Everyone sees every change.
-- **No conflicts.** When someone is editing an object, other edits to it are blocked with a message saying who has it. This covers Blender's own tools too.
+- **No conflicts.** When someone is editing an object, other edits to it are blocked with a message saying who has it. This covers Blender's own editing shortcuts, fields and gizmos too. Edits through Blender's menus, F3 search, the Outliner or a script can't be stopped in advance: the host catches them right after, warns, and gives everyone the re-read scene.
 - **CAD sketches.** Draw sketches with real dimensions and constraints. Change a dimension and the solver updates the shape. Built on CAD Sketcher.
 - **Blender on a screen in VR.** A panel shows the live Blender window, so you don't need to take the headset off.
 - **Native Blender history.** Each edit is one Undo step. Save from VR, reopen in Blender, and everything is there.
