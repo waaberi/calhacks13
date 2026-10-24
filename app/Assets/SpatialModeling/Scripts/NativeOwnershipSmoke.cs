@@ -25,10 +25,18 @@ namespace SpatialModeling
         void Update()
         {
             if (peer == null) return;
-            while (peer.Events.TryDequeue(out var e)) if (e.RawMessage?["payload"] is JObject p)
+            while (peer.Events.TryDequeue(out var e))
             {
-                if ((string)e.RawMessage["type"] == "welcome") welcome = p;
-                if ((string)e.RawMessage["type"] == "lease.granted") lease = (string)p["lease"]?["lease_id"];
+                if (e.Kind == HostEventKind.Error || e.Kind == HostEventKind.Warning || e.Kind == HostEventKind.Closed)
+                {
+                    if (!(report["peer_diagnostics"] is JArray)) report["peer_diagnostics"] = new JArray();
+                    ((JArray)report["peer_diagnostics"]).Add(e.Kind + ": " + e.Code + " " + e.Text);
+                }
+                if (e.RawMessage?["payload"] is JObject p)
+                {
+                    if ((string)e.RawMessage["type"] == "welcome") welcome = p;
+                    if ((string)e.RawMessage["type"] == "lease.granted") lease = (string)p["lease"]?["lease_id"];
+                }
             }
         }
         IEnumerator Run(int port)
@@ -60,7 +68,7 @@ namespace SpatialModeling
             menu.TrackingLost(WorkspaceHandPreference.MenuHand); yield return null;
             report["menu_pin_hold_software_pose"] = true;
             string target = null; foreach (var id in session.Objects.Keys) { target = id; break; }
-            peer = new HostLink("127.0.0.1", port, new JObject { ["role"] = "vr", ["name"] = "Ownership test participant", ["app"] = new JObject { ["name"] = "Native ownership smoke", ["version"] = "1" } });
+            peer = new HostLink("127.0.0.1", port, new JObject { ["role"] = "vr", ["name"] = "Ownership test participant", ["app"] = new JObject { ["name"] = "Native ownership smoke", ["version"] = Application.version } });
             until = Time.realtimeSinceStartupAsDouble + 10;
             while (welcome == null && Time.realtimeSinceStartupAsDouble < until) yield return null;
             if (welcome == null) { Fail("Second local participant did not join"); yield break; }
