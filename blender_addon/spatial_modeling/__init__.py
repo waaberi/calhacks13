@@ -16,7 +16,7 @@ through bpy.app.timers. Never execute received data as Python.
 
 import bpy
 
-from . import gate, host, lan, remote_client
+from . import gate, host, lan, remote_client, remote_test_ui
 
 
 def _sync_roles(self, context):
@@ -205,9 +205,11 @@ def register():
     host.register()
     gate.register()
     remote_client.register()
+    remote_test_ui.register()
 
 
 def unregister():
+    remote_test_ui.unregister()
     remote_client.unregister()
     gate.unregister()
     host.unregister()
