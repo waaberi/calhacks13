@@ -205,6 +205,22 @@ def main(args):
         report["dimension_edit_at_entity_limit"] = adapter.MAX_ENTITIES
         report["constraint_limit_postedit_rollback"] = True
         tiny_obj = sketch.find(tiny)
+        tiny_obj.scale = (2, 1, 1)
+        bpy.context.view_layer.update()
+        try:
+            sketch.snapshot()
+            raise AssertionError("nonrigid sketch plane was exported as rigid")
+        except Refused as exc:
+            assert exc.code == "failed" and "scale" in exc.message
+        try:
+            call("sketch.set_dimension", tiny, constraint=tiny_dimension, value=.02)
+            raise AssertionError("nonrigid sketch plane was edited")
+        except Refused as exc:
+            assert exc.code == "failed" and "scale" in exc.message
+        tiny_obj.scale = (1, 1, 1)
+        bpy.context.view_layer.update()
+        report["nonrigid_plane_refused"] = True
+        tiny_obj = sketch.find(tiny)
         tiny_data = tiny_obj.data
         bpy.data.objects.remove(tiny_obj, do_unlink=True)
         bpy.data.hair_curves.remove(tiny_data)
