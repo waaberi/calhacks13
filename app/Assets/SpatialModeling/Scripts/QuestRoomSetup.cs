@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using Meta.XR.MRUtilityKit;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -15,7 +16,22 @@ namespace SpatialModeling
         EffectMesh geometry;
         Text instructions;
         bool busy, lastLoad, lastScan, lastExit;
+        bool loadSucceeded, displayedDetailed;
+        MRUKRoom displayedRoom;
         string state="Starting Meta room setup";
+        void OnEnable()
+        {
+            OVRManager.HMDUnmounted+=HideRoomGeometry;
+            OVRManager.VrFocusLost+=HideRoomGeometry;
+        }
+        void OnDisable()
+        {
+            OVRManager.HMDUnmounted-=HideRoomGeometry;
+            OVRManager.VrFocusLost-=HideRoomGeometry;
+            HideRoomGeometry();
+        }
+        void OnApplicationPause(bool paused) {if(paused) HideRoomGeometry();}
+        void HideRoomGeometry() {if(geometry!=null) geometry.HideMesh=true;}
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         static void StartCompanion()
         {
@@ -41,6 +57,7 @@ namespace SpatialModeling
             geometry.SpawnOnStart=MRUK.RoomFilter.None;
             geometry.Labels=MRUKAnchor.SceneLabels.FLOOR|MRUKAnchor.SceneLabels.WALL_FACE|MRUKAnchor.SceneLabels.TABLE|MRUKAnchor.SceneLabels.GLOBAL_MESH;
             geometry.Colliders=false;geometry.CastShadow=false;
+            geometry.HideMesh=true;
             geometry.MeshMaterial=new Material(Resources.Load<Shader>("WorkspaceRoomScan"));
             geometry.BarycentricCoordinatesEnabled=true;
             CreateInstructions(rig.centerEyeAnchor);
@@ -74,19 +91,14 @@ namespace SpatialModeling
         public async void LoadSaved()
         {
             if(busy || room==null) return;busy=true;state="Loading saved Meta room…";
+            loadSucceeded=false;HideRoomGeometry();geometry.DestroyMesh();displayedRoom=null;
             try
             {
-                var result=await room.LoadSceneFromDevice(requestSceneCaptureIfNoDataFound:false);
+                var result=await room.LoadSceneFromDevice(requestSceneCaptureIfNoDataFound:false,removeMissingRooms:true);
                 if(this==null) return;
-                geometry.DestroyMesh();
-                bool detailed=room.Rooms.Exists(r=>r.GlobalMeshAnchor!=null);
-                geometry.Labels=detailed ? MRUKAnchor.SceneLabels.GLOBAL_MESH
-                    : MRUKAnchor.SceneLabels.FLOOR|MRUKAnchor.SceneLabels.WALL_FACE|MRUKAnchor.SceneLabels.TABLE;
-                geometry.MeshMaterial.SetFloat("_VertexBarycentric",detailed?1:0);
-                geometry.MeshMaterial.SetFloat("_WireAmount",detailed?1:0);
-                geometry.CreateMesh();
-                state=result==MRUK.LoadDeviceResult.Success
-                    ? (detailed?"Saved Meta reconstruction mesh":"Meta semantic planes/bounds · no detailed mesh supplied")+"\nInspect its fit in passthrough"
+                loadSucceeded=result==MRUK.LoadDeviceResult.Success;
+                state=loadSucceeded
+                    ? "Saved room received · checking this location"
                     : "Saved room unavailable: "+result+" · X opens Meta setup";
                 Debug.Log("QUEST_ROOM_SETUP load="+result+" rooms="+room.Rooms.Count+" physical_fit=UNVERIFIED");
             }
@@ -98,6 +110,7 @@ namespace SpatialModeling
             if(busy) return;
 #if UNITY_ANDROID && !UNITY_EDITOR
             busy=true;state="Meta Space Setup is open · finish or cancel on the headset";
+            loadSucceeded=false;HideRoomGeometry();geometry.DestroyMesh();displayedRoom=null;
             try
             {
                 bool returned=await OVRScene.RequestSpaceSetup();
@@ -111,6 +124,93 @@ namespace SpatialModeling
 #else
             state="Space Setup requires the on-headset APK; Link cannot run it";
 #endif
+        }
+        static bool AnchorTracked(MRUKAnchor anchor)
+        {
+            return anchor!=null && anchor.Anchor.TryGetComponent<OVRLocatable>(out var locatable)
+                && locatable.TryGetSceneAnchorPose(out var pose) && pose.Position.HasValue && pose.Rotation.HasValue
+                && pose.IsPositionTracked && pose.IsRotationTracked;
+        }
+        static bool HeadReady()
+        {
+            var head=InputDevices.GetDeviceAtXRNode(XRNode.Head);
+            bool tracked=head.TryGetFeatureValue(CommonUsages.isTracked,out bool tracking)&&tracking;
+            bool known=head.TryGetFeatureValue(CommonUsages.userPresence,out bool present);
+            bool meta=OVRPlugin.initialized;
+            bool worn=(known||meta)&&(!known||present)&&(!meta||OVRPlugin.userPresent);
+            return Camera.main!=null && head.TryGetFeatureValue(CommonUsages.devicePosition,out Vector3 _)
+                && head.TryGetFeatureValue(CommonUsages.deviceRotation,out Quaternion _)
+                && HostScene.HeadsetAllowsPlacement(XRSettings.isDeviceActive,tracked,known||meta,worn,
+                    meta&&OVRPlugin.hasVrFocus);
+        }
+        bool TrySelectCurrentRoom(out MRUKRoom selected,out string reason)
+        {
+            selected=null;reason="Waiting for worn, focused headset tracking";
+            if(!HeadReady()) return false;
+            reason="Saved room is not localized here · A reloads · X opens Meta setup";
+            if(!room.IsWorldLockActive) return false;
+            var eye=Camera.main.transform;
+            var floors=new List<WorkspaceRoomLocalization.FloorCandidate>();
+            double now=Time.realtimeSinceStartupAsDouble;
+            // GetCurrentRoom can return the last/first room even when outside all
+            // rooms. Require actual containment and one unique current room instead.
+            foreach(var candidate in room.Rooms)
+            {
+                if(candidate==null || !candidate.IsLocal || candidate.Anchor.Uuid==Guid.Empty
+                    || !candidate.IsPositionInRoom(eye.position,true)) continue;
+                foreach(var floor in candidate.FloorAnchors)
+                {
+                    if(!AnchorTracked(floor)) continue;
+                    var normal=floor.transform.forward;
+                    if(normal.y<0) normal=-normal;
+                    float? ceilingHeight=null;
+                    foreach(var ceiling in candidate.CeilingAnchors)
+                    {
+                        if(!AnchorTracked(ceiling)) continue;
+                        float height=Vector3.Dot(ceiling.transform.position-floor.transform.position,normal);
+                        if(height>0 && (!ceilingHeight.HasValue || height<ceilingHeight.Value)) ceilingHeight=height;
+                    }
+                    floors.Add(new WorkspaceRoomLocalization.FloorCandidate {
+                        Room=candidate.Anchor.Uuid,WorldPose=new Pose(floor.transform.position,floor.transform.rotation),
+                        Boundary=floor.PlaneBoundary2D?.ToArray(),Tracked=true,SampleTime=now,CeilingHeight=ceilingHeight });
+                }
+            }
+            if(!WorkspaceRoomLocalization.TrySelectRoom(floors,new Pose(eye.position,eye.rotation),true,now,
+                out Guid current,out reason)) return false;
+            selected=room.Rooms.Find(r=>r!=null && r.Anchor.Uuid==current);
+            return selected!=null;
+        }
+        void LateUpdate()
+        {
+            if(busy || !loadSucceeded || room==null || geometry==null) {HideRoomGeometry();return;}
+            try
+            {
+                if(!TrySelectCurrentRoom(out var selected,out string reason))
+                {HideRoomGeometry();state=reason;return;}
+                bool detailed=selected.GlobalMeshAnchor!=null;
+                if(detailed && !AnchorTracked(selected.GlobalMeshAnchor))
+                {HideRoomGeometry();state="Room mesh is not localized · A reloads";return;}
+                if(displayedRoom!=selected || displayedDetailed!=detailed)
+                {
+                    HideRoomGeometry();geometry.DestroyMesh();
+                    geometry.Labels=detailed ? MRUKAnchor.SceneLabels.GLOBAL_MESH
+                        : MRUKAnchor.SceneLabels.FLOOR|MRUKAnchor.SceneLabels.WALL_FACE|MRUKAnchor.SceneLabels.TABLE;
+                    geometry.MeshMaterial.SetFloat("_VertexBarycentric",detailed?1:0);
+                    geometry.MeshMaterial.SetFloat("_WireAmount",detailed?1:0);
+                    geometry.CreateMesh(selected);
+                    displayedRoom=selected;displayedDetailed=detailed;
+                    Debug.Log("QUEST_ROOM_SETUP current_room_selected=True detailed="+detailed+" physical_fit=UNVERIFIED");
+                }
+                geometry.HideMesh=false;
+                state=(detailed?"Saved Meta reconstruction mesh":"Meta semantic planes/bounds · no detailed mesh supplied")
+                    +"\nInspect its fit in passthrough";
+            }
+            catch(Exception error)
+            {
+                loadSucceeded=false;HideRoomGeometry();
+                state="Room verification failed: "+error.GetType().Name+" · A reloads";
+                Debug.LogWarning("QUEST_ROOM_SETUP localization unavailable "+error.GetType().Name);
+            }
         }
         void Update()
         {

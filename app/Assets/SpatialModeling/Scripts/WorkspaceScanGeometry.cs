@@ -69,7 +69,9 @@ namespace SpatialModeling
             {
                 bool tracked=mesh.Anchor.Locatable.TryGetSceneAnchorPose(out var pose)
                     && pose.Position.HasValue && pose.Rotation.HasValue && pose.IsPositionTracked && pose.IsRotationTracked;
-                bool currentRoom=roomCount==1 || (mesh.Anchor.Room!=Guid.Empty && mesh.Anchor.Room==localizedRoom);
+                Guid soleKnown=Guid.Empty;
+                if(knownRooms.Count==1 && scanMeshes.Count==1) foreach(var room in knownRooms) soleKnown=room;
+                bool currentRoom=WorkspaceRoomLocalization.BelongsToRoom(mesh.Anchor.Room,localizedRoom,soleKnown);
                 mesh.Root.SetActive(AutomaticEnabled && ShowDetected && tracked && currentRoom);
                 if(!tracked) continue;
                 var world=SceneToWorld(sceneTrackingWorld,new Pose(pose.Position.Value,pose.Rotation.Value));

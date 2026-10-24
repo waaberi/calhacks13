@@ -26,6 +26,7 @@ namespace SpatialModeling
         struct RoomAnchor { public OVRAnchor Anchor; public OVRLocatable Locatable; public Guid Room; public string Kind; }
         sealed class Level { public string Kind; public Transform Target, LabelRoot, Handle; public Vector2 Size; public Text Label; public Guid? Replaces; }
         readonly List<RoomAnchor> anchors = new List<RoomAnchor>();
+        readonly HashSet<Guid> knownRooms = new HashSet<Guid>();
         readonly List<Surface> surfaces = new List<Surface>();
         readonly List<Surface> detected = new List<Surface>();
         readonly List<Level> levels = new List<Level>();
@@ -58,6 +59,7 @@ namespace SpatialModeling
         public int DetectedCount => detected.Count;
         string message = "Checking saved room";
         string lastCounts;
+        string lastRoomEligibility;
         string pendingLevel;
         bool loading, disposed, reloadPending, wasPresent;
         int generation, attempts, roomCount;
@@ -108,6 +110,7 @@ namespace SpatialModeling
         {
             foreach (var item in anchors) item.Anchor.Dispose();
             anchors.Clear(); detected.Clear(); surfaces.Clear(); invalidLogged.Clear(); evidenceWritten=false;
+            knownRooms.Clear(); localizedRoom=Guid.Empty;
             ClearScanGeometry();
         }
         void TrackingReset(XRInputSubsystem _)
@@ -285,6 +288,7 @@ namespace SpatialModeling
                 catch(Exception error) {Debug.LogWarning("WORKSPACE_SCAN optional mesh query unavailable " + error.GetType().Name);}
                 if (!Current()) return;
                 anchors.AddRange(next);
+                foreach(var room in rooms) knownRooms.Add(room.Uuid);
                 ReadScanGeometry();
                 message = anchors.Count == 0 ? "Room found · surfaces unavailable · use a level" : "Saved room loaded";
             }
@@ -486,7 +490,9 @@ namespace SpatialModeling
                 var host=FindFirstObjectByType<HostScene>();
                 if(host!=null && host.DisplayPlacementReady) BeginLevel(pendingLevel);
             }
-            detected.Clear(); var candidates = new List<(Guid room, Surface surface)>(); Guid currentRoom = Guid.Empty;
+            detected.Clear(); var candidates = new List<(Guid room, Surface surface)>();
+            var floors=new List<WorkspaceRoomLocalization.FloorCandidate>();
+            double now=Time.realtimeSinceStartupAsDouble;
             foreach (var item in anchors)
             {
                 if (!item.Locatable.TryGetSceneAnchorPose(out var tracked) || !tracked.Position.HasValue
@@ -518,17 +524,19 @@ namespace SpatialModeling
                     SetBoundary(ref surface,item,world);
                     if (surface.Size.x <= .01f || surface.Size.y <= .01f) continue;
                     candidates.Add((item.Room,surface));
-                    if (kind == "Floor" && Camera.main != null)
-                    {
-                        var local = Quaternion.Inverse(surface.Pose.rotation)*(Camera.main.transform.position-surface.Pose.position);
-                        if (ContainsPoint(surface,new Vector2(local.x,local.y))) currentRoom=item.Room;
-                    }
+                    if(kind=="Floor") floors.Add(new WorkspaceRoomLocalization.FloorCandidate {
+                        Room=item.Room,WorldPose=surface.Pose,Boundary=surface.Boundary,Tracked=true,SampleTime=now });
                 }
                 catch (Exception error) { if(invalidLogged.Add(item.Anchor.Uuid)) Debug.LogWarning("WORKSPACE_SURFACES invalid surface " + error.GetType().Name); }
             }
+            bool localized=WorkspaceRoomLocalization.TrySelectRoom(floors,
+                Camera.main!=null?new Pose(Camera.main.transform.position,Camera.main.transform.rotation):Pose.identity,
+                RoomHeadReady(),now,out Guid currentRoom,out string eligibility);
+            if(eligibility!=lastRoomEligibility)
+            {lastRoomEligibility=eligibility;Debug.Log("WORKSPACE_ROOM_ELIGIBILITY "+eligibility);}
             foreach (var item in candidates)
             {
-                if(roomCount!=1 && item.room!=currentRoom) continue;
+                if(!localized || !WorkspaceRoomLocalization.BelongsToRoom(item.room,currentRoom,Guid.Empty)) continue;
                 // A legacy DESK alias can also describe a nearly coplanar floor patch.
                 // Keep it as floor support, not the preferred tabletop under the wearer.
                 var floor=candidates.Find(c=>c.room==item.room && c.surface.Name=="Floor");
@@ -538,12 +546,24 @@ namespace SpatialModeling
             localizedRoom=currentRoom;
             var counts=Counts(detected);
             if(counts!=lastCounts) { lastCounts=counts; Debug.Log("WORKSPACE_SURFACES localized " + counts); }
-            if (!loading && anchors.Count > 0) message = detected.Count > 0 ? "Automatic surfaces · adjust if needed" : "Room not localized · look around or use a level";
+            if (!loading && anchors.Count > 0) message = localized ? "Automatic surfaces · adjust if needed"
+                : "Saved room is not localized here · open Environment setup";
             foreach (var level in levels)
                 UpdateLabel(level);
             RebuildSurfaces(); RefreshVisuals();
             UpdateScanMeshes();
             WriteRoomEvidence();
+            ProbeRoomSpacesOnce();
+        }
+        static bool RoomHeadReady()
+        {
+            var head=InputDevices.GetDeviceAtXRNode(XRNode.Head);
+            bool tracked=head.TryGetFeatureValue(CommonUsages.isTracked,out bool value)&&value;
+            bool known=head.TryGetFeatureValue(CommonUsages.userPresence,out bool present);
+            bool meta=OVRPlugin.initialized;
+            bool worn=(known||meta)&&(!known||present)&&(!meta||OVRPlugin.userPresent);
+            return HostScene.HeadsetAllowsPlacement(XRSettings.isDeviceActive,tracked,known||meta,worn,
+                meta&&OVRPlugin.hasVrFocus);
         }
         public static string ClassifyLabels(string value)
         {
@@ -568,7 +588,7 @@ namespace SpatialModeling
         void WriteRoomEvidence()
         {
             var path=Environment.GetEnvironmentVariable("CALHACKS_ROOM_EVIDENCE");
-            if(evidenceWritten || string.IsNullOrEmpty(path) || detected.Count==0 || Camera.main==null) return;
+            if(evidenceWritten || string.IsNullOrEmpty(path) || anchors.Count==0 || Camera.main==null) return;
             var head=InputDevices.GetDeviceAtXRNode(XRNode.Head);
             if(!head.TryGetFeatureValue(CommonUsages.isTracked,out bool tracked)||!tracked
                 ||!head.TryGetFeatureValue(CommonUsages.devicePosition,out Vector3 position)

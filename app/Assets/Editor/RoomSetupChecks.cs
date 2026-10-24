@@ -7,6 +7,7 @@ public static class RoomSetupChecks
     static void Check(bool value,string message) {if(!value) throw new Exception("Room setup: "+message);}
     public static void Run()
     {
+        RoomLocalizationChecks.Run();
         // SDK tracking space can differ from the camera's parent after recenter.
         // A room point two metres forward in that space must appear two metres
         // right in a world whose tracking reference has a 90-degree yaw.

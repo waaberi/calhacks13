@@ -13,6 +13,10 @@ UUIDs requires accounting for native-log versus managed Guid byte order; after t
 normalization both apps read the same saved anchors. This excludes a different saved
 anchor set as the explanation, but does not yet diagnose the PC transform failure.
 
+The later `fdbb1d6` camera-mapping candidate also **failed physical alignment**.
+Its live official-SDK versus parent mapping differed by only0.331degrees and
+9.26mm. That cannot explain the reported large room rotation. It is not a fix.
+
 The optional MRUK reference-rig diagnostic on `e58039f` crashed before exporting
 comparisons: repeated AppSpaceChange events exhausted native reference spaces
 (`xrCreateReferenceSpace: XR_ERROR_LIMIT_REACHED`). It has been removed; the exact
@@ -24,6 +28,36 @@ It retains the SDK's paired scene-pose/mesh handedness conversion, the existing
 camera, controls and saved room. Optional local room evidence records the measured
 rotation/translation difference from the former camera-parent assumption. This
 is a candidate mapping correction; physical fit is still failed until verified.
+
+An opt-in `CALHACKS_ROOM_SPACE_PROBE` export compares each existing anchor through
+direct `xrLocateSpace` in Unity's actual AppSpace against Core's native
+Floor/Eye/Stage-origin wrapper. It creates no reference spaces and changes no
+tracking state. The mesh API uses the OpenXR shim while Core's locatable wrapper
+uses the native origin-based path; equality of head poses alone does not prove
+that these paths locate scene anchors in the same reference space. A disagreement
+is a hypothesis until measured, not a reason for a guessed180degree correction.
+
+## Current-room eligibility and demo relocation
+
+A successful query is scene receipt, not proof the wearer is in that room. The
+former singleton-room bypass could display a saved mesh while the headset was
+outside its actual floor polygon. Automatic room rendering and contact now require
+fresh tracked floor geometry, a worn/focused/tracked headset, a unique containing
+room, and plausible floor-relative head height. Missing, stale, ambiguous or
+outside-room data disables automatic room geometry/contact. Actual Boundary2D is
+required; a rectangle is not a localization fallback. Unknown mesh ownership is
+accepted only for a single mesh and a unique known room that independently passes
+the same containment gate. These checks prevent stale-room use; they cannot prove
+physical fit when the common anchor reference itself is wrong.
+
+For a different demo venue, load that venue's existing scene on the headset first.
+If no scene fits there, the user can choose Meta Space Setup on the headset, then
+reload and inspect its fit before returning to Link for fresh localization. Do
+not automatically erase or recapture a working scene. Meta warns that loaded
+scenes may be distant or on another floor and recommends floor-polygon containment.
+MRUK's `GetCurrentRoom()` can fall back to the previous/first room, so it alone
+cannot establish current-room membership. See [Meta scene best practices](https://developers.meta.com/vr/documentation/native/scene-best-practices/)
+and [MRUK scene loading](https://developers.meta.com/vr/documentation/unity/unity-mr-utility-kit-manage-scene-data/).
 
 ## Supported route
 
