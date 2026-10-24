@@ -22,7 +22,9 @@ namespace SpatialModeling
         void OnEnable()
         {
             menu = GetComponent<WorkspaceNativeMenu>(); scene = FindAnyObjectByType<HostScene>();
-            material = new Material(Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("UI/Default"));
+            if (scene == null || scene.ObjectDisplayMaterial == null)
+            { Debug.LogError("P3 solved sketch display needs the scene-referenced display material"); enabled = false; return; }
+            material = new Material(scene.ObjectDisplayMaterial);
             material.color = new Color(0.2f, 0.95f, 0.9f);
             menu.BuildSketchPage = _ => Home();
             menu.Session.Changed += Changed;
