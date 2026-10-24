@@ -218,12 +218,88 @@ def check(args, state):
     snapshots = [m["payload"] for m in messages if m["type"] == "scene.snapshot"]
     assert snapshots[-1]["sketches"][0]["entities"] == record(sid)["entities"]
     assert snapshots[-1]["sketches"][0]["constraints"] == record(sid)["constraints"]
+    from spatial_modeling import scene
+    from spatial_modeling.commands import Refused
+
+    def disconnected(peer):
+        fault = peer.until("error")
+        assert "scene unavailable" in fault["payload"]["message"].lower(), fault
+        assert peer.file.readline() == b"", "serializer fault kept a live/current socket"
+        return fault
+
+    # A real unsupported desktop transform invalidates every welcomed client's
+    # currentness, even though the server could otherwise still answer pings.
+    native_obj = sketch.find(sid)
+    native_obj.scale = (2, 1, 1)
+    bpy.context.view_layer.update()
+    fault_revision = doc.revision
+    try:
+        sync.flush()
+        raise AssertionError("nonrigid native sketch serialized as current")
+    except Refused:
+        pass
+    assert doc.revision == fault_revision
+    for peer in (one, two, third):
+        yield from off(lambda peer=peer: disconnected(peer))
+    try:
+        sync.snapshot(doc.describe())
+        raise AssertionError("faulted snapshot cache labeled current")
+    except RuntimeError:
+        pass
+    bad = yield from off(lambda: Peer(srv.port, messages))
+    def join_faulted():
+        bad.send(protocol.message("hello", {"role": "vr", "name": "Faulted rejoin",
+                                            "app": {"name": "Native CAD gate", "version": "0.1.0"}}))
+        response = bad.until("error")
+        assert not any(m["type"] == "welcome" and m.get("re") == response.get("re") for m in messages)
+        return response
+    yield from off(join_faulted)
+    bad.sock.close()
+    native_obj.scale = (1, 1, 1)
+    bpy.context.view_layer.update()
+    sync.flush()
+    recovered = yield from off(lambda: Peer(srv.port, messages).join("Recovered CAD peer"))
+    after_fault = record(sid)
+    assert after_fault == before_saved_reject
+    applied((yield from command(recovered, "sketch.set_dimension", sid,
+                               {"constraint": dimension, "value": .13})))
+    assert math.isclose(width(sid), .13, abs_tol=1e-7)
+
+    # Inject an evaluated-mesh read failure on a real native cube. Keeping its
+    # old mesh under a fresh transform/revision would be a false current scene.
+    cube = applied((yield from command(recovered, "object.add", args_={
+        "primitive": "cube", "location": [0, 0, 0], "dimensions": [.01, .01, .01]})))["created"][0]
+    original_mesh = scene.evaluated_mesh
+    def failed_mesh(obj, *values):
+        if obj.get("spatial_modeling_id") == cube:
+            raise RuntimeError("injected evaluated native mesh failure")
+        return original_mesh(obj, *values)
+    scene.evaluated_mesh = failed_mesh
+    sync._state.full = True
+    fault_revision = doc.revision
+    try:
+        try:
+            sync.flush()
+            raise AssertionError("old mesh silently reused after serialization failure")
+        except RuntimeError as exc:
+            assert "injected" in str(exc), exc
+        assert doc.revision == fault_revision
+        yield from off(lambda: disconnected(recovered))
+    finally:
+        scene.evaluated_mesh = original_mesh
+    sync.flush()
+    final_peer = yield from off(lambda: Peer(srv.port, messages).join("Mesh recovered peer"))
+    final_snapshot = [m["payload"] for m in messages if m["type"] == "scene.snapshot"][-1]
+    assert any(obj["id"] == cube and obj["mesh"] is not None for obj in final_snapshot["objects"])
+    assert final_snapshot["sketches"][0]["entities"] == record(sid)["entities"]
+    state["report"]["serializer_failure_disconnect_recovery"] = True
+    state["report"]["mesh_failure_disconnect_recovery"] = True
     state["report"].update({"passed": True, "native_undo_redo": True,
                             "rejected_conflict_no_undo_step": True, "whole_sketch_lease": True,
                             "fresh_peer_snapshot": True, "command_count": len(receipts),
                             "final_sketch": record(sid), "receipts": receipts})
     (args.output / "transaction-messages.json").write_text(json.dumps(messages, indent=2))
-    for peer in (one, two, third):
+    for peer in (one, two, third, recovered, final_peer):
         peer.sock.close()
     srv.stop()
     sync.stop()
