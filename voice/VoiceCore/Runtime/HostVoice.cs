@@ -232,6 +232,35 @@ namespace SpatialModeling.VoiceCore
             return phrases;
         }
 
+        /// <summary>
+        /// The phrases are a <see cref="Grammar"/> (what <see cref="VoiceSession.GrammarPhrases"/> gives while asking):
+        /// only answer phrases, cancel and "[unk]", with cancel among them. A recognizer that is only handed grammars
+        /// (FastPathRecognizer) tells the question's grammar from the full one by this. The full grammar has command
+        /// words besides "one" and "cancel", so it never is one.
+        /// </summary>
+        public static bool IsGrammar(IReadOnlyList<string> phrases)
+        {
+            if (phrases == null)
+                return false;
+            bool cancel = false;
+            foreach (string phrase in phrases)
+            {
+                if (Array.IndexOf(CancelPhrases, phrase) >= 0)
+                    cancel = true;
+                else if (phrase != Vocabulary.Unknown && !IsSpoken(phrase))
+                    return false;
+            }
+            return cancel;
+        }
+
+        static bool IsSpoken(string phrase)
+        {
+            foreach (string[] phrases in Spoken)
+                if (Array.IndexOf(phrases, phrase) >= 0)
+                    return true;
+            return false;
+        }
+
         /// <summary>The offered choice the words say, 0 for cancel, or null when they aren't exactly an answer to this
         /// question.</summary>
         public static int? Read(string text, IReadOnlyList<VoiceCandidate> offered)
