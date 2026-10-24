@@ -21,10 +21,55 @@ from fresh_c import (
     verify_player,
     verify_protocol,
     verify_readiness,
+    write_json,
 )
 
 
 class FreshCTests(unittest.TestCase):
+    def test_player_changed_during_picker_cannot_spawn(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "blender_addon/spatial_modeling"
+            source.mkdir(parents=True)
+            (source / "__init__.py").write_text("# source")
+            (source / "blender_manifest.toml").write_text('id="spatial_modeling"\nversion="0.1.0"')
+            notices = root / "docs/third-party"
+            notices.mkdir(parents=True)
+            for name in ("CAD_DEPENDENCIES.md", "CAD_SKETCHER_GPL3.txt", "SLVS_COPYING.txt"):
+                (notices / name).write_text("notice fixture")
+            archive = root / "c.zip"
+            identity = build_addon_zip(source, archive, "a" * 40)
+            player, blender, blend = (root / name for name in ("SpatialModeling.exe", "Blender.exe", "source.blend"))
+            for path in (player, blender, blend):
+                path.write_bytes(b"test fixture")
+            assembly = root / "SpatialModeling_Data/Managed/Assembly-CSharp.dll"
+            assembly.parent.mkdir(parents=True)
+            assembly.write_bytes(b"tested C assembly")
+            cad = root / "CAD_Sketcher"
+            cad.mkdir()
+            args = SimpleNamespace(player=player, blender=blender, blend=blend, addon_zip=archive,
+                                   addon_sha256=identity["zip_sha256"], cad_extension=cad,
+                                   session_dir=root / "session", host_only=False, window=456,
+                                   player_assembly_sha256=sha256(assembly), player_source_revision="b" * 40)
+            def spawn_host(*_, **__):
+                write_json(args.session_dir / "c-ready.json", {
+                    "status": "ready", "pid": 123, "host": "127.0.0.1", "port": 8765,
+                    "working_copy": str(args.session_dir / "working.blend"), **identity,
+                    "cad": {"available": True, "cad_sketcher": "0.32.1", "slvs": "3.2"}})
+                return SimpleNamespace(pid=123, poll=lambda: None)
+            def selected(path="/status"):
+                return {"pid": 123, "hwnd": 456} if path == "/selection" else {"state": "capturing"}
+            def pixels():
+                assembly.write_bytes(b"different build after user picker wait")
+                return 123456
+            with patch("fresh_c.require_free_port"), patch("fresh_c.verify_cad"), \
+                    patch("fresh_c.verify_protocol", return_value={}), \
+                    patch("fresh_c.require_fresh_pixels", side_effect=pixels), \
+                    patch("fresh_c.subprocess.Popen", side_effect=spawn_host) as spawn:
+                with self.assertRaisesRegex(ValueError, "Player assembly does not match"):
+                    run(args, existing_players=lambda _: [], capture_status=selected)
+                self.assertEqual(spawn.call_count, 1)  # Only the mocked native host; no Player.
+
     def test_old_player_assembly_cannot_silently_be_used_for_c(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
