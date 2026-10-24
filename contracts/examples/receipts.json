@@ -1,0 +1,22 @@
+{
+  "v": 1,
+  "type": "receipts",
+  "id": "13a44d50fb074b1b97586bcb64f02a77",
+  "re": "edb951816697445d9578278b730ea4e8",
+  "payload": {
+    "receipts": [
+      {
+        "request_id": "0bc0319ecc92489ca6ea334a2a23d4e4",
+        "op": "object.move",
+        "target": "f21f7d20394f4c02afce7ab1e6f4a1a8",
+        "actor": { "actor_id": "cf91fda963c247488874e12161956976", "name": "Lee Jae-yeon", "role": "blender-client" },
+        "source": "ui",
+        "outcome": "applied",
+        "revision": 44,
+        "summary": "Moved Base plate 5 mm along Y",
+        "at": 1792875606400
+      }
+    ],
+    "missing": ["b4e7bbc297384b7f81f48d6e0d7c442d"]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "type": "result",
+  "id": "13e100c0a2ff4d41854f23cc977c00b6",
+  "re": "0fe8e7451d0c4690b78f685b578b322f",
+  "payload": {
+    "request_id": "0fe8e7451d0c4690b78f685b578b322f",
+    "op": "sketch.set_dimension",
+    "target": "420d772974c747ebb91283b7ff8d22a3",
+    "actor": { "actor_id": "be10cd89a4e841e7b708ae9cdbefeb77", "name": "Talia", "role": "vr" },
+    "source": "voice",
+    "outcome": "applied",
+    "revision": 45,
+    "solver": { "status": "fully_constrained", "dof": 0 },
+    "summary": "Set Sketch width to 120 mm",
+    "at": 1792875610300
+  }
+}

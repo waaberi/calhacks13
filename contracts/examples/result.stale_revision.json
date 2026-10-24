@@ -1,0 +1,21 @@
+{
+  "v": 1,
+  "type": "result",
+  "id": "be7a0f07da0d4a45b1858452f218a11a",
+  "re": "e3fa513d2eb2448daa46ef02a2bde9af",
+  "payload": {
+    "request_id": "e3fa513d2eb2448daa46ef02a2bde9af",
+    "op": "object.move",
+    "target": "fd7bd4ddae444528a4fedbc562fe018b",
+    "actor": { "actor_id": "cf91fda963c247488874e12161956976", "name": "Lee Jae-yeon", "role": "blender-client" },
+    "source": "ui",
+    "outcome": "rejected",
+    "revision": 42,
+    "error": {
+      "code": "stale_revision",
+      "message": "Shaft changed since you last saw it. Check it and try again.",
+      "details": { "generation": 42 }
+    },
+    "at": 1792875602100
+  }
+}

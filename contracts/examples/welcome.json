@@ -1,0 +1,21 @@
+{
+  "v": 1,
+  "type": "welcome",
+  "id": "c004351381624cfbaefaee011d151e0a",
+  "re": "b9b866e19e5840788f452b29fd8ba6dd",
+  "payload": {
+    "session_id": "2f05d1eb3f1e4ce98dd998abf20cdd33",
+    "host_epoch": "de36341c159e4d63a802adfefdfd4683",
+    "actor_id": "be10cd89a4e841e7b708ae9cdbefeb77",
+    "can_edit": true,
+    "app": { "name": "spatial_modeling", "version": "0.1.0" },
+    "document": {
+      "id": "15e12b8b8c12437098bb8a090659c8cb",
+      "open_epoch": "5ac7931d230d4870a872dc9e363ca56d",
+      "name": "bracket.blend",
+      "revision": 41,
+      "dirty": false,
+      "units": { "system": "METRIC", "length_unit": "MILLIMETERS", "rotation_unit": "DEGREES", "scale_length": 0.001 }
+    }
+  }
+}

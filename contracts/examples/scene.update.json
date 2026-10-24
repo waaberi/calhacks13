@@ -1,0 +1,29 @@
+{
+  "v": 1,
+  "type": "scene.update",
+  "id": "33ae09b0ba0c4ced8ad48c172f9cd5ac",
+  "payload": {
+    "document": {
+      "id": "15e12b8b8c12437098bb8a090659c8cb",
+      "open_epoch": "5ac7931d230d4870a872dc9e363ca56d",
+      "name": "bracket.blend",
+      "revision": 42,
+      "dirty": true,
+      "units": { "system": "METRIC", "length_unit": "MILLIMETERS", "rotation_unit": "DEGREES", "scale_length": 0.001 }
+    },
+    "objects": [
+      {
+        "id": "fd7bd4ddae444528a4fedbc562fe018b",
+        "name": "Shaft",
+        "type": "MESH",
+        "parent": "f21f7d20394f4c02afce7ab1e6f4a1a8",
+        "generation": 42,
+        "visible": true,
+        "transform": { "location": [0.03, 0, 0.03], "rotation": [1, 0, 0, 0], "scale": [1, 1, 1] },
+        "color": [0.25, 0.4, 0.8, 1]
+      }
+    ],
+    "sketches": [],
+    "removed": []
+  }
+}

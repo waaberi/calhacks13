@@ -1,0 +1,21 @@
+{
+  "v": 1,
+  "type": "session.update",
+  "id": "a5b5e4d10f2346198b1a41a9c43137f7",
+  "payload": {
+    "participants": [
+      { "actor_id": "4f8ee9f286eb4403813e6398e796d696", "name": "Host Blender", "role": "host" },
+      { "actor_id": "be10cd89a4e841e7b708ae9cdbefeb77", "name": "Talia", "role": "vr" },
+      { "actor_id": "cf91fda963c247488874e12161956976", "name": "Lee Jae-yeon", "role": "blender-client" }
+    ],
+    "leases": [
+      {
+        "lease_id": "092c1bc6bec64e90927ee8d232ccb9e8",
+        "mode": "shared",
+        "owner": { "actor_id": "cf91fda963c247488874e12161956976", "name": "Lee Jae-yeon", "role": "blender-client" },
+        "targets": ["f21f7d20394f4c02afce7ab1e6f4a1a8"],
+        "acquired_at": 1792875604200
+      }
+    ]
+  }
+}

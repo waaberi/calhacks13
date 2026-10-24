@@ -1,0 +1,21 @@
+{
+  "v": 1,
+  "type": "result",
+  "id": "a5aca1c4dd10402bbc506c5d8a30ca48",
+  "re": "3ccaf449e6ba4295b4731cabaea87826",
+  "payload": {
+    "request_id": "3ccaf449e6ba4295b4731cabaea87826",
+    "op": "sketch.constrain",
+    "target": "420d772974c747ebb91283b7ff8d22a3",
+    "actor": { "actor_id": "be10cd89a4e841e7b708ae9cdbefeb77", "name": "Talia", "role": "vr" },
+    "source": "ui",
+    "outcome": "rejected",
+    "revision": 45,
+    "solver": { "status": "conflicting", "dof": null },
+    "error": {
+      "code": "solver_conflict",
+      "message": "A 50 mm distance on l4 conflicts with the 60 mm height (k7). The sketch is unchanged."
+    },
+    "at": 1792875612800
+  }
+}

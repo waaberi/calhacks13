@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "type": "command",
+  "id": "730923871c8f4af5b30176dde9257472",
+  "payload": {
+    "session_id": "2f05d1eb3f1e4ce98dd998abf20cdd33",
+    "host_epoch": "de36341c159e4d63a802adfefdfd4683",
+    "document_id": "15e12b8b8c12437098bb8a090659c8cb",
+    "open_epoch": "5ac7931d230d4870a872dc9e363ca56d",
+    "actor_id": "be10cd89a4e841e7b708ae9cdbefeb77",
+    "base_revision": 41,
+    "source": "ui",
+    "op": "object.move",
+    "target": { "id": "fd7bd4ddae444528a4fedbc562fe018b", "generation": 40 },
+    "args": { "by": [0.01, 0, 0] }
+  }
+}
