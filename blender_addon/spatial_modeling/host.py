@@ -244,6 +244,7 @@ def _describe_lan(listener):
 
 def _start_server(extra, sess, cmds, lses):
     srv = server.Server(extra_listeners=[extra] if extra else [])
+    cmds.editor.voice.attach(srv)  # voice.resolve and voice.grammar_query
     srv = lses.attach(cmds.attach(sess.attach(srv)))
     srv.start()
     return srv
@@ -263,7 +264,8 @@ def start():
         name=prefs.host_name if prefs else None,
         client_can_edit=bool(prefs and prefs.client_edits),
     )
-    editor = edits.Editor(scene_sync, undoable, doc)
+    from . import voice_ops  # voice.resolve, voice.grammar_query and voice.run (contracts, Voice)
+    editor = edits.Editor(scene_sync, undoable, doc, voice=voice_ops.Voice(scene_sync))
     lses = leases.Leases(sess, editor)
     cmds = commands.Commands(sess, editor, leases=lses)
     try:
