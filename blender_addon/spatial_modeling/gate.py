@@ -18,9 +18,10 @@ input that starts an edit, and asks host.blocked() what that edit would change:
    CANCELLED, which consumes the key; allowed, it returns PASS_THROUGH and
    Blender's own item runs. These are G, R, S, the tools' drags, Alt+G/R/S,
    X and Delete, Shift+A, Ctrl+A, the object context menu, Shift+D, Alt+D,
-   Ctrl+J, Ctrl+P, Ctrl+0..5, Tab, Ctrl+Z, Ctrl+Shift+Z, and in the Properties
-   editor and Outliner their Delete, Apply and Duplicate keys. Custom keymaps
-   and other key bindings aren't covered.
+   Ctrl+J, Ctrl+P, Ctrl+0..5, M and Shift+M (move or link to a collection), Tab,
+   Ctrl+Z, Ctrl+Shift+Z, and in the Properties editor and Outliner their
+   Delete, Apply and Duplicate keys. Custom keymaps and other key bindings
+   aren't covered.
 2. Pointers. While another participant holds a lease, InputGate, a modal
    operator, runs in every window, so it sees each event before Blender's
    regions do. It consumes the clicks, Ctrl/Alt+wheel and button hotkeys
@@ -43,6 +44,14 @@ STRICT LOCK BYPASSED in the log (with the operator Blender recorded just before,
 warning in Blender, an entry in `bypasses`, and the host stops command writes
 until it has re-read the scene and sent every client a fresh scene.snapshot, as
 after an unknown outcome. Strict locking did not pass for that route.
+
+Known limits (#80): a bypass is caught after the change, whatever made it, since
+sync.py diffs the scene itself; but only what clients get and the collections
+holding each object, so data the wire leaves out (custom properties, render
+settings) isn't watched. It isn't reverted either: the change stays in host
+Blender, and a drag started from a menu or F3 runs to its end, each step
+caught. Vetoing those routes needs a hook Blender doesn't have, and reverting
+would restore arbitrary data behind Blender's Undo history.
 """
 
 import logging
@@ -101,6 +110,9 @@ SHORTCUTS = (
     _key(_OBJECT_MODE, "object.duplicate_move_linked", "new", "D", alt=True),
     _key(_OBJECT_MODE, "object.join", "active", "J", ctrl=True),
     _key(_OBJECT_MODE, "object.parent_set", "active", "P", ctrl=True),
+    _key(_OBJECT_MODE, "wm.call_menu", "selected", "M", menu="OBJECT_MT_move_to_collection"),
+    _key(_OBJECT_MODE, "wm.call_menu", "selected", "M", menu="OBJECT_MT_link_to_collection",
+         shift=True),
     *(_key(_OBJECT_MODE, "object.subdivision_set", "selected", n, ctrl=True)
       for n in ("ZERO", "ONE", "TWO", "THREE", "FOUR", "FIVE")),
     _key(_NON_MODAL, "object.mode_set", "active", "TAB"),
