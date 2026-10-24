@@ -55,18 +55,33 @@ focus/wear transitions also retry, with bounded retries when no surfaces localiz
 See Meta's [scene-anchor flow](https://developers.meta.com/vr/documentation/unity/unity-scene-ovranchor/)
 and [Link spatial-data permission](https://developers.meta.com/vr/documentation/unity/unity-spatial-data-perm/).
 
+Discovery is the primary query. If it fails or returns no rooms, the app tries
+the SDK's older FB query API exposed by Link. If no RoomLayout is returned, it
+also queries real semantic scene elements, using both paths when needed. Child
+UUID fetches have the same compatibility fallback. Each result/status/count is
+logged separately. This widens compatibility; it cannot create a missing scene or
+bypass permission. On Windows the SDK's Android permission helper always returns
+true, so it cannot establish Link spatial-data access. Zero across these queries
+means **no data received**, not a verified missing scan. Do not keep asking the
+human to test level visibility to diagnose automatic detection.
+
 Detected surfaces are visible green grids immediately, with separate desk/floor/wall
 counts. **Show/hide detected** controls their outlines; **Auto detection on/off**
 controls whether automatic surfaces participate in placement assistance.
 
-If detection fails or is inaccurate, choose **Desk level / Floor level / Wall level**.
-A labelled amber grid appears immediately in front of the wearer. Point at its
+Choose **Desk: adjust / add**, **Floor: adjust / add**, or **Wall: adjust / add**.
+When that kind has a detected surface, its nearest actual pose and dimensions
+become the amber adjustment grid in place. The corrected level overrides only
+that anchor; other desks/walls remain available. When no surface of that kind is
+available, a manual amber grid appears along the settled workspace forward.
+Repeated selection keeps the existing correction instead of resetting it.
+Point at its
 grid or central label, hold grip, aim/move it into place, and release. Desk/floor
 levels remain horizontal; wall levels remain vertical. Stick left/right changes
 yaw, up/down changes distance; two hands resize. The grid stays visible and stationary
 after release, ready to regrab. No controller-touch marking or hidden trigger capture
-is involved. A manual level overrides automatic surfaces of the same type, so an
-inaccurate scan cannot fight the correction. Clear manual levels restores those
+is involved. An adjusted level overrides its automatic source, so that
+inaccurate anchor cannot fight the correction. Clear manual levels restores those
 automatic surfaces. Levels remain usable when automatic detection is switched off.
 The level uses a retained unlit material, thick yellow border with a dark backing,
 double-stroke grid, visible yellow grip sphere and large white instructions on a
@@ -78,6 +93,18 @@ to see and objects tilted during grip movement and at alignment. This failure
 overrides the earlier visibility-only pass. The complete grip path now separates
 aim-based position from model orientation; helper-only rotation tests were
 insufficient. Horizontal alignment preserves projected heading while levelling.
+
+Physical e1dae7e feedback: contrast is now visible, but the guide starts left and
+is angled after moving in front; this remains a physical failure. BeginLevel used
+click-time head gaze while the wearer looked at the left-hand menu. New guides
+now use HostScene.PlacementHeadPose, the shared settled world-space facing used
+by model/preview startup, with current eye position. Never seed a stationary room
+guide from menu-click gaze, default world +Z, or a controller's wrist orientation.
+Desk/floor normals remain gravity-up; walls remain upright. A preceding wall's
+rotation axis is cleared before another placement. Grip translates with preserved
+orientation; stick/two hands intentionally adjust yaw. Label billboarding does not
+rotate the guide. Research references: [Meta constrained transforms](https://developers.meta.com/vr/documentation/unity/unity-isdk-constrained-grab-interactions/)
+and [Arkio alignment/adjustment/lock workflow](https://feedback.arkio.is/en/help/articles/13485781240092-aligning-and-locking-your-scene-in-mixed-reality).
 
 Surface and controller poses use the same tracking origin exactly once. A tracking
 origin reset invalidates manual levels instead of keeping stale physical surfaces.
@@ -102,6 +129,9 @@ head movement and mode-strip access with the preview hidden. The cumulative
 checks also exercise actual model/screen pickup policy, aim displacement with fixed
 orientation, stick rotation, explicit alignment and two-hand rebase retention.
 An optional real camera render verifies unlit contrast/text without scene lights.
+Actual BeginLevel callbacks now cover side-menu gaze against settled workspace
+facing, repeated adjustment preservation, and prior-wall rotation-axis isolation;
+additional cases cover arbitrary room yaw and per-anchor correction extents.
 P1/P2 movement/controller/readiness/native/render/freshness gates stay in force.
 
 Software checks do not establish physical room-scan availability or exact headset
