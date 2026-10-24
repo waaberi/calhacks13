@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "activity.schema.json",
   "title": "activity",
-  "description": "Host to every other client. The receipt of a command another participant had applied.",
+  "description": "Host to every other client. The receipt of a command another participant had applied. From P2, also of an edit made directly in host Blender, with the host's participant as actor; the receipt fields for that are settled then.",
   "$ref": "envelope.schema.json",
   "properties": {
     "type": { "const": "activity" },

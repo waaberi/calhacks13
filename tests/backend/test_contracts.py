@@ -102,7 +102,6 @@ VALID = [
     ("command.json", {"payload.args": {"to": [0.03, 0, 0.03]}}),
     ("command.object.rotate.json", {"payload.args": {"to": [0.707107, 0, 0, 0.707107]}}),
     ("command.object.scale.json", {"payload.args": {"by": [2, 2, 2]}, "payload.lease": DELETE}),
-    ("command.object.select.json", {"payload.args.ids": []}),
     (
         "command.sketch.constrain.json",
         {"payload.args": {"kind": "angle", "entities": ["l1", "l5"], "value": 0.785398}},
@@ -162,7 +161,7 @@ INVALID = [
         {"payload.target": {"id": "fd7bd4ddae444528a4fedbc562fe018b", "generation": 40}},
     ),
     ("command.object.scale.json", {"payload.args.to": [0, 1, 1]}),
-    ("command.object.select.json", {"payload.args.ids": ["fd7bd4ddae444528a4fedbc562fe018b"] * 2}),
+    ("command.json", {"payload.op": "object.select", "payload.args": {"ids": []}}),  # local only
     ("command.history.undo.json", {"payload.args": {"steps": 3}}),
     ("command.sketch.constrain.json", {"payload.args.value": DELETE}),
     ("command.sketch.constrain.json", {"payload.args.kind": "tangent"}),

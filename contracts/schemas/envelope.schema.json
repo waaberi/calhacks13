@@ -84,7 +84,7 @@
       "additionalProperties": false
     },
     "error_code": {
-      "description": "The first six are transport-level and sent by server.py; the rest come from request handling.",
+      "description": "The first six are transport-level and sent by server.py, which also sends permission_denied before welcome; the rest come from request handling.",
       "enum": [
         "invalid_message",
         "unsupported_version",
