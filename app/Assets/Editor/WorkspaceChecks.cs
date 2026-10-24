@@ -59,6 +59,7 @@ public static class WorkspaceChecks
             Near(root.transform.InverseTransformPoint(world.position), local.position, "Controller tracking origin must be respected");
             CheckGrabSmoothing();
             CheckFarGrabRegression();
+            CheckCaptureRequestLanes();
             Check(BlenderScreen.CaptureIsFresh(99900, 100000, 100000), "Fresh pixels and heartbeat must be accepted");
             Check(!BlenderScreen.CaptureIsFresh(1, 100000, 100000), "A fresh server heartbeat must never certify frozen pixels");
             Check(!BlenderScreen.CaptureIsFresh(95000, 95001, 100000), "Stale pixels/server must be rejected");
@@ -88,6 +89,46 @@ public static class WorkspaceChecks
             Debug.Log("WORKSPACE_CHECKS PASS: no-snap grab, pose/depth/origin mapping, rigid assembly, native/view separation, live update, reset");
         }
         finally { UnityEngine.Object.DestroyImmediate(root); }
+    }
+
+    static void CheckCaptureRequestLanes()
+    {
+        var lanes = new CaptureRequestLanes();
+        int first = lanes.Begin(0), second = lanes.Begin(1);
+        Check(lanes.ConditionalTag(null) == null, "New capture must request actual pixels");
+        Check(lanes.Observe(0, first, "\"1\"", 99900, 100000, 100000) == CaptureRequestLanes.Decision.Continue,
+            "Fresh headers must reserve a frame before body completion");
+        Check(lanes.ConditionalTag("\"0\"") == "\"1\"", "Second slot must use the in-flight frame tag");
+        Check(lanes.Observe(1, second, "\"1\"", 99900, 100000, 100000) == CaptureRequestLanes.Decision.Duplicate,
+            "Both slots must not decode the same fresh frame");
+        lanes.Presented(first, 99900, "\"1\""); lanes.End(0, first);
+        Check(lanes.Observe(1, second, "\"0\"", 99800, 100000, 100000) == CaptureRequestLanes.Decision.Duplicate,
+            "Already displayed/older pixels must be discarded before decoding");
+        lanes.Reset();
+        Check(!lanes.IsCurrent(first) && lanes.ConditionalTag(null) == null,
+            "Unavailable/reset must clear claims and invalidate old requests");
+        lanes.Presented(first, 100050, "late old body");
+        Check(lanes.ConditionalTag(null) == null, "An invalidated body cannot reserve or present pixels");
+        Check(lanes.Observe(0, first, "\"1\"", 99900, 100000, 100000) == CaptureRequestLanes.Decision.Invalidated,
+            "Old request headers cannot reclaim a restarted capture");
+        int fresh = lanes.Begin(0);
+        Check(lanes.Observe(0, fresh, "stale", 1, 100000, 100000) == CaptureRequestLanes.Decision.Pending,
+            "Fresh heartbeat cannot reserve stale pixels");
+        Check(lanes.Observe(0, fresh, "future", 110000, 110001, 100000) == CaptureRequestLanes.Decision.Pending,
+            "Future capture timestamps cannot reserve a slot");
+        Check(lanes.ConditionalTag(null) == null, "Invalid metadata cannot create a conditional request");
+        Check(lanes.Observe(0, fresh, "\"1\"", 100050, 100100, 100100) == CaptureRequestLanes.Decision.Continue,
+            "A reset must allow retrying the same tag after a failed body");
+        lanes.End(0, first);
+        int other = lanes.Begin(1);
+        Check(lanes.Observe(1, other, "\"1\"", 100050, 100100, 100100) == CaptureRequestLanes.Decision.Duplicate,
+            "Old completion cannot release a new epoch's claim");
+        Check(lanes.Observe(1, other, "\"1\"", 100051, 100100, 100100) == CaptureRequestLanes.Decision.Continue,
+            "Reused tag with different actual pixels/time is not the same in-flight frame");
+        Check(lanes.Observe(0, fresh, "\"0\"", 100040, 100100, 100100) == CaptureRequestLanes.Decision.Continue,
+            "An older pending body may finish without replacing the reserved newest tag");
+        Check(lanes.ConditionalTag(null) == "\"1\"", "Late older headers cannot roll reservation back");
+        Debug.Log("CAPTURE_REQUEST_LANES_CHECK PASS bounded headers, duplicates, epoch/reset and stale/future pixels");
     }
 
     static void CheckFarGrabRegression()

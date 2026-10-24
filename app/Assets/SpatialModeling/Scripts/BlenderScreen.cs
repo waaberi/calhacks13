@@ -38,6 +38,7 @@ namespace SpatialModeling
         Texture2D texture;
         InputAction toggle, select, magnify, panAction;
         readonly UnityWebRequest[] requests = new UnityWebRequest[2];
+        readonly CaptureRequestLanes requestLanes = new CaptureRequestLanes();
         Vector2 pan;
         string hostNotice = "";
         bool smokeStarted;
@@ -94,6 +95,7 @@ namespace SpatialModeling
         void OnDisable()
         {
             StopAllCoroutines();
+            requestLanes.Reset();
             for (int i = 0; i < requests.Length; i++)
             {
                 requests[i]?.Abort();
@@ -342,8 +344,20 @@ namespace SpatialModeling
         {
             CaptureState = message;
             etag = null;
+            requestLanes.Reset();
             if (image != null) { image.enabled = false; image.texture = null; }
             if (texture != null) { Destroy(texture); texture = null; }
+        }
+
+        CaptureRequestLanes.Decision ObserveResponseHeaders(int lane, int ticket, UnityWebRequest request)
+        {
+            if (!requestLanes.IsCurrent(ticket)) return CaptureRequestLanes.Decision.Invalidated;
+            if (request.responseCode != 200
+                || !long.TryParse(request.GetResponseHeader("X-Captured-At"), out var captured)
+                || !long.TryParse(request.GetResponseHeader("X-Capture-Alive"), out var alive))
+                return CaptureRequestLanes.Decision.Pending;
+            return requestLanes.Observe(lane, ticket, request.GetResponseHeader("ETag"), captured, alive,
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         }
 
         IEnumerator Poll(int lane)
@@ -357,14 +371,48 @@ namespace SpatialModeling
                 // Native DownloadHandlerTexture decodes off the render thread.
                 var request = UnityWebRequestTexture.GetTexture(P1PipelineProfile.CaptureUrl(), true);
                 requests[lane] = request;
+                int ticket = requestLanes.Begin(lane);
                 request.timeout = 2;
-                if (etag != null) request.SetRequestHeader("If-None-Match", etag);
+                string conditionalTag = requestLanes.ConditionalTag(etag);
+                if (conditionalTag != null) request.SetRequestHeader("If-None-Match", conditionalTag);
                 long requestAt = P1PipelineProfile.Now();
-                yield return request.SendWebRequest();
-                P1PipelineProfile.End("request_with_worker_decode_ms", requestAt);
+                var operation = request.SendWebRequest();
+                bool discard = false;
+                bool yielded = false;
+                while (!operation.isDone)
+                {
+                    var decision = ObserveResponseHeaders(lane, ticket, request);
+                    if (decision == CaptureRequestLanes.Decision.Duplicate
+                        || decision == CaptureRequestLanes.Decision.Invalidated)
+                    {
+                        discard = true;
+                        request.Abort();
+                        break;
+                    }
+                    yielded = true;
+                    yield return null;
+                }
+                if (!discard)
+                {
+                    var decision = ObserveResponseHeaders(lane, ticket, request);
+                    discard = decision == CaptureRequestLanes.Decision.Duplicate
+                        || decision == CaptureRequestLanes.Decision.Invalidated;
+                }
+                P1PipelineProfile.End(discard ? "discarded_request_elapsed_ms" : "request_with_worker_decode_ms", requestAt);
                 P1PipelineProfile.Add("http_status/" + request.responseCode, 1);
                 P1PipelineProfile.Add("downloaded_bytes", request.downloadedBytes);
-                if (request.responseCode == 200 && request.result == UnityWebRequest.Result.Success)
+                if (discard)
+                {
+                    // A completed request may already own a decoded Texture2D.
+                    // Release it explicitly; an early abort never touches the UI.
+                    if (request.isDone && request.responseCode == 200
+                        && request.result == UnityWebRequest.Result.Success)
+                    {
+                        var unused = DownloadHandlerTexture.GetContent(request);
+                        if (unused != null) Destroy(unused);
+                    }
+                }
+                else if (request.responseCode == 200 && request.result == UnityWebRequest.Result.Success)
                 {
                     if (!long.TryParse(request.GetResponseHeader("X-Captured-At"), out var captured)
                         || !long.TryParse(request.GetResponseHeader("X-Capture-Alive"), out var alive)
@@ -399,6 +447,7 @@ namespace SpatialModeling
                             lastCaptured = captured;
                             lastConfirmed = alive;
                             etag = request.GetResponseHeader("ETag");
+                            requestLanes.Presented(ticket, captured, etag);
                             long.TryParse(etag?.Trim('"'), out var frame);
                             LastFrame = frame;
                             LastAgeMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - captured;
@@ -438,7 +487,8 @@ namespace SpatialModeling
                 }
                 if (CaptureState != lastState && !CaptureState.StartsWith("Live Blender")) Debug.Log("P1_CAPTURE_STATE " + CaptureState);
                 lastState = CaptureState;
-                bool retryBackoff = request.responseCode != 200 && request.responseCode != 304;
+                bool retryBackoff = !discard && request.responseCode != 200 && request.responseCode != 304;
+                requestLanes.End(lane, ticket);
                 long disposeAt = P1PipelineProfile.Now();
                 request.Dispose();
                 P1PipelineProfile.End("request_dispose_ms", disposeAt);
@@ -446,6 +496,7 @@ namespace SpatialModeling
                 // The request itself yields. No extra 100ms sleep or second-frame
                 // delay: a fresh image can be presented on every render frame.
                 if (retryBackoff) yield return new WaitForSecondsRealtime(0.25f);
+                else if (discard || !yielded) yield return null;
             }
         }
 
