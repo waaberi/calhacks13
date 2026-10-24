@@ -21,7 +21,14 @@ namespace SpatialModeling
         public string Notice { get; private set; } = "Waiting for Blender snapshot";
         public string Mode { get; set; } = "exclusive";
         public bool Ready { get; private set; }
-        public bool SceneCurrent { get; set; } = true; // Bridge binds this to HostScene's accepted render state.
+        bool sceneCurrent = true;
+        // Bridge binds this to HostScene's accepted render state. A transition must
+        // update the visible admission warning even when no valid raw scene follows.
+        public bool SceneCurrent
+        {
+            get => sceneCurrent;
+            set { if (sceneCurrent == value) return; sceneCurrent = value; Changed?.Invoke(); }
+        }
         public bool CanEdit { get; private set; }
         public bool SketchAvailable { get; private set; }
         public bool Busy => acquireId != null || commandId != null;

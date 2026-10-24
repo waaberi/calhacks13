@@ -1,5 +1,6 @@
 using System;
 using System.Reflection;
+using Newtonsoft.Json.Linq;
 using SpatialModeling;
 using UnityEditor;
 using UnityEngine;
@@ -58,6 +59,31 @@ public static class NativePanelChecks
             Check(Vector3.Distance(scene.Placement.position, pose.position) < 1e-6f
                 && Quaternion.Angle(scene.Placement.rotation, pose.rotation) < 1e-4f
                 && Vector3.Distance(scene.Placement.localScale, size) < 1e-6f, "panel visibility must never change table placement or scale");
+            // The real menu must react to a rejected/stale render event even if no
+            // accepted raw scene is delivered to the phase-state decoder.
+            var selected = new GameObject("selected status", typeof(RectTransform), typeof(UnityEngine.UI.Text));
+            var feedback = new GameObject("admission status", typeof(RectTransform), typeof(UnityEngine.UI.Text));
+            selected.transform.SetParent(go.transform, false); feedback.transform.SetParent(go.transform, false);
+            typeof(WorkspaceNativeMenu).GetField("selected", Private).SetValue(menu, selected.GetComponent<UnityEngine.UI.Text>());
+            typeof(WorkspaceNativeMenu).GetField("feedback", Private).SetValue(menu, feedback.GetComponent<UnityEngine.UI.Text>());
+            var status = feedback.GetComponent<UnityEngine.UI.Text>();
+            var session = bridge.Session;
+            var doc = new JObject { ["id"] = new string('a', 32), ["open_epoch"] = new string('b', 32), ["revision"] = 1, ["dirty"] = false };
+            session.Changed += menu.Refresh;
+            session.Receive(NativeEditSession.Envelope("welcome", new JObject { ["session_id"] = new string('c', 32), ["host_epoch"] = new string('d', 32),
+                ["actor_id"] = new string('e', 32), ["can_edit"] = true, ["document"] = doc.DeepClone() }));
+            var snapshot = new JObject { ["document"] = doc.DeepClone(), ["objects"] = new JArray(), ["sketches"] = new JArray() };
+            session.Receive(NativeEditSession.Envelope("scene.snapshot", snapshot));
+            int transitions = 0; Action changed = () => transitions++; session.Changed += changed;
+            session.SceneCurrent = false; session.SceneCurrent = false;
+            Check(transitions == 1 && status.text.Contains("stale") && status.color != Color.white, "stale render transition must immediately show orange editing-disabled feedback, once");
+            Check(!session.BeginDraft("object.add", new JObject(), false), "stale render must block native draft admission");
+            session.SceneCurrent = true;
+            session.Receive(NativeEditSession.Envelope("scene.snapshot", (JObject)snapshot.DeepClone()));
+            Check(status.color == Color.white && !status.text.Contains("stale"), "fresh accepted state must recover the visible admission warning");
+            session.BeginDraft("object.add", new JObject(), false); session.Apply(); session.Timeout(); session.SceneCurrent = false;
+            Check(status.text.Contains("unknown") && status.color != Color.white, "unknown-outcome warning must survive a stale-scene transition");
+            session.Changed -= changed; session.Changed -= menu.Refresh;
         }
         finally { UnityEngine.Object.DestroyImmediate(go); }
         Debug.Log("P3_PANEL_VISIBILITY_CHECK PASS initial Place preserved; native/table panels exclusive; move/cancel accessible; placement unchanged");

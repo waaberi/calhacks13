@@ -298,8 +298,10 @@ namespace SpatialModeling
             string name = (string)Session.Selected?["name"] ?? "None";
             string saved = (bool?)Session.Document["dirty"] == true ? "Unsaved" : "Saved";
             selected.text = $"Target: {name} · revision {Session.Revision}\n{(SelectingNative ? "Native edit" : "Arrange view")} · {(WorkspaceHandPreference.Left ? "Left" : "Right")} hand · {(Pinned ? "Pinned" : "Held")} · {saved}";
-            feedback.text = localError.Length > 0 ? localError : Session.Notice;
-            feedback.color = Session.OutcomeUnknown || !Session.Ready || localError.Length > 0 ? new Color(1, 0.7f, 0.45f) : Color.white;
+            feedback.text = Session.OutcomeUnknown ? Session.Notice : !Session.SceneCurrent
+                ? "Native scene stale; editing disabled. Wait for a valid snapshot."
+                : localError.Length > 0 ? localError : Session.Notice;
+            feedback.color = Session.OutcomeUnknown || !Session.SceneCurrent || !Session.Ready || localError.Length > 0 ? new Color(1, 0.7f, 0.45f) : Color.white;
         }
 
         public Button ButtonAt(string title, float x, float y, float width, Action action)
