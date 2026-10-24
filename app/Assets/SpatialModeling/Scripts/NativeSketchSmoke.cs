@@ -93,7 +93,7 @@ namespace SpatialModeling
             report["sketches"] = new JArray(session.Sketches.Values); Write();
             yield return null; yield return null;
             int activeLines = 0; foreach (var line in scene.Placement.GetComponentsInChildren<LineRenderer>())
-                if (line.isActiveAndEnabled && line.gameObject.activeInHierarchy && line.positionCount > 1 && line.sharedMaterial != null) activeLines++;
+                if (line.enabled && line.gameObject.activeInHierarchy && line.positionCount > 1 && line.sharedMaterial != null) activeLines++;
             if (activeLines == 0) { Fail("Native solver records exist but no active solved-geometry line renderer is visible after placement"); yield break; }
             report["active_solved_line_renderers"] = activeLines;
             SketchHome(); yield return null;
