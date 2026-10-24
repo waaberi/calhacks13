@@ -178,6 +178,7 @@ class Editor:
             bpy.data.objects.remove(obj)
             bpy.data.meshes.remove(mesh)
             raise Refused("failed", f"Blender didn't make the {kind} as asked. Nothing changed.")
+        self._edited()  # before object_id()'s flush
         object_id = self.sync.object_id(obj)  # given now, inside this Undo step
         return Applied(f"Added {obj.name} ({_mm3(args['dimensions'])} mm)", created=[object_id])
 

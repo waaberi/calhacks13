@@ -19,7 +19,8 @@ from jsonschema import Draft202012Validator
 from test_contracts import REGISTRY, SCHEMAS
 
 CHECK = Path(__file__).with_name("blender_check.py")
-SENT_IN_P1 = {"welcome", "scene.snapshot", "session.update", "error", "pong"}
+SENT = {"welcome", "scene.snapshot", "scene.update", "session.update", "error", "pong", "result",
+        "activity", "receipts"}
 
 
 def run_check(cmd, tmp_path):
@@ -42,7 +43,7 @@ def run_check(cmd, tmp_path):
     for msg in received:
         if msg["type"] in SCHEMAS:  # not test.done, the check's own handler
             Draft202012Validator(SCHEMAS[msg["type"]], registry=REGISTRY).validate(msg)
-    assert SENT_IN_P1 <= {msg["type"] for msg in received}
+    assert SENT <= {msg["type"] for msg in received}
 
 
 @pytest.mark.skipif(importlib.util.find_spec("bpy") is None, reason="needs the bpy module")
