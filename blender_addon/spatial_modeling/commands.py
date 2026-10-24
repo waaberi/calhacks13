@@ -402,7 +402,7 @@ class Commands:
         stored = self.receipts.get(rid)
         if stored is None and self.evicted:
             text = ("The host's bounded receipt history is full. This request ID may have "
-                    "been used before, so it will not change Blender. Save, then restart "
+                    "been used before, so it will not change Blender. Save in host Blender, then restart "
                     "the hosting session and reconnect before making a new edit.")
             receipt = self._receipt(conn, rid, payload, "rejected", self._revision_now(),
                                     error=_error("duplicate_request", text))

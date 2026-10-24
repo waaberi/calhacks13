@@ -33,7 +33,9 @@ hosting session starts. Retained identical receipts still replay without a
 second edit. The 10,000-entry bound is retained; no unbounded tombstone list is
 introduced. A read-only participant can exhaust this shared history and cause
 new edits to require a hosting-session restart. Save the document before
-restarting. Reconnecting just the client does not reset the safety boundary.
+restarting. Use File > Save in host Blender; remote/VR Save commands are refused
+after capacity exhaustion too. Reconnecting just the client does not reset the
+safety boundary.
 
 `tests/backend/test_receipt_capacity.py` exercises evicted applied IDs, evicted
 query fences, new writes after capacity, and retained receipt replay. The
