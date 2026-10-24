@@ -1,6 +1,7 @@
 """Start/attach Blender Host, selected-window capture and the USB Windows VR app."""
 
 import argparse
+import ctypes
 import json
 import os
 import socket
@@ -12,6 +13,7 @@ import urllib.error
 import urllib.request
 import uuid
 import zipfile
+from ctypes import wintypes
 from pathlib import Path
 
 
@@ -28,13 +30,52 @@ def ping_host():
         return False
 
 
-def capture_status():
+def capture_status(path="/status"):
     try:
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        with opener.open("http://127.0.0.1:8766/status", timeout=2) as response:
+        with opener.open("http://127.0.0.1:8766" + path, timeout=2) as response:
             return json.load(response)
     except (OSError, ValueError, urllib.error.URLError):
         return None
+
+
+def player_processes(executable_name):
+    """Include windowless/hung Players; never launch a competing XR instance."""
+    class Entry(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+                    ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.c_size_t),
+                    ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                    ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", wintypes.LONG),
+                    ("dwFlags", wintypes.DWORD), ("szExeFile", wintypes.WCHAR * 260)]
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(Entry)]
+    kernel.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(Entry)]
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = kernel.CreateToolhelp32Snapshot(2, 0)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        entry = Entry()
+        entry.dwSize = ctypes.sizeof(entry)
+        result = []
+        more = kernel.Process32FirstW(handle, ctypes.byref(entry))
+        while more:
+            if entry.szExeFile.casefold() == executable_name.casefold():
+                result.append(entry.th32ProcessID)
+            more = kernel.Process32NextW(handle, ctypes.byref(entry))
+        return result
+    finally:
+        kernel.CloseHandle(handle)
+
+
+def verify_existing_selection(requested, selected):
+    if requested is not None and (not selected or selected.get("hwnd") != requested):
+        raise RuntimeError(
+            "The running capture helper has not confirmed the requested Blender window. "
+            "Select it in the picker (restart an older helper lacking /selection), then retry."
+        )
 
 
 def main():
@@ -72,6 +113,12 @@ def main():
         return
     if not args.player.is_file():
         parser.error("--player must point to a built Windows EXE")
+    players = player_processes(args.player.name)
+    if players:
+        parser.error(f"A Player is already running (PID {players}). Close it cleanly before relaunching.")
+    existing_capture = capture_status()
+    if existing_capture is not None:
+        verify_existing_selection(args.window, capture_status("/selection"))
     script_dir = Path(__file__).resolve().parent
     repo = script_dir.parent
     session = (
@@ -164,6 +211,7 @@ def main():
             )
         time.sleep(0.25)
     record["capture_status_at_launch"] = status
+    record["capture_selection_at_launch"] = capture_status("/selection")
     player_log = session / "player.log"
     player = spawn(
         [

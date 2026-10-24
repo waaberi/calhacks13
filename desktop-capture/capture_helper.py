@@ -183,6 +183,7 @@ class LatestFrame:
             self.selected = window
             self.generation += 1
             self.jpeg = None
+            self.captured_ms = 0
             self.last_success = 0
             self.status = {
                 "state": "no_window",
@@ -212,8 +213,8 @@ class LatestFrame:
 
     def publish_jpeg(self, generation, jpeg, width, height, title, fps, captured_ms):
         with self.lock:
-            if generation != self.generation:
-                return  # A slow old selection must never replace the new window.
+            if generation != self.generation or captured_ms <= self.captured_ms:
+                return False  # A slow old encoder must never roll the newest image back.
             self.sequence += 1
             self.jpeg = jpeg
             self.captured_ms = captured_ms
@@ -227,6 +228,7 @@ class LatestFrame:
                 "fps": round(fps, 1),
                 "message": "",
             }
+            return True
 
     def snapshot(self):
         with self.lock:
@@ -286,6 +288,7 @@ def graphics_capture_loop(api, latest, stop, fps):
     raw_ready = threading.Event()
     raw_slot = [None]
     encoded_times = deque()
+    encoded_lock = threading.Lock()
     session = [0]
     last_callback = [time.monotonic()]
 
@@ -330,21 +333,17 @@ def graphics_capture_loop(api, latest, stop, fps):
             if api.u.IsIconic(selected["hwnd"]):
                 continue
             now = time.monotonic()
-            encoded_times.append(now)
-            while encoded_times and now - encoded_times[0] > 1:
-                encoded_times.popleft()
-            measured = (
-                (len(encoded_times) - 1) / (now - encoded_times[0]) if len(encoded_times) > 1 else 0
-            )
-            latest.publish_jpeg(
-                generation,
-                encoded.tobytes(),
-                width,
-                height,
-                current["title"],
-                measured,
-                captured_ms,
-            )
+            with encoded_lock:
+                encoded_times.append(now)
+                while encoded_times and now - encoded_times[0] > 1:
+                    encoded_times.popleft()
+                measured = (
+                    (len(encoded_times) - 1) / (now - encoded_times[0]) if len(encoded_times) > 1 else 0
+                )
+                if not latest.publish_jpeg(
+                    generation, encoded.tobytes(), width, height, current["title"], measured, captured_ms
+                ):
+                    encoded_times.pop()
 
     threading.Thread(target=encode_newest, daemon=True, name="Latest JPEG encoder").start()
 
@@ -464,6 +463,12 @@ def make_server(latest, port):
             headers = {}
             if self.path == "/status":
                 code, mime, body = 200, "application/json", json.dumps(status).encode()
+            elif self.path == "/selection":
+                # Launcher identity check; separate from the fixed status schema.
+                # Read-only: changing selection still requires the local picker.
+                with latest.lock:
+                    selected = dict(latest.selected) if latest.selected else None
+                code, mime, body = 200, "application/json", json.dumps(selected).encode()
             elif self.path == "/frame":
                 if not jpeg:
                     code, mime, body = 503, "application/json", json.dumps(status).encode()
