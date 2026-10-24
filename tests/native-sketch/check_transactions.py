@@ -80,19 +80,32 @@ def check(args, state):
         sync,
     )
     messages, receipts = [], []
-    doc = document.Document()
-    sess = session.Session(sync.describe, sync.snapshot, uuid.uuid4().hex,
-                           capabilities=lambda: {"sketch": sketch.dependency_status()["available"]})
     sync.register()
-    sync.start(doc, sess)
-    sync.flush()
-    editor = edits.Editor(sync, host.undoable, document=doc)
-    lease_manager = leases.Leases(sess, editor)
-    dispatcher = commands.Commands(sess, editor, leases=lease_manager)
     from spatial_modeling import server
-    srv = lease_manager.attach(dispatcher.attach(sess.attach(server.Server(port=0))))
+    if args.production_host:
+        # Exercise real host.start/_drain/stop. Only its constructor's listener
+        # port changes to an OS-selected loopback port, preserving active hosts.
+        real_server = server.Server
+        server.Server = lambda **kwargs: real_server(port=0, **kwargs)
+        try:
+            host.start()
+        finally:
+            server.Server = real_server
+        srv, sess, doc, dispatcher = host._server, host._session, host._document, host._commands
+        assert srv is not None
+        state["production_host"] = True
+    else:
+        doc = document.Document()
+        sess = session.Session(sync.describe, sync.snapshot, uuid.uuid4().hex,
+                               capabilities=lambda: {"sketch": sketch.dependency_status()["available"]})
+        sync.start(doc, sess)
+        editor = edits.Editor(sync, host.undoable, document=doc)
+        lease_manager = leases.Leases(sess, editor)
+        dispatcher = commands.Commands(sess, editor, leases=lease_manager)
+        srv = lease_manager.attach(dispatcher.attach(sess.attach(server.Server(port=0))))
+        srv.start()
+    sync.flush()
     state["server"] = srv
-    srv.start()
     one = yield from off(lambda: Peer(srv.port, messages).join("CAD editor"))
     two = yield from off(lambda: Peer(srv.port, messages).join("CAD peer"))
     assert one.welcome["capabilities"] == {"sketch": True}
@@ -295,6 +308,7 @@ def check(args, state):
     state["report"]["serializer_failure_disconnect_recovery"] = True
     state["report"]["mesh_failure_disconnect_recovery"] = True
     state["report"].update({"passed": True, "native_undo_redo": True,
+                            "production_host_start_drain_stop": bool(args.production_host),
                             "rejected_conflict_no_undo_step": True, "whole_sketch_lease": True,
                             "fresh_peer_snapshot": True, "command_count": len(receipts),
                             "final_sketch": record(sid), "receipts": receipts})
@@ -302,6 +316,8 @@ def check(args, state):
     for peer in (one, two, third, recovered, final_peer):
         peer.sock.close()
     srv.stop()
+    if args.production_host:
+        host.stop()
     sync.stop()
 
 
@@ -322,7 +338,11 @@ def main(args):
     def tick():
         try:
             if "server" in state:
-                state["server"].drain()
+                if state.get("production_host"):
+                    from spatial_modeling import host
+                    host._drain()
+                else:
+                    state["server"].drain()
             next(steps)
             return .01
         except StopIteration:
@@ -343,5 +363,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--extension", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--production-host", action="store_true")
     args = parser.parse_args(sys.argv[sys.argv.index("--") + 1:])
     main(args)
