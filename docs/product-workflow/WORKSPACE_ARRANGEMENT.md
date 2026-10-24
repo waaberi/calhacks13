@@ -32,25 +32,48 @@ actions; height/distance/rotation button menus are no longer the main workflow.
 ## Room surfaces
 
 Existing Meta SDK OVRAnchor scene components provide tracked floor/wall planes and
-desk/table bounds, when available over the current OpenXR/Link runtime. No new SDK
+desk/table bounds, when available over the current OpenXR/Link runtime. Load saved
+OVRRoomLayout anchors, then their layout and container UUIDs (including furniture),
+in batches of at most 50. Enable localization before using poses. Furniture volumes
+use their gravity-facing top face, even if they also expose a vertical 2D plane.
+Multiple saved rooms are filtered by the localized floor containing the wearer.
+No new SDK
 dependency, camera recording, fake room mesh, global setting change or native
 Blender edit is involved. Room data is queried, not captured by this app. Space Setup
 and spatial-data availability are prerequisites for automatic detected surfaces.
 
-If room data is missing, the menu states that and offers **Mark desk / Mark floor /
-Mark wall**. Touch the intended surface with a controller and press trigger. Desk
-and floor markers are horizontal; walls face into the room. Manually marked planes
-are approximate finite helper patches, not a claim that the furniture was scanned.
-Grip cancels marking. Reload room surfaces retries the read-only scene query.
+Run Space Setup on the headset outside Link first, including the desk/table. Link
+cannot initiate that scan. On the PC, **Spatial Data over Meta Horizon Link** must
+be enabled in the Link app's Developer settings. The app does not change this
+privacy setting. Empty results can mean missing scan OR unavailable spatial-data
+access, so never diagnose them as proof of no scan. Reload retries after setup;
+focus/wear transitions also retry, with bounded retries when no surfaces localize.
+See Meta's [scene-anchor flow](https://developers.meta.com/vr/documentation/unity/unity-scene-ovranchor/)
+and [Link spatial-data permission](https://developers.meta.com/vr/documentation/unity/unity-spatial-data-perm/).
+
+Detected surfaces are visible green grids immediately, with separate desk/floor/wall
+counts. **Show/hide detected** controls their outlines; **Auto detection on/off**
+controls whether automatic surfaces participate in placement assistance.
+
+If detection fails or is inaccurate, choose **Desk level / Floor level / Wall level**.
+A labelled amber grid appears immediately in front of the wearer. Point at its
+grid or central label, hold grip, aim/move it into place, and release. Desk/floor
+levels remain horizontal; wall levels remain vertical. Stick left/right changes
+yaw, up/down changes distance; two hands resize. The grid stays visible and stationary
+after release, ready to regrab. No controller-touch marking or hidden trigger capture
+is involved. A manual level overrides automatic surfaces of the same type, so an
+inaccurate scan cannot fight the correction. Clear manual levels restores those
+automatic surfaces. Levels remain usable when automatic detection is switched off.
 
 Surface and controller poses use the same tracking origin exactly once. A tracking
-origin reset invalidates manual marks instead of keeping stale physical surfaces.
-Invalid/untracked room anchors are excluded. Guidance is visible only while holding
-an item near a known surface. Placement uses the actual mesh bounds or panel rect,
+origin reset invalidates manual levels instead of keeping stale physical surfaces.
+Invalid/untracked room anchors are excluded. Late async queries cannot resurrect
+surfaces after reset/toggle/destruction. Contact/alignment ghosts appear while holding
+an item near a known surface; the surface grids are visible independently. Placement uses the actual mesh bounds or panel rect,
 including origin offsets and display scaling, rather than placing object centres
 inside the physical surface.
 
-Placements, undo history and manual marks last for this session. Cross-session
+Placements, undo history and manual levels last for this session. Cross-session
 physical-room anchoring/persistence is not silently approximated with saved raw
 world coordinates. New-document/epoch changes clear placement undo history.
 
@@ -59,7 +82,9 @@ world coordinates. New-document/epoch changes clear placement undo history.
 ArrangementChecks covers no-attraction/no-forced-rotation contact, non-centred
 geometry, finite surfaces, fast wall crossing, escape from an existing penetration,
 explicit alignment, tracking-origin conversion, two-hand rotation, native-safe
-Undo, manual marking and mode-strip access with the preview hidden. The cumulative
+Undo, SDK-size UUID batching, rotated furniture top faces, visible grabbable levels,
+horizontal/vertical constraints, automatic-off fallback, stationary planes through
+head movement and mode-strip access with the preview hidden. The cumulative
 P1/P2 movement/controller/readiness/native/render/freshness gates stay in force.
 
 Software checks do not establish physical room-scan availability or exact headset

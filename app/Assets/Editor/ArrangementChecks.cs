@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using UnityEditor;
@@ -77,9 +78,39 @@ public static class ArrangementChecks
             table.RememberDisplayScale();
             table.DockMenu();
             Near(display.transform.localScale,Vector3.one*7,"menu docking cannot undo direct two-hand build magnification");
-            arrangement.Surfaces.BeginMark("desk");
-            arrangement.Surfaces.CaptureMark(new Pose(new Vector3(.1f,.8f,.2f),Quaternion.identity),new Vector3(0,1.6f,0));
-            Check(arrangement.Surfaces.Marking==null && arrangement.Surfaces.State=="Marked desk","manual fallback commits a touched desk without a room scan");
+            var provider=arrangement.Surfaces;
+            var ids=Enumerable.Range(0,123).Select(_=>Guid.NewGuid()).ToList();
+            var batches=WorkspaceSurfaces.Batches(ids.Concat(ids).Concat(new[]{Guid.Empty}));
+            Check(batches.Count==3 && batches.All(batch=>batch.Length<=50)
+                && batches.SelectMany(batch=>batch).Distinct().Count()==123,"room children beyond SDK's first50 are fetched without duplicates/empty UUIDs");
+            var deskFace=WorkspaceSurfaces.DeskTop(new Pose(new Vector3(2,.5f,3),Quaternion.Euler(90,30,0)),new Bounds(new Vector3(.2f,0,0),new Vector3(1,.6f,.4f)));
+            Check(deskFace.Normal.y>.999f && Mathf.Abs(deskFace.Pose.position.y-.7f)<.0001f,"desk uses volume top, including non-centred bounds and rotated anchor");
+            var level=provider.CreateLevel("desk",new Pose(new Vector3(.1f,.8f,.2f),Quaternion.Euler(31,42,18)));
+            Check(level.gameObject.activeSelf && level.GetComponentInChildren<LineRenderer>().positionCount>20,"fallback is a visible grid immediately, without holding an object near it");
+            Check(Vector3.Dot(level.forward,Vector3.up)>.999f,"desk level stays horizontal despite wrist tilt");
+            var moved=arrangement.Apply(level,new Pose(level.position,level.rotation),new Pose(new Vector3(0,.5f,.4f),Quaternion.Euler(50,60,70)),false,false);
+            Near(moved.position,new Vector3(0,.5f,.4f),"level itself is not blocked by existing surface assistance");
+            Check(Vector3.Dot(moved.rotation*Vector3.forward,Vector3.up)>.999f,"moving a level preserves horizontal constraint");
+            var ray=new Ray(level.position+Vector3.up,Vector3.down);
+            Check(provider.RaycastLevel(ray,out float levelDistance)==level && Mathf.Abs(levelDistance-1)<.15f,"visible level and central handle can be gripped");
+            level.SetPositionAndRotation(moved.position,moved.rotation);
+            typeof(WorkspaceSurfaces).GetMethod("LateUpdate",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(provider,null);
+            Near(provider.Surfaces.Single().Pose.position,moved.position,"placed plane reads the moved grid's world pose exactly once");
+            var detectedSurfaces=(List<WorkspaceSurfaces.Surface>)typeof(WorkspaceSurfaces).GetField("detected",BindingFlags.Instance|BindingFlags.NonPublic).GetValue(provider);
+            detectedSurfaces.Add(desk); detectedSurfaces.Add(wall);
+            typeof(WorkspaceSurfaces).GetMethod("RebuildSurfaces",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(provider,null);
+            Check(provider.Surfaces.Count==2 && provider.Surfaces.Count(s=>s.Name=="Desk")==1,"manual desk replaces inaccurate automatic desk, while automatic wall remains usable");
+            provider.ToggleAutomatic();
+            Check(!provider.AutomaticEnabled && provider.LevelCount==1,"turning off an inaccurate room scan preserves manual levels");
+            typeof(WorkspaceSurfaces).GetMethod("LateUpdate",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(provider,null);
+            Check(provider.Surfaces.Count==1,"manual surface remains usable with automatic detection off");
+            var wallLevel=provider.CreateLevel("wall",new Pose(new Vector3(0,1,1),Quaternion.Euler(45,30,25)));
+            Check(Mathf.Abs(wallLevel.forward.y)<.0001f && wallLevel.up.y>.999f,"wall level remains vertical while yaw is adjustable");
+            var placed=level.position;
+            cameraObject.transform.position+=Vector3.right;
+            typeof(WorkspaceSurfaces).GetMethod("LateUpdate",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(provider,null);
+            Near(level.position,placed,"head movement only billboards level label, never moves the calibrated plane");
+            provider.ClearLevels(); Check(provider.LevelCount==0,"clear levels removes overrides so automatic surfaces can be reused");
             screen=container.AddComponent<BlenderScreen>();
             typeof(BlenderScreen).GetField("arrangement",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(screen,arrangement);
             var camera=cameraObject.GetComponent<Camera>();
@@ -90,7 +121,7 @@ public static class ArrangementChecks
             screen.Toggle();
             var top=buttons.Single(b=>b.name=="Arrange space mode").transform;
             Check(screen.RaycastSurface(new Ray(top.position-top.forward*.3f,top.forward),out _),"mode strip remains reachable with Blender preview hidden");
-            Debug.Log("ARRANGEMENT_CHECKS PASS contact stops/no forced snap/explicit align/bounds/tunnelling/manual surface/rotated origin/two-hand rotation/native-safe undo/disabled Edit/hidden-preview mode strip");
+            Debug.Log("ARRANGEMENT_CHECKS PASS contact stops/no forced snap/explicit align/bounds/tunnelling/visible grabbable level/auto-off fallback/desk volume top/room UUID batches/rotated origin/two-hand rotation/native-safe undo/disabled Edit/hidden-preview mode strip");
         }
         finally
         {
