@@ -244,6 +244,8 @@ A `command` adds:
 
 A client treats an `internal_error` reply to a command, or a connection lost before the `result`, as unknown too. While any of its outcomes is unknown, the client stops sending edits. It reconnects if needed, asks with `receipt.query`, and waits for the fresh snapshot. It never resends a command whose outcome is unknown.
 
+**Receipt fields** (the payload of `result` and `activity`, and the items of `receipts`): `request_id`, `op`, `target` (if any), `actor` (`actor_id`, `name`, `role`), `source`, `outcome`, `revision`, `created` (new IDs, if any), `solver` (sketch ops), `summary` (one line for activity lists, for example "Moved Shaft 10 mm along X"), `error` (if rejected or unknown) and `at` (Unix ms).
+
 ### Reconnecting
 
 Recovery never replays anything: the host doesn't resend old results or activity to a connection, and clients don't queue edits while offline or resend them afterwards.
@@ -256,11 +258,9 @@ Recovery never replays anything: the host doesn't resend old results or activity
    - `unknown`: the host has no record and can't rule out that it applied it: the request was sent under an earlier `host_epoch` (the host restarted, which drops every receipt), or the host had dropped it from its 10,000 newest. Treat it like outcome `unknown`: the fresh snapshot shows what is true; tell the user to check before redoing it.
 4. **Resume editing** once nothing is unknown any more and the snapshot has arrived.
 
-Resending instead of asking is safe but not useful: an identical repeat gets its stored `result`; one rebuilt with the new `actor_id` gets `duplicate_request`; and after a host restart a request carries the old `host_epoch` and is refused. None is applied twice.
+Never resend instead of asking. A client that does anyway still can't apply anything twice: an identical repeat gets its stored `result`, one rebuilt with the new `actor_id` gets `duplicate_request`, and after a host restart the old request carries the old `host_epoch` and `actor_id` and is refused.
 
-**Host restarts.** The host's server restarts when it loads a file (open, revert, new file), when the role, the LAN or the editing preferences change, and when the add-on or Blender restarts. Every restart starts a new `host_epoch` and a new `open_epoch`, and drops every receipt. Receipts aren't kept on disk: an old receipt couldn't be checked against the reopened scene, and a crash between Blender's commit and the receipt would still lose it, so a client must trust the snapshot either way. That is why the host answers an earlier `host_epoch`'s requests as `unknown`, never as `missing`.
-
-**Receipt fields** (the payload of `result` and `activity`, and the items of `receipts`): `request_id`, `op`, `target` (if any), `actor` (`actor_id`, `name`, `role`), `source`, `outcome`, `revision`, `created` (new IDs, if any), `solver` (sketch ops), `summary` (one line for activity lists, for example "Moved Shaft 10 mm along X"), `error` (if rejected or unknown) and `at` (Unix ms).
+**Host restarts.** The host's server restarts when it loads a file (open, revert, new file), when the role, the LAN or the editing preferences change, and when the add-on or Blender restarts. Every restart starts a new `host_epoch` and a new `open_epoch`, and drops every receipt. Receipts aren't kept on disk: an old receipt couldn't be checked against the reopened scene, and a crash between Blender's commit and the receipt would still lose it, so a client must trust the snapshot either way. That is why the host answers an earlier `host_epoch`'s requests as `unknown`, never as `missing`. If the SpacetimeDB receipt log ([`session_store.py`](../blender_addon/spatial_modeling/session_store.py), not wired into the host yet) is added later, old requests it finds come back in `receipts`; `unknown` stays for the rest.
 
 ## Leases and presence
 
@@ -347,7 +347,7 @@ Unity polls `/frame` at a modest rate. Start at 10 per second and measure.
 python3 contracts/fakes/fake_host.py            # 127.0.0.1:8765; Ctrl-C stops it
 ```
 
-It serves the scene from the examples, with the same IDs, as `fake_bracket.blend`: Base plate (100 × 60 × 10 mm box), Shaft (cylinder, 20 mm diameter, 40 mm tall) standing on it as its child, a Camera without a mesh, and the 100 × 60 mm sketch. The meshes are real and render. It follows [Connecting](#connecting), answers `ping`, and applies `object.add`, `object.move`, `object.rotate`, `object.scale`, `object.delete`, `history.undo`, `history.redo` and `document.save` as [Commands](#commands) describes: scene.update to everyone, then result, then activity, with request-ID deduplication and `receipt.query`. Sketch ops get `rejected` with `failed`, and leases are not granted (`lease.*` gets `unknown_type`). Each run starts at revision 0 with a new `open_epoch`.
+It serves the scene from the examples, with the same IDs, as `fake_bracket.blend`: Base plate (100 × 60 × 10 mm box), Shaft (cylinder, 20 mm diameter, 40 mm tall) standing on it as its child, a Camera without a mesh, and the 100 × 60 mm sketch. The meshes are real and render. It follows [Connecting](#connecting), answers `ping`, and applies `object.add`, `object.move`, `object.rotate`, `object.scale`, `object.delete`, `history.undo`, `history.redo` and `document.save` as [Commands](#commands) describes: scene.update to everyone, then result, then activity, with request-ID deduplication and `receipt.query` as [Reconnecting](#reconnecting) describes (stop and start it again to simulate a host restart: a new `host_epoch`, no receipts). Sketch ops get `rejected` with `failed`, and leases are not granted (`lease.*` gets `unknown_type`). Each run starts at revision 0 with a new `open_epoch`.
 
 | Flag | What it does | Tests the app's |
 | --- | --- | --- |
