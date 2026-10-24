@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.XR;
@@ -30,6 +31,21 @@ namespace SpatialModeling
         readonly List<XRInputSubsystem> subsystems = new List<XRInputSubsystem>();
         readonly List<LineRenderer> outlines = new List<LineRenderer>();
         readonly HashSet<Guid> invalidLogged = new HashSet<Guid>();
+        bool evidenceWritten;
+        [Serializable] public sealed class RoomEvidence
+        {
+            public string trackingOrigin;
+            public Pose metaHead, unityHead, cameraWorld, originWorld;
+            public List<AnchorEvidence> anchors=new List<AnchorEvidence>();
+        }
+        [Serializable] public sealed class AnchorEvidence
+        {
+            public string id,kind,labels;
+            public Pose trackingPose;
+            public bool plane,volume;
+            public Rect planeBounds;
+            public Bounds volumeBounds;
+        }
         public IReadOnlyList<Surface> Surfaces => surfaces;
         public bool AutomaticEnabled { get; private set; } = true;
         public bool ShowDetected { get; private set; } = true;
@@ -76,7 +92,7 @@ namespace SpatialModeling
         void ClearAnchors()
         {
             foreach (var item in anchors) item.Anchor.Dispose();
-            anchors.Clear(); detected.Clear(); surfaces.Clear(); invalidLogged.Clear();
+            anchors.Clear(); detected.Clear(); surfaces.Clear(); invalidLogged.Clear(); evidenceWritten=false;
         }
         void TrackingReset(XRInputSubsystem _)
         {
@@ -419,10 +435,37 @@ namespace SpatialModeling
             foreach (var item in candidates) if (roomCount == 1 || item.room == currentRoom) detected.Add(item.surface);
             var counts=Counts(detected);
             if(counts!=lastCounts) { lastCounts=counts; Debug.Log("WORKSPACE_SURFACES localized " + counts); }
+            WriteRoomEvidence();
             if (!loading && anchors.Count > 0) message = detected.Count > 0 ? "Automatic surfaces · adjust if needed" : "Room not localized · look around or use a level";
             foreach (var level in levels)
                 UpdateLabel(level);
             RebuildSurfaces(); RefreshVisuals();
+        }
+        void WriteRoomEvidence()
+        {
+            var path=Environment.GetEnvironmentVariable("CALHACKS_ROOM_EVIDENCE");
+            if(evidenceWritten || string.IsNullOrEmpty(path) || detected.Count==0 || Camera.main==null) return;
+            var head=InputDevices.GetDeviceAtXRNode(XRNode.Head);
+            if(!head.TryGetFeatureValue(CommonUsages.isTracked,out bool tracked)||!tracked
+                ||!head.TryGetFeatureValue(CommonUsages.devicePosition,out Vector3 position)
+                ||!head.TryGetFeatureValue(CommonUsages.deviceRotation,out Quaternion rotation)) return;
+            var meta=OVRPlugin.GetNodePose(OVRPlugin.Node.Head,OVRPlugin.Step.Render).ToOVRPose();
+            var data=new RoomEvidence { trackingOrigin=OVRPlugin.GetTrackingOriginType().ToString(),
+                metaHead=new Pose(meta.position,meta.orientation),unityHead=new Pose(position,rotation),
+                cameraWorld=new Pose(Camera.main.transform.position,Camera.main.transform.rotation),
+                originWorld=Origin!=null?new Pose(Origin.position,Origin.rotation):Pose.identity };
+            foreach(var item in anchors)
+            {
+                if(!item.Locatable.TryGetSceneAnchorPose(out var pose)||!pose.Position.HasValue||!pose.Rotation.HasValue) continue;
+                var entry=new AnchorEvidence {id=item.Anchor.Uuid.ToString(),kind=item.Kind,
+                    trackingPose=new Pose(pose.Position.Value,pose.Rotation.Value)};
+                if(item.Anchor.TryGetComponent<OVRSemanticLabels>(out var semantic)) entry.labels=semantic.Labels;
+                if(item.Anchor.TryGetComponent<OVRBounded2D>(out var plane)) {entry.plane=true;entry.planeBounds=plane.BoundingBox;}
+                if(item.Anchor.TryGetComponent<OVRBounded3D>(out var volume)) {entry.volume=true;entry.volumeBounds=volume.BoundingBox;}
+                data.anchors.Add(entry);
+            }
+            Directory.CreateDirectory(Path.GetDirectoryName(path)); File.WriteAllText(path,JsonUtility.ToJson(data,true));
+            evidenceWritten=true; Debug.Log("WORKSPACE_ROOM_EVIDENCE captured anchor_count="+data.anchors.Count);
         }
         static void UpdateLabel(Level level)
         {
