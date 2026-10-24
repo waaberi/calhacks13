@@ -27,6 +27,16 @@ namespace SpatialModeling
         {
             float until = Time.realtimeSinceStartup + 15;
             while (OpenXRRuntime.version == "" && Time.realtimeSinceStartup < until) yield return null;
+            // Isolated software-pipeline profiling has no eye render target.
+            // Starting Meta's manager there repeatedly recreates reference
+            // spaces in this SDK/runtime combination until OpenXR hits its limit.
+            // Keep the ordinary product and active-eye passthrough path intact.
+            if (P1PipelineProfile.Enabled && (XRSettings.eyeTextureWidth <= 0 || XRSettings.eyeTextureHeight <= 0))
+            {
+                State = "Software profiling: no active eye buffers";
+                Debug.Log("P1_PROFILE_PASSTHROUGH skipped_inactive_eye_buffers=True; no headset/passthrough acceptance");
+                yield break;
+            }
             // Missing capability must leave a working opaque scene, not a fake black "passthrough".
             Supported = OpenXRRuntime.IsExtensionEnabled("XR_FB_passthrough");
             if (!Supported)

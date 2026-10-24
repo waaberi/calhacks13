@@ -4,6 +4,12 @@ This diagnostic branch combines diagnostic `5815af5` with published P1 `3c1bdad`
 
 No new Editor build, Player, Blender, capture session or performance trial was run for this reconciliation. Existing human runtime ownership takes precedence. The proposal is not integrated into the published P1 phase branch or cumulative C.
 
+## Actual v23 failure and diagnostic-only followup
+
+After runtime release, v23 built from78db8e0 with all real P1 gates and zero errors. The first40-second legacy run exited0. The first claim run crashed at about35 profile seconds with `xrCreateReferenceSpace: XR_ERROR_LIMIT_REACHED`, native UnityOpenXR stack and Windows exit0xE06D7363; the sequence stopped before the remaining runs. Both modes had eye0×0. Legacy logged8372 app-space changes; claim logged9987 before failure. This does not establish HTTP claims as the crash cause.
+
+The followup skips creation of the Meta passthrough manager only when `--p1-profile` is present and eye buffers are zero. The installed manager's origin-setting path calls Unity's tracking-origin setter and refreshes its recenter space; inactive-eye churn is the working lead. Ordinary product and active-eye paths retain their existing code. The guard changes the software diagnostic setup and requires a new build plus repeated real observations; it is not an XR/product fix or proof of physical passthrough. Do not promote this diagnostic-only reference into the product-only request proposal. Source/render assets and full-resolution capture remain unchanged.
+
 ## Source and preserved guards
 
 Relative to published P1, the app difference is exactly six files: modified `BlenderScreen.cs` and `WorkspaceChecks.cs`, new `CaptureRequestLanes.cs` and `P1PipelineProfile.cs`, plus their metadata. Capture uses the existing two HTTP slots. Claims reserve a fresh ETag/captured-time pair, reject duplicate/invalidated bodies and retain actual-pixel freshness checks. Diagnostic flags select the port, duration and legacy policy; traces are bounded to4096 requests and emitted in128-row chunks. Available engine texture counters are recorded without assuming unsupported markers exist.
