@@ -85,6 +85,8 @@ class WindowsInput:
             (self.u, "SendInput", [W.UINT, C.POINTER(NativeInput), C.c_int], W.UINT),
             (self.dwm, "DwmGetWindowAttribute",
              [W.HWND, W.DWORD, C.c_void_p, W.DWORD], C.c_long),
+            (windows.k, "GetProcessTimes", [W.HANDLE, C.POINTER(W.FILETIME),
+             C.POINTER(W.FILETIME), C.POINTER(W.FILETIME), C.POINTER(W.FILETIME)], W.BOOL),
         ]
         for dll, name, args, result in signatures:
             fn = getattr(dll, name)
@@ -110,10 +112,29 @@ class WindowsInput:
         if not dpi:
             raise InputRejected("window_dpi_unavailable")
         return {"window_rect": self._rect(full), "visible_rect": self._rect(visible),
-                "dpi": dpi}
+                "dpi": dpi, "process_started": self.process_stamp(selected["pid"])}
 
-    def windows_for(self, selected):
-        return [w for w in self.windows.windows() if w["pid"] == selected["pid"]]
+    def process_stamp(self, pid):
+        handle = self.windows.k.OpenProcess(0x1000, False, pid)
+        if not handle:
+            raise InputRejected("selected_process_unavailable")
+        try:
+            created, exited, kernel, user = W.FILETIME(), W.FILETIME(), W.FILETIME(), W.FILETIME()
+            if not self.windows.k.GetProcessTimes(handle, C.byref(created), C.byref(exited),
+                                                  C.byref(kernel), C.byref(user)):
+                raise InputRejected("selected_process_identity_unavailable")
+            return (created.dwHighDateTime << 32) | created.dwLowDateTime
+        finally:
+            self.windows.k.CloseHandle(handle)
+
+    def windows_for(self, selected, process_started):
+        try:
+            if self.process_stamp(selected["pid"]) != process_started:
+                return []
+        except InputRejected:
+            return []
+        return [w for w in self.windows.windows()
+                if w["pid"] == selected["pid"] and not self.u.IsIconic(w["hwnd"])]
 
     def foreground(self, hwnd):
         # Same-process auxiliary windows are deliberately NOT accepted implicitly.
@@ -185,6 +206,7 @@ class InputBridge:
         self.held_keys, self.held_buttons = set(), set()
         self.last_event = 0
         self.release_error = False
+        self.process_binding = None
 
     def frame_geometry(self, selected, width, height, source):
         """Only exact recognized native rectangles can authorize pointer mapping."""
@@ -222,8 +244,16 @@ class InputBridge:
         else:
             try:
                 live = self.native.inspect(selected)
-                if any(live[k] != geometry[k] for k in ("window_rect", "visible_rect", "dpi")):
+                binding_changed = (self.process_binding is not None
+                                   and self.process_binding[0] == generation
+                                   and self.process_binding[1:] != (selected["pid"], live["process_started"]))
+                if (live["process_started"] != geometry["process_started"] or binding_changed
+                        or selected.get("input_process_started", live["process_started"]) != live["process_started"]):
+                    reason = "selected_process_identity_changed"
+                elif any(live[k] != geometry[k] for k in ("window_rect", "visible_rect", "dpi")):
                     reason = "window_geometry_changed_wait_for_frame"
+                else:
+                    self.process_binding = (generation, selected["pid"], live["process_started"])
             except InputRejected as exc:
                 reason = exc.reason
         fingerprint = (generation, selected and selected["hwnd"], selected and selected["pid"],
@@ -237,12 +267,21 @@ class InputBridge:
         return {"enabled": self.enabled, "ready": not reason, "reason": reason,
                 "session": self.session, "token": self.token if self.enabled else None,
                 "capture_generation": generation, "capture_instance": instance,
+                "helper_pid": os.getpid(),
                 "frame": status["frame"],
                 "selection": selected, "image": {"width": status["width"], "height": status["height"]},
                 "geometry": geometry, "focused": focused, "next_seq": self.sequence + 1,
-                "windows": self.native.windows_for(selected)
+                "windows": self._windows(selected)
                 if include_windows and self.enabled and selected else [],
                 "release_error": self.release_error}
+
+    def _windows(self, selected):
+        # Closing a selected popup must not strand the user, but a recycled PID
+        # must never authorize selecting a different Blender process. A previous
+        # fresh, identity-verified frame supplies the process creation stamp.
+        if not selected or not self.process_binding or self.process_binding[1] != selected["pid"]:
+            return []
+        return self.native.windows_for(selected, self.process_binding[2])
 
     def state(self):
         with self.lock:
@@ -324,22 +363,28 @@ class InputBridge:
                 if self.release_error:
                     raise InputRejected("release_delivery_failed", 502)
                 return {"ok": True, "seq": seq}
+            if kind == "select_window":
+                requested = payload.get("hwnd")
+                if isinstance(requested, bool) or not isinstance(requested, int):
+                    raise InputRejected("invalid_window_handle", 400)
+                window = next((w for w in self._windows(state["selection"])
+                               if w["hwnd"] == requested), None)
+                if not window:
+                    raise InputRejected("window_outside_selected_process", 403)
+                live = self.native.inspect(window)
+                if live["process_started"] != self.process_binding[2]:
+                    raise InputRejected("selected_process_identity_changed", 403)
+                window = {**window, "input_process_started": live["process_started"]}
+                self._release()
+                if self.release_error:
+                    raise InputRejected("release_pending", 502)
+                self.latest.select(window)
+                return {"ok": True, "seq": seq, "selection_changed": True}
             if not state["ready"]:
                 raise InputRejected(state["reason"])
             if self.release_error:
                 raise InputRejected("release_pending", 502)
             hwnd = state["selection"]["hwnd"]
-            if kind == "select_window":
-                requested = payload.get("hwnd")
-                if isinstance(requested, bool) or not isinstance(requested, int):
-                    raise InputRejected("invalid_window_handle", 400)
-                window = next((w for w in self.native.windows_for(state["selection"])
-                               if w["hwnd"] == requested), None)
-                if not window:
-                    raise InputRejected("window_outside_selected_process", 403)
-                self._release()
-                self.latest.select(window)
-                return {"ok": True, "seq": seq, "selection_changed": True}
             if kind == "focus":
                 self._release()
                 if not self.native.focus(hwnd):
@@ -407,6 +452,8 @@ class InputBridge:
                 if not self.native.foreground(hwnd):
                     raise InputRejected("selected_window_not_foreground")
                 live = self.native.inspect(state["selection"])
+                if live["process_started"] != state["geometry"]["process_started"]:
+                    raise InputRejected("selected_process_identity_changed")
                 if any(live[k] != state["geometry"][k]
                        for k in ("window_rect", "visible_rect", "dpi")):
                     raise InputRejected("window_geometry_changed_wait_for_frame")

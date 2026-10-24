@@ -3,12 +3,14 @@
 import ctypes as C
 import http.client
 import json
+import os
 import threading
 import time
 import unittest
 from contextlib import closing
 from types import SimpleNamespace
 from unittest.mock import patch
+from ctypes import wintypes as W
 
 from capture_helper import LatestFrame, graphics_capture_loop, make_server
 from input_bridge import InputBridge, InputRejected, NativeInput, WindowsInput
@@ -19,7 +21,8 @@ class FakeNative:
         self.window = {"hwnd": 100, "pid": 200, "title": "Blender document"}
         self.popup = {"hwnd": 101, "pid": 200, "title": "Blender Preferences"}
         self.geometry = {"window_rect": [92, 42, 1716, 974],
-                         "visible_rect": [100, 50, 1708, 966], "dpi": 144}
+                         "visible_rect": [100, 50, 1708, 966], "dpi": 144,
+                         "process_started": 123456}
         self.focused = True
         self.focus_allowed = True
         self.visible = True
@@ -38,7 +41,9 @@ class FakeNative:
             raise InputRejected("selected_window_hidden_or_minimized")
         return dict(self.geometry)
 
-    def windows_for(self, selected):
+    def windows_for(self, selected, process_started):
+        if not self.available or process_started != self.geometry["process_started"]:
+            return []
         return [dict(w) for w in (self.window, self.popup) if w["pid"] == selected["pid"]]
 
     def foreground(self, _):
@@ -263,6 +268,32 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(self.latest.selected["hwnd"], 101)
         self.assertFalse(self.bridge.state()["ready"])
 
+    def test_closed_or_minimized_popup_can_explicitly_return_to_previously_confirmed_process(self):
+        self.bridge.state()  # Bind the original fresh-frame process identity.
+        for reason in ("no_window", "minimized"):
+            with self.subTest(reason=reason):
+                self.latest.fail(self.latest.generation, reason, "Restore or choose another window")
+                self.assertFalse(self.bridge.state()["ready"])
+                result = self.dispatch("select_window", hwnd=101)
+                self.assertTrue(result["selection_changed"])
+                self.assertEqual(self.latest.selected["hwnd"], 101)
+        self.assertFalse(self.native.sent)
+
+    def test_closed_popup_never_authorizes_recycled_process_id(self):
+        self.bridge.state()
+        self.latest.fail(self.latest.generation, "no_window", "Popup closed")
+        self.native.geometry["process_started"] += 1
+        self.assertEqual(self.bridge.state()["windows"], [])
+        self.reject("window_outside_selected_process", self.event("select_window", hwnd=101))
+        self.assertFalse(self.native.sent)
+
+    def test_recycled_pid_and_hwnd_cannot_rebind_without_explicit_picker_selection(self):
+        self.bridge.state()
+        self.native.geometry["process_started"] += 1
+        self.publish()
+        self.assertEqual(self.bridge.state()["reason"], "selected_process_identity_changed")
+        self.assertEqual(self.bridge.state()["windows"], [])
+
     def test_concurrent_dispatch_is_rejected_without_queue(self):
         payload = self.event("pointer", x=0, y=0)
         self.bridge.lock.acquire()
@@ -301,6 +332,7 @@ class InputHttpTests(unittest.TestCase):
         self.assertEqual(json.loads(body)["capture_generation"], self.latest.generation)
         self.assertEqual(json.loads(body)["capture_instance"], self.latest.capture_instance)
         self.assertEqual(json.loads(body)["frame"], self.latest.sequence)
+        self.assertEqual(json.loads(body)["helper_pid"], os.getpid())
         payload = self.event("key", key="ESC", action="press")
         code, body = self.request("POST", "/input", json.dumps(payload),
                                   {"Content-Type": "application/json"})
@@ -325,6 +357,21 @@ class InputHttpTests(unittest.TestCase):
 
 
 class WindowsAdapterTests(unittest.TestCase):
+    def test_process_creation_stamp_is_read_from_owned_handle_and_handle_is_released(self):
+        closed = []
+
+        def process_times(handle, created, *_):
+            self.assertEqual(handle, 42)
+            value = C.cast(created, C.POINTER(W.FILETIME)).contents
+            value.dwHighDateTime, value.dwLowDateTime = 123, 456
+            return True
+
+        native = WindowsInput.__new__(WindowsInput)
+        native.windows = SimpleNamespace(k=SimpleNamespace(
+            OpenProcess=lambda *_: 42, GetProcessTimes=process_times, CloseHandle=closed.append))
+        self.assertEqual(native.process_stamp(200), (123 << 32) | 456)
+        self.assertEqual(closed, [42])
+
     def test_sendinput_structures_and_flags_with_mocked_win32_only(self):
         delivered = []
 
@@ -373,7 +420,8 @@ class CaptureGeometryTests(unittest.TestCase):
 
         latest, native = LatestFrame(), FakeNative()
         native.geometry = {"window_rect": [0, 0, 4000, 10],
-                           "visible_rect": [0, 0, 4000, 10], "dpi": 192}
+                           "visible_rect": [0, 0, 4000, 10], "dpi": 192,
+                           "process_started": 123456}
         latest.select(native.window)
         bridge = InputBridge(latest, native, enabled=True)
         latest.input_bridge = bridge
