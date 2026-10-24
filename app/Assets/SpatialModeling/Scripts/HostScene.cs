@@ -27,7 +27,7 @@ namespace SpatialModeling
         [Tooltip("URP Lit material shared by every object; each object's color is set per renderer.")]
         [SerializeField] Material objectMaterial;
 
-        enum Status { Connecting, Connected, NotResponding, Disconnected, VersionMismatch }
+        enum Status { Connecting, Connected, NotResponding, Disconnected, VersionMismatch, ConfigurationError }
 
         const long NotRespondingMs = 6000;
         static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
@@ -82,8 +82,28 @@ namespace SpatialModeling
             table.Initialize(root);
         }
 
+        internal static bool TryResolvePort(string configured, int fallback, out int resolved)
+        {
+            resolved = fallback;
+            if (configured != null && configured.Length > 0 &&
+                !int.TryParse(configured, System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture, out resolved)) return false;
+            return resolved >= 1 && resolved <= 65535;
+        }
+
         void OnEnable()
         {
+            // Explicit isolated-test/deployment configuration must never fall
+            // back to a different native session after a typo. No LAN endpoint.
+            if (!TryResolvePort(System.Environment.GetEnvironmentVariable("CALHACKS_HOST_PORT"), port, out int connectionPort)
+                || !System.Net.IPAddress.TryParse(host, out var address) || !System.Net.IPAddress.IsLoopback(address))
+            {
+                hostError = "Invalid local host configuration: CALHACKS_HOST_PORT must be 1–65535 and host must be loopback";
+                status = Status.ConfigurationError;
+                Debug.LogError(hostError);
+                return;
+            }
+            Debug.Log($"HostScene loopback endpoint {host}:{connectionPort}");
             recenterAction = new InputAction("Recenter view", InputActionType.Button);
             recenterAction.AddBinding("<XRController>{RightHand}/secondaryButton"); // B on Quest
             recenterAction.AddBinding("<XRController>{LeftHand}/secondaryButton");  // Y on Quest
@@ -91,7 +111,7 @@ namespace SpatialModeling
             recenterAction.performed += _ => RequestRecenter();
             recenterAction.Enable();
             var name = string.IsNullOrWhiteSpace(userName) ? "VR user" : userName.Trim();
-            link = new HostLink(host, port, new JObject
+            link = new HostLink(host, connectionPort, new JObject
             {
                 ["role"] = "vr",
                 ["name"] = name,
@@ -243,6 +263,9 @@ namespace SpatialModeling
                 case Status.NotResponding:
                     headsetStatus.text = "Blender is not responding\nScene is stale — edits disabled";
                     break;
+                case Status.ConfigurationError:
+                    headsetStatus.text = hostError + "\nConnection not attempted; edits disabled";
+                    break;
                 case Status.VersionMismatch:
                     headsetStatus.text = "App and Blender add-on versions do not match\nEdits disabled";
                     break;
@@ -284,6 +307,7 @@ namespace SpatialModeling
             {
                 case Status.Connected: text = $"Connected to {documentName} - revision {revision}"; break;
                 case Status.NotResponding: text = "Blender is not responding. Edits are disabled."; break;
+                case Status.ConfigurationError: text = hostError + "\nConnection not attempted."; break;
                 case Status.VersionMismatch: text = $"This app and the Blender add-on don't match.\n{hostError}"; break;
                 case Status.Disconnected: text = $"Disconnected. Reconnecting...{stale}\n{reason}"; break;
                 default: text = $"Connecting to Blender at {host}:{port} ...{stale}\n{(link != null && link.SocketOpen ? "" : reason)}"; break;
@@ -299,7 +323,10 @@ namespace SpatialModeling
             switch (e.Kind)
             {
                 case HostEventKind.Opened: opened = true; socketError = ""; break;
-                case HostEventKind.Closed: connected = false; socketError = e.Text; break;
+                case HostEventKind.Closed:
+                    connected = false; socketError = e.Text;
+                    Debug.Log("P2_SCENE_STALE connection_closed; last scene is not current");
+                    break;
                 case HostEventKind.Welcome:
                     hostError = hostErrorCode = "";
                     documentName = e.Text;
@@ -368,6 +395,7 @@ namespace SpatialModeling
                         link?.Reconnect();
                     }
                     else if (e.Snapshot) { connected = haveScene = true; status = Status.Connected; }
+                    Debug.Log($"P2_SCENE_APPLIED snapshot={e.Snapshot} revision={revision} objects={objects.Count} removed={e.Removed.Count} current={connected}");
                     break;
             }
             HostEventReceived?.Invoke(e);

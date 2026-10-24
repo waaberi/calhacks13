@@ -16,6 +16,10 @@ public static class P2Checks
 
     public static void Run()
     {
+        Check(HostScene.TryResolvePort(null,8765,out var resolved) && resolved==8765,"default localhost port stays unchanged");
+        Check(HostScene.TryResolvePort("43210",8765,out resolved) && resolved==43210,"explicit isolated port is honored");
+        foreach(var invalid in new[]{"0","-1","65536","8765oops"," "})
+            Check(!HostScene.TryResolvePort(invalid,8765,out resolved),"invalid explicit port must refuse connection instead of using original host");
         // Edit-time only: no Player, XR loader, socket, scene Play or P1 service.
         var container = new GameObject("P2 edit-time checks");
         container.SetActive(false);

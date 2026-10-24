@@ -63,7 +63,7 @@ def tick():
             # GUI Blender settles its startup dirty flag on the event loop.
             # Establish the baseline before the client starts, after that settles.
             baseline = scene_sync.snapshot(scene_sync.describe())
-            (folder / "ready.json").write_text(json.dumps({"port": listener.port,
+            (folder / "ready.json").write_text(json.dumps({"port": listener.port, "vr_port": srv.port,
                 "cube_id": cube_id, "baseline": baseline}), encoding="utf-8")
         action_file = folder / "action.json"
         if action_file.exists():
@@ -110,8 +110,9 @@ def tick():
                 (folder / "action-result.json").write_text(json.dumps({"action": name, "passed": True}), encoding="utf-8")
                 bpy.ops.wm.quit_blender()
                 return None
-            (folder / "action-result.json").write_text(json.dumps({"action": name, "passed": True}), encoding="utf-8")
-        if time.monotonic() - started > 160:
+            state = scene_sync.snapshot(scene_sync.describe())
+            (folder / "action-result.json").write_text(json.dumps({"action": name, "passed": True, "snapshot": state}), encoding="utf-8")
+        if time.monotonic() - started > (600 if config.get("player_test") else 160):
             raise TimeoutError("P2 test coordinator did not finish")
         return .02
     except Exception:  # noqa: BLE001 - timer failures must be saved before Blender exits
