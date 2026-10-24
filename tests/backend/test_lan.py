@@ -315,7 +315,9 @@ def test_a_lan_port_that_cannot_bind_fails_the_start_and_frees_the_localhost_por
         local_port = srv.port
     if local_port:
         with pytest.raises(ConnectionRefusedError):
-            socket.create_connection(("127.0.0.1", local_port), timeout=1)
+            # Windows can take about two seconds to report refused loopback.
+            # A timeout is still a failure; require an actual closed listener.
+            socket.create_connection(("127.0.0.1", local_port), timeout=5)
 
 
 def test_stop_closes_lan_connections_and_restart_reuses_both_ports():
