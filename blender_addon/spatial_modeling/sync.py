@@ -114,6 +114,7 @@ class _Sync:
         self.objects = {}  # ID -> _Entry, as of the last flush
         self.sketches = {}  # ID -> complete editable sketch wire record
         self.sketch_uids = {}  # ID -> native object's identity across Undo/Redo
+        self.faulted = False  # serialization failure: clients disconnected until a fresh snapshot
         self.started = False  # the first flush only records the scene, at revision 0
         self.pending = True  # something may have changed since the last flush
         self.full = True  # re-evaluate every mesh (after Undo/Redo or a unit change)
@@ -263,7 +264,7 @@ def _flush(st):
     view_layer = scene.current_view_layer(scn)
     units = document.units(scn)
     scale = units["scale_length"]
-    resnapshot = st.started and units != st.units  # every position changed: send everything
+    resnapshot = st.started and (units != st.units or st.faulted)
     full = full or resnapshot
 
     ids = _identify(st, view_layer.objects)
@@ -288,8 +289,9 @@ def _flush(st):
         if stale:
             try:
                 mesh = scene.evaluated_mesh(obj, depsgraph, scale)
-            except Exception:  # one odd object must not stop the sync of all the others
-                log.exception("could not read %s's mesh; clients keep the last one", obj.name)
+            except Exception:
+                log.exception("could not read %s's mesh; native scene is unavailable", obj.name)
+                raise  # retaining old mesh with new metadata would falsely label stale data current
         current[oid] = _Entry(record, mesh, old.generation if old else 0, obj.session_uid)
 
     sketches = {record["id"]: record for record in sketch.snapshot()}
@@ -301,6 +303,7 @@ def _flush(st):
         st.objects, st.units, st.started = current, units, True
         st.sketches, st.sketch_uids = sketches, sketch_uids
         st.sent = _document_state(st.document.describe())
+        st.faulted = False
         return
 
     changed = []  # (ID, with_mesh)
@@ -348,6 +351,27 @@ def _flush(st):
         return
     st.sent = _document_state(doc)
     st.session.broadcast(msg)
+    st.faulted = False
+
+
+def _serialization_failed(st):
+    """Never leave an old scene connected/current after authoritative reads fail."""
+    st.faulted = True
+    message = protocol.message("error", {
+        "code": "failed",
+        "message": "Native scene unavailable. The host must restore valid native data before reconnecting.",
+    })
+    for conn in tuple(getattr(st.session, "participants", {})):
+        if not getattr(conn, "closing", False):
+            try:
+                conn.send(message)
+            except Exception:
+                log.exception("could not send native scene error before disconnect")
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    log.exception("could not disconnect client after native scene failure")
 
 
 def flush():
@@ -366,6 +390,7 @@ def flush():
         _flush(st)
     except Exception:
         st.pending = st.full = True  # start over next time
+        _serialization_failed(st)
         raise
     finally:
         st.flushing = False
@@ -407,6 +432,8 @@ def snapshot(doc):
     st = _state
     if st is None:
         return {"document": doc, "objects": [], "sketches": []}
+    if st.faulted:
+        raise RuntimeError("Native scene unavailable; a fresh authoritative read is required.")
     return _snapshot_payload(st, doc)
 
 

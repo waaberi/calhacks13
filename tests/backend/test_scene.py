@@ -542,7 +542,7 @@ def test_the_interface_for_commands(host):
     assert bpy.context.active_object[sync.ID_PROPERTY] == created  # in the Undo step pushed next
 
 
-def test_an_unreadable_mesh_does_not_stop_the_others(host, monkeypatch):
+def test_an_unreadable_mesh_invalidates_currentness_until_full_recovery(host, monkeypatch):
     broken = box("Broken", (1, 1, 1))
     box("Fine", (1, 1, 1))
     snapshot()
@@ -556,8 +556,20 @@ def test_an_unreadable_mesh_does_not_stop_the_others(host, monkeypatch):
     monkeypatch.setattr(sync.scene, "evaluated_mesh", evaluated_mesh)
     broken.modifiers.new("Bevel", "BEVEL")
     bpy.data.objects["Fine"].location.x = 1
-    u = update(host)
-    assert [o["name"] for o in u["objects"]] == ["Fine"]  # Broken keeps its last mesh
+    before_revision = host.doc.revision
+    with pytest.raises(ValueError, match="odd geometry"):
+        sync.flush()
+    assert host.doc.revision == before_revision
+    assert host.sent.take() == []  # no fresh metadata paired with an old mesh
+    with pytest.raises(RuntimeError, match="Native scene unavailable"):
+        sync.snapshot(host.doc.describe())
+    monkeypatch.setattr(sync.scene, "evaluated_mesh", real)
+    sync.flush()
+    [msg] = host.sent.take()
+    assert msg["type"] == "scene.snapshot"
+    assert {o["name"] for o in msg["payload"]["objects"]} == {"Broken", "Fine"}
+    assert all(o["mesh"] is not None for o in msg["payload"]["objects"])
+    assert host.doc.revision == before_revision + 1
 
 
 def test_stopped_sync_is_inert(host):
