@@ -55,7 +55,7 @@ namespace SpatialModeling.VoiceCore
         public static readonly Prompt Done = new Prompt("done", "Done.");
         public static readonly Prompt Locked = new Prompt("locked", "Someone else is editing that right now.");
         public static readonly Prompt Changed = new Prompt("changed", "That changed in the meantime. Please check it and try again.");
-        public static readonly Prompt ReadOnly = new Prompt("read_only", "You can't edit right now.");
+        public static readonly Prompt ReadOnly = new Prompt("read_only", "Editing isn't allowed right now.");
         public static readonly Prompt Busy = new Prompt("busy", "Blender is busy. Please try again.");
         public static readonly Prompt NothingToUndo = new Prompt("nothing_to_undo", "There is nothing to undo.");
         public static readonly Prompt NothingToRedo = new Prompt("nothing_to_redo", "There is nothing to redo.");
