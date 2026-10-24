@@ -3,8 +3,9 @@ using System.Collections.Generic;
 namespace SpatialModeling.VoiceCore
 {
     /// <summary>
-    /// Spoken numbers from zero to 999.999: "ninety", "forty five", "one hundred and eighty", "one eighty",
-    /// "one point five", "zero point two five". Larger numbers are not understood.
+    /// Spoken numbers from zero to 999.999: "ninety", "forty five", "one hundred and eighty", "one point five",
+    /// "zero point two five". Larger numbers are not understood. "One eighty" is deliberately two numbers:
+    /// recognizers hear "to fifty" as "two fifty", so the parser treats adjacent numbers as ambiguous.
     /// </summary>
     internal static class NumberWords
     {
@@ -78,14 +79,6 @@ namespace SpatialModeling.VoiceCore
                     whole += rest;
                     j = k;
                 }
-            }
-            else if (hundreds >= 1 && hundreds <= 9 && (TensValue(At(w, j + 1)) > 0 || SmallValue(At(w, j + 1)) >= 10))
-            {
-                // "one eighty" is 180.
-                j++;
-                ReadBelowHundred(w, ref j, out int rest);
-                whole = hundreds * 100 + rest;
-                any = true;
             }
             else if (ReadBelowHundred(w, ref j, out int below))
             {

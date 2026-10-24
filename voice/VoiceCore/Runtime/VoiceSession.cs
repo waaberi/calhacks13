@@ -5,8 +5,9 @@ namespace SpatialModeling.VoiceCore
 {
     public sealed class VoiceSessionOptions
     {
-        /// <summary>Results below this confidence are rejected and never produce a command.</summary>
-        public float MinConfidence { get; set; } = 0.6f;
+        /// <summary>Results below this confidence are rejected and never produce a command. Provisional: chosen
+        /// from TTS samples in the Vosk spike; recalibrate with the Quest microphone.</summary>
+        public float MinConfidence { get; set; } = 0.5f;
 
         /// <summary>A pending command is dropped this long after its last question.</summary>
         public TimeSpan PendingTimeout { get; set; } = TimeSpan.FromSeconds(30);

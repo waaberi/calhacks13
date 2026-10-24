@@ -58,7 +58,7 @@ namespace SpatialModeling.VoiceCore
                 MatchName(words, used, objects, parsed);
 
             bool deictic = false, nameLike = false;
-            int negations = 0;
+            int negations = 0, numbers = 0;
             for (int i = 0; i < words.Count; i++)
             {
                 if (used[i])
@@ -93,14 +93,13 @@ namespace SpatialModeling.VoiceCore
                 }
                 else if (NumberWords.TryRead(words, ref i, out double number))
                 {
-                    if (!parsed.Number.HasValue)
+                    numbers++;
+                    parsed.Number = number;
+                    if (i < words.Count && Vocabulary.Units.TryGetValue(words[i], out SpokenUnit numberUnit))
                     {
-                        parsed.Number = number;
-                        if (i < words.Count && Vocabulary.Units.TryGetValue(words[i], out SpokenUnit numberUnit))
-                            parsed.Unit = numberUnit;
-                    }
-                    if (i < words.Count && Vocabulary.Units.ContainsKey(words[i]))
+                        parsed.Unit = numberUnit;
                         i++;
+                    }
                     i--; // TryRead moved past the number; the loop adds one.
                 }
                 else if (Vocabulary.Units.TryGetValue(w, out SpokenUnit unit))
@@ -115,6 +114,8 @@ namespace SpatialModeling.VoiceCore
                     used[k] = true;
             }
 
+            if (numbers > 1)
+                parsed.Number = null; // "one eighty", or "to fifty" heard as "two fifty": ask for the amount
             parsed.Negative = negations % 2 == 1;
             if (parsed.Target == TargetRef.None && targetable)
                 parsed.Target = deictic ? TargetRef.Context : nameLike ? TargetRef.Unknown : TargetRef.None;

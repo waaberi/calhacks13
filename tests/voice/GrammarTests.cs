@@ -85,8 +85,6 @@ namespace SpatialModeling.VoiceCore.Tests
         [InlineData("twelve", 12)]
         [InlineData("one hundred and eighty", 180)]
         [InlineData("one hundred eighty", 180)]
-        [InlineData("one eighty", 180)]
-        [InlineData("two seventy", 270)]
         [InlineData("one point five", 1.5)]
         [InlineData("zero point two five", 0.25)]
         [InlineData("point five", 0.5)]

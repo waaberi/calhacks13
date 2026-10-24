@@ -187,6 +187,17 @@ namespace SpatialModeling.VoiceCore.Tests
         }
 
         [Theory]
+        [InlineData("scale this two fifty percent", "ask_factor")] // Vosk heard "to fifty" as "two fifty"
+        [InlineData("rotate it one eighty degrees around z", "ask_angle")]
+        public void TwoNumbersAreAmbiguousAndAskForTheAmount(string text, string question)
+        {
+            var f = new Fixture(Cube);
+            VoiceTurn turn = f.Say(text);
+            Assert.Null(turn.Command);
+            Assert.Equal(new[] { question }, Prompts(turn));
+        }
+
+        [Theory]
         [InlineData("scale this by two", 2.0)]
         [InlineData("scale it to fifty percent", 0.5)]
         [InlineData("scale it by one point five", 1.5)]
