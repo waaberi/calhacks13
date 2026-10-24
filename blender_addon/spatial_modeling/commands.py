@@ -375,7 +375,10 @@ class Commands:
         self.leases = leases
         self.max_receipts = MAX_RECEIPTS if max_receipts is None else max_receipts
         self.receipts = OrderedDict()  # request_id -> (payload digest, receipt), oldest first
-        self.evicted = False  # the store has dropped receipts: unseen IDs may have been applied
+        # Once any receipt/fence is dropped, an unseen ID may be a replay. Keep
+        # retained receipts readable, but refuse every unseen command until a
+        # new host epoch rather than risk a second native mutation.
+        self.evicted = False
         self.frozen = False  # after an unknown outcome, until the host has re-read the scene
         self._retry_at = 0.0  # when poll() next tries to reconcile
         self._reconcile_failures = 0
@@ -397,6 +400,13 @@ class Commands:
         rid, payload = msg["id"], msg["payload"]
         digest = _digest(payload)
         stored = self.receipts.get(rid)
+        if stored is None and self.evicted:
+            text = ("The host's bounded receipt history is full. This request ID may have "
+                    "been used before, so it will not change Blender. Save, then restart "
+                    "the hosting session and reconnect before making a new edit.")
+            receipt = self._receipt(conn, rid, payload, "rejected", self._revision_now(),
+                                    error=_error("duplicate_request", text))
+            return protocol.message("result", receipt, re=rid)
         if stored is not None and stored[0] is _FENCED:
             text = ("receipt.query already reported this request ID as not received, so the host "
                     "won't apply it now. Look at the scene, then use a new ID.")
