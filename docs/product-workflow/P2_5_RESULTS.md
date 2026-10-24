@@ -84,6 +84,7 @@ Initial isolated verification on 2026-10-24:
 | Actual compiled native edit session gates under Mono | Pass | Wire-state behavior only; no native geometry execution |
 | Dedicated launcher isolation tests | 5 passed and 7 subtests passed | Mocked preflight; no runtime launched |
 | Ruff for owned Python wrappers | Pass | Static style/import checks |
+| Isolated native CAD create/reopen at scene unit scales 1 and .001 | Pass, four fresh Blender processes | Native solver/persistence checks; no desktop/headset input |
 | Spatial native matrix gates, cumulative Unity gates and Windows Player build | Pending | Held until the isolated build slot is confirmed |
 | Broad native UI workflows and direct VR drawing in headset | Pending | Requires later coordinated P2.5 runtime slot |
 
@@ -92,6 +93,18 @@ hashes and compiled assembly hashes for its run; subsequent source changes requi
 a fresh run. A previous in-flight compile correctly refused a missing drawing
 class while parallel implementation was unfinished. That transient error is not
 reported as a completed feature regression.
+
+The isolated native run is recorded under external evidence
+`p25-native-20261024T173230Z/manifest.json`. All four create/reopen processes exited
+zero and their `*-result.json` files report `passed: true`. It used Blender 5.2.2
+LTS, CAD Sketcher 0.32.1 and slvs 3.2 in private profiles at both native unit scales.
+Create exercised 28 native mutations per scale; reopen performed a further native
+edit in each fresh process. Native Undo/Redo passed, complete native entity and
+constraint identities survived reopening, conflict rollback and unsupported sketch
+isolation passed, and `Window.modal_operators` was inspectable. These were
+background isolated native documents, not input sent to the user's Blender or a
+proof of a working VR gesture. The captured native button/menu workflows remain
+pending runtime acceptance.
 
 Before accepting a later isolated runtime, record exact source and assembly hashes
 and verify a deliberately changing native viewport alongside actual operations:
