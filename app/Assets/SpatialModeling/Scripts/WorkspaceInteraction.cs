@@ -153,6 +153,7 @@ namespace SpatialModeling
             var device = InputDevices.GetDeviceAtXRNode(h.node);
             if (!TryReadHand(h, out var hand, out var aim))
             {
+                WorkspaceNativeMenu.Current?.TrackingLost(h.node);
                 Release(h);
                 h.visual.SetActive(false);
                 h.armed = false;
@@ -176,6 +177,7 @@ namespace SpatialModeling
             bool gripPressed = h.armed && gripNow && !h.gripDown;
             bool triggerPressed = h.armed && triggerNow && !h.triggerDown;
             h.gripDown = gripNow; h.triggerDown = triggerNow;
+            WorkspaceNativeMenu.Current?.UpdateMenuHand(h.node, hand);
 
             float distance = 4f;
             var hitPart = scene.PickObject(ray, out float partDistance);
@@ -183,6 +185,17 @@ namespace SpatialModeling
             if (hitPart != null) distance = partDistance;
             bool screenFirst = hitScreen && (hitPart == null || screenDistance <= partDistance);
             if (screenFirst) distance = screenDistance;
+
+            var menu = WorkspaceNativeMenu.Current;
+            if (h.target == null && menu != null && h.node == WorkspaceHandPreference.Primary
+                && menu.Raycast(ray, out var menuDistance) && menuDistance < distance
+                && (scene.Table == null || !scene.Table.RaycastControls(ray, out var menuTableDistance) || menuDistance < menuTableDistance))
+            {
+                menu.HoverController(ray, triggerPressed, h.node, out menuDistance);
+                h.hasHit = true; h.pointerDistance = menuDistance;
+                Instruction = "Trigger: native menu · grip still arranges the view only";
+                return true;
+            }
 
             if (h.target != null)
             {
@@ -206,6 +219,7 @@ namespace SpatialModeling
             }
             else if (hitPart != null)
             {
+                if (triggerPressed) menu?.Select(hitPart, h.node);
                 var target = MoveIndividualParts ? hitPart.transform : scene.Placement;
                 Instruction = MoveIndividualParts ? "Grip: arrange " + hitPart.name + " in your view" : "Grip: move the whole build";
                 if (gripPressed && !Conflicts(other?.target, target)) Begin(h, target, MoveIndividualParts ? hitPart : null, aim, ray.GetPoint(distance));

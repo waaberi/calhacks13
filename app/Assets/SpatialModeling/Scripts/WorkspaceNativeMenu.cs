@@ -243,6 +243,13 @@ namespace SpatialModeling
             return value;
         }
         public void ShowError(string error) { localError = error; Refresh(); }
+        internal bool SmokeClick(string title)
+        {
+            if (!Array.Exists(Environment.GetCommandLineArgs(), arg => arg == "-p3-native-smoke")) return false;
+            foreach (var button in buttons) if (button != null && button.name == title && button.interactable) { button.onClick.Invoke(); return true; }
+            return false;
+        }
+        internal void SmokeNumber(int index, string value) { fields[index].text = value; }
         public JArray Values(int first, int count, double multiplier, bool positive = false)
         {
             var values = new JArray();

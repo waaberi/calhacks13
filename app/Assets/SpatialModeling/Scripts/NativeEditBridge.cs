@@ -39,6 +39,14 @@ namespace SpatialModeling
             else if (pendingSince < 0) pendingSince = Time.realtimeSinceStartupAsDouble;
             else if (Time.realtimeSinceStartupAsDouble - pendingSince > 15 && !Session.OutcomeUnknown) Session.Timeout();
         }
+        public void Reconnect()
+        {
+            Session.Disconnect("Requesting a fresh authoritative snapshot");
+            if (scene == null) return;
+            scene.enabled = false;
+            scene.enabled = true;
+            connected = false;
+        }
 
         void OnDisable()
         {

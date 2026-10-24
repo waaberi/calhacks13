@@ -68,12 +68,8 @@ namespace SpatialModeling
 
         void OnEnable()
         {
-            recenterAction = new InputAction("Recenter view", InputActionType.Button);
-            recenterAction.AddBinding("<XRController>{RightHand}/secondaryButton"); // B on Quest
-            recenterAction.AddBinding("<XRController>{LeftHand}/secondaryButton");  // Y on Quest
-            recenterAction.AddBinding("<Keyboard>/r");
-            recenterAction.performed += _ => RequestRecenter();
-            recenterAction.Enable();
+            ConfigureRecenter();
+            WorkspaceHandPreference.Changed += ConfigureRecenter;
             var name = string.IsNullOrWhiteSpace(userName) ? "VR user" : userName.Trim();
             link = new HostLink(host, port, new JObject
             {
@@ -83,8 +79,19 @@ namespace SpatialModeling
             });
         }
 
+        void ConfigureRecenter()
+        {
+            recenterAction?.Dispose();
+            recenterAction = new InputAction("Recenter view", InputActionType.Button);
+            recenterAction.AddBinding(WorkspaceHandPreference.Controller + "/secondaryButton"); // B / Y
+            recenterAction.AddBinding("<Keyboard>/r");
+            recenterAction.performed += _ => RequestRecenter();
+            recenterAction.Enable();
+        }
+
         void OnDisable()
         {
+            WorkspaceHandPreference.Changed -= ConfigureRecenter;
             recenterAction?.Dispose();
             recenterAction = null;
             link?.Stop();   // its thread exits and posts nothing more, so a re-enable can't run two
