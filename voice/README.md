@@ -150,12 +150,16 @@ characters.
 **whisper-server.** `WhisperServer` starts `StreamingAssets/whisper/whisper-server.exe -m ggml-tiny.en.bin --host
 127.0.0.1 --port 8178 -t 4 -l en -nt -ng` (CPU only: the GPU renders VR) without a console window, while Vosk loads
 its model. It waits for `/health`, warms the model up with half a second of silence (about 0.5 s in total for tiny.en,
-1 s for base.en) and is killed when VoiceInput is disposed. A server already answering on the port, for example one
-left over from a crash, is reused. If the server dies, it is started again at the next utterance; an utterance whose
-request fails or takes longer than 4 s gets Vosk's result instead. It listens on 127.0.0.1 only, so Windows asks no
-firewall question. Settings: `WhisperModel` (`ggml-tiny.en.bin`, or `ggml-base.en.bin`), `WhisperPort`,
-`WhisperThreads`, `WhisperTimeoutMs`, `PromptWithGrammar`, `WhisperGuessConfidence` (1 lets guesses run),
-`SnapThreshold`, `MinFastConfidence`.
+1 s for base.en) and is killed when VoiceInput is disposed. It runs at below-normal priority, so a decode never delays
+a VR frame. On Windows it first checks for the VC++ runtime DLLs: without them Windows would show a "DLL was not found"
+dialog on the desktop and the server would hang until someone closed it, so voice falls back to Vosk at once and the
+log says what to install. Voice input isn't ready until the server is (at most `WhisperStartTimeoutMs`, 15 s; then
+Vosk alone). A server already answering on the port, for example one left over from a crash, is reused. If the server
+dies or goes away, it is started again at the next utterance, once: if that fails, Vosk answers alone from then on. An
+utterance whose request fails or takes longer than 4 s gets Vosk's result instead. It listens on 127.0.0.1 only, so
+Windows asks no firewall question. Settings: `WhisperModel` (`ggml-tiny.en.bin`, or `ggml-base.en.bin`),
+`WhisperPort`, `WhisperThreads`, `WhisperTimeoutMs`, `WhisperStartTimeoutMs`, `PromptWithGrammar`,
+`WhisperGuessConfidence` (1 lets guesses run), `SnapThreshold`, `MinFastConfidence`.
 
 **In the Unity adapter** the change is one line, plus `using SpatialModeling.VoiceCore.Whisper;`:
 
