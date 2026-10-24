@@ -74,21 +74,23 @@ Implementation and verification results are recorded as they complete. No native
 interaction, headset interaction or broad Blender button coverage is claimed from
 the compiler or managed checks alone.
 
-Initial isolated verification on 2026-10-24:
+Final isolated verification on 2026-10-24:
 
 | Check | Result | Limit |
 | --- | --- | --- |
-| Full runtime C# and Editor C# offline compile | Pass, 20 runtime / 7 Editor sources | Compiler only; source generators/IL/shaders/Player build not run |
+| Full runtime C# and Editor C# offline compile | Pass, 21 runtime / 7 Editor sources | Actual compiled mapping/transport/session gates also ran under Mono |
 | Actual compiled preview mapping/routing gates under Mono | Pass | Synthetic coordinates; no real controller/desktop input |
 | Actual compiled HTTP sequence barrier under Mono | Pass | Pure state gate; actual HTTP failure paths remain separate |
 | Actual compiled native edit session gates under Mono | Pass | Wire-state behavior only; no native geometry execution |
 | Dedicated launcher isolation tests | 5 passed and 7 subtests passed | Mocked preflight; no runtime launched |
 | Ruff for owned Python wrappers | Pass | Static style/import checks |
 | Isolated native CAD create/reopen at scene unit scales 1 and .001 | Pass, four fresh Blender processes | Native solver/persistence checks; no desktop/headset input |
-| Spatial native matrix gates, cumulative Unity gates and Windows Player build | Pending | Held until the isolated build slot is confirmed |
+| Spatial native matrix gates | Pass inside Unity | Known world/native oracles; no physical gesture |
+| Cumulative P2/arrangement/P1 interaction and visual gates | Pass inside Unity | Synthetic/editor checks preserve existing requirements; no new physical acceptance |
+| Windows Player build | Pass, exit 0 and zero errors | Frozen app source `900b7a7`; resulting Player never launched |
 | Broad native UI workflows and direct VR drawing in headset | Pending | Requires later coordinated P2.5 runtime slot |
 
-The external `p25-offline-compile/compile-manifest.json` records the exact source
+The external `p25-offline-release/compile-manifest.json` records the exact source
 hashes and compiled assembly hashes for its run; subsequent source changes require
 a fresh run. A previous in-flight compile correctly refused a missing drawing
 class while parallel implementation was unfinished. That transient error is not
@@ -105,6 +107,32 @@ isolation passed, and `Window.modal_operators` was inspectable. These were
 background isolated native documents, not input sent to the user's Blender or a
 proof of a working VR gesture. The captured native button/menu workflows remain
 pending runtime acceptance.
+
+Final Windows output is the external directory
+`artifacts/p25-preview-spatial-v2/`. The build used this feature worktree's own
+Library, Unity 6000.6.5f1 in batch/nographics mode with two job workers, and a
+BelowNormal Editor process. `P25Build.Windows` passed its mapping, transport and
+spatial gates, then the cumulative P2 placement/menu/scene, arrangement, accepted
+aim/controller/startup/freshness and render-scale/MSAA/alpha checks. Unity reported
+`Succeeded errors=0` and exited with code 0. No Player, capture helper or interactive
+Blender was launched by this build. P2's active test runtime was not replaced.
+
+| Final v2 identity | Value |
+| --- | --- |
+| Frozen app source | `900b7a7` |
+| Git app tree | `b2f2ec89f619babc77f1facd0d3fd9b7d9aade37` |
+| `SpatialModeling_Data/Managed/Assembly-CSharp.dll` SHA-256 | `1a838542e58e1760f681b10ab4e010dcbc5d4e091e83e832cae25482816e5f18` |
+| `SpatialModeling.exe` SHA-256 | `001aeebfb92718f8b49f0c0e0a03e313c54669552b08e952b2fee3ddd143683a` |
+| Build evidence | `evidence/p25-preview-spatial-v2-build.log` and `p25-preview-spatial-v2-build-result.json` |
+
+The first v1 build began before the component-disable cleanup repair was frozen
+and picked up that repair during Player compilation. It is retained as a
+mixed-timing diagnostic and is not attributed exclusively to its starting commit.
+The v2 rebuild used frozen `900b7a7`; its C# source was verified unchanged afterward.
+The equal v1/v2 DLL hashes reflect the first build having already incorporated the
+repair. Generated settings diffs were preserved to external evidence for each run,
+verified to contain only line-ending/trailing-whitespace changes, then restored.
+No generated render/XR/project settings were included in this feature change.
 
 Before accepting a later isolated runtime, record exact source and assembly hashes
 and verify a deliberately changing native viewport alongside actual operations:
@@ -123,7 +151,7 @@ obtain these checks. Main is not updated by this feature's validation or publica
 ## Dedicated launch preflight
 
 `desktop-capture/launch_p25.py` requires explicitly selected, distinct nondefault
-ports, for example host 8769 and capture 8768. It refuses P2's default 8765/8766.
+ports, for example host 8769 and capture 8768. It refuses P2's default 8765/8766/8767.
 It sends only `hello` and `preview.state.query` to the existing host and reads
 `GET /input/state` from the existing helper. It verifies the welcomed document,
 host epoch, advertised P2.5 bridge, fresh capture and selected native process ID.
@@ -149,7 +177,11 @@ automatic installation, helper restart or attachment to P2's default session is
 attempted. Native CAD availability is reported separately: native preview access
 can work without CAD Sketcher; direct drawing requires the pinned native dependency.
 
-The existing `desktop-capture/launch.py` contains the extension ZIP layout used by
-the project (manifest and add-on files at archive root, excluding Python caches).
-There is no separate tracked Windows release packager in this P2-based branch.
-Do not run that default-port launcher to package/test P2.5 during P2's runtime slot.
+The dedicated `desktop-capture/bootstrap_p25.py` prepares private add-on/CAD/solver
+copies, verifies their source hashes and opens a copied native document only in a
+new factory-startup Blender with a new external resource profile. It binds the
+explicit isolated host port and never installs into a personal profile. Its module
+documentation contains the launch arguments; its pure preparation tests do not
+start Blender. The Windows Player must be distributed with its entire runtime
+directory, excluding Unity's `BackUpThisFolder_ButDontShipItWithYourGame` directory;
+the EXE alone is insufficient. Do not use the old default-port launcher for P2.5.

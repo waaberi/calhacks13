@@ -19,8 +19,8 @@ from launch import player_processes
 
 def isolated_port(value):
     port = int(value)
-    if not 1 <= port <= 65535 or port in (8765, 8766):
-        raise argparse.ArgumentTypeError("Use an explicit port outside P2's default 8765/8766")
+    if not 1024 <= port <= 65535 or port in (8765, 8766, 8767):
+        raise argparse.ArgumentTypeError("Use a nonprivileged isolated port outside P2's 8765/8766/8767")
     return port
 
 

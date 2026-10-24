@@ -25,7 +25,7 @@ def binding():
 
 class P25LauncherTests(unittest.TestCase):
     def test_isolated_ports_do_not_attach_to_p2_defaults(self):
-        for value in ("0", "65536", "8765", "8766"):
+        for value in ("0", "1023", "65536", "8765", "8766", "8767"):
             with self.assertRaises(argparse.ArgumentTypeError):
                 isolated_port(value)
         self.assertEqual(isolated_port("8769"), 8769)
