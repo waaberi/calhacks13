@@ -227,7 +227,16 @@ namespace SpatialModeling
                 result["camera_position"] = Vec(camera.transform.position); result["camera_forward"] = Vec(camera.transform.forward);
                 result["center_in_view"] = viewport.z > camera.nearClipPlane && viewport.x >= 0 && viewport.x <= 1 && viewport.y >= 0 && viewport.y <= 1;
                 var line = text.GetComponentInParent<LineRenderer>();
-                if (line != null) { result["overlay_bounds_center"] = Vec(line.bounds.center); result["overlay_bounds_extents"] = Vec(line.bounds.extents); result["overlay_width"] = line.startWidth; }
+                if (line != null)
+                {
+                    result["overlay_bounds_center"] = Vec(line.bounds.center); result["overlay_bounds_extents"] = Vec(line.bounds.extents); result["overlay_width"] = line.startWidth;
+                    if (line.positionCount > 0)
+                    {
+                        var actual = new Bounds(line.GetPosition(0), Vector3.zero);
+                        for (int i = 1; i < line.positionCount; i++) actual.Encapsulate(line.GetPosition(i));
+                        result["overlay_centerline_center"] = Vec(actual.center); result["overlay_centerline_extents"] = Vec(actual.extents);
+                    }
+                }
                 var screen = FindAnyObjectByType<BlenderScreen>();
                 bool occluded = false;
                 if (screen != null && screen.Visible && screen.Placement is RectTransform rect)

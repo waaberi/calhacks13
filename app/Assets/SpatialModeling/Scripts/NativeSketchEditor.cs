@@ -40,7 +40,15 @@ namespace SpatialModeling
                 bool found = false; Bounds bounds = default;
                 foreach (var line in pair.Value.GetComponentsInChildren<LineRenderer>())
                     if (line.enabled && line.gameObject.activeInHierarchy && line.positionCount > 1)
-                    { if (!found) { bounds = line.bounds; found = true; } else bounds.Encapsulate(line.bounds); }
+                        // Renderer.bounds can conservatively retain metres of padding
+                        // for new LineRenderers. Ownership follows the solved vertices.
+                        for (int i = 0; i < line.positionCount; i++)
+                        {
+                            var point = line.GetPosition(i);
+                            if (!line.useWorldSpace) point = line.transform.TransformPoint(point);
+                            if (!found) { bounds = new Bounds(point, Vector3.zero); found = true; }
+                            else bounds.Encapsulate(point);
+                        }
                 if (found) yield return new NativeOwnershipOverlay.DisplayTarget(pair.Key, bounds);
             }
         }
