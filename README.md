@@ -1,55 +1,86 @@
-# calhacks13
+# Spatial Modeling
 
-Edit a real Blender project in VR on a Quest 3S over Air Link, while a second person edits the same session from desktop Blender.
+![Blender 5.2](https://img.shields.io/badge/Blender-5.2-E87D0D?logo=blender&logoColor=white)
+![Unity 6](https://img.shields.io/badge/Unity-6-000000?logo=unity&logoColor=white)
+![Meta Quest 3S](https://img.shields.io/badge/Meta_Quest-3S-0467DF?logo=meta&logoColor=white)
+![SpacetimeDB](https://img.shields.io/badge/SpacetimeDB-session_state-5B3FD9)
+![CalHacks 13](https://img.shields.io/badge/CalHacks-13-FDB515)
 
-- **Architecture, phases and who owns what:** [PHASE_PLAN.md](PHASE_PLAN.md). Start with its "Architecture" section.
-- **Wire formats:** [contracts/README.md](contracts/README.md)
-- **Tasks:** [project board](https://github.com/users/waaberi/projects/3)
-- **Deadline:** feature freeze Sat Oct 24, 7 pm PT. Everything done by 11 pm PT.
+Spatial Modeling lets you edit a real Blender project in VR, together with someone working in desktop Blender.
 
-## Where code goes
+Put on a Quest and your scene appears on a table in your room, at real size. Grab objects, move them, rotate them and type exact values. Give it voice commands. Every edit happens in Blender itself, so the file, Undo, Redo and Save all work as usual. A teammate on another PC can open the same session in their own Blender and edit alongside you.
 
-| Path | What | Owner |
-| --- | --- | --- |
-| `blender_addon/spatial_modeling/` | Blender add-on: Host role (server, commands, scene sync, permissions) | Waaberi |
-| `blender_addon/spatial_modeling/remote_client/` | Blender add-on: Client role for the second PC | Lee Jae-yeon |
-| `blender_addon/spatial_modeling/sketch/` | CAD Sketcher adapter | Lee Jae-yeon |
-| `contracts/` | Wire formats, message examples and schemas | Waaberi |
-| `voice/VoiceCore/` | Voice command library: plain C#, loaded by Unity as a local package | Waaberi |
-| `app/` | Unity VR app, created in P0-M2-1 | Jihyeon |
-| `desktop-capture/` | Blender window capture helper | Lee Jae-yeon |
-| `tests/` | Tests; `tests/backend/` and `tests/voice/` are Waaberi's, `tests/protocol/` and `tests/security/` are Lee Jae-yeon's | per folder |
+Built at CalHacks 13 by Waaberi Ibrahim, Lee Jae-yeon, Jihyeon and Talia.
 
-Other folders in the plan's ownership table (`spacetime/`, `scripts/windows-release/`, `samples/mechanical/`, `docs/demo/` and so on) are created by their owner when first needed.
+## Features
 
-## Getting started
+- **Your Blender scene in VR.** Place a worktable anywhere in your room. Objects sit on it at their true dimensions, and changes made in Blender show up in the headset right away.
+- **Hands-on editing.** Move, rotate, scale, add and delete objects with the controllers. A hand menu takes exact numbers when you need precision, and it works for left- and right-handed users.
+- **Voice commands.** Say "rotate this 90 degrees". If something is missing, it asks a short question, such as which axis, and then finishes the command. Recognition runs offline.
+- **Two people, one scene.** A second person joins from Blender on their own PC over an encrypted LAN connection. Everyone sees every change.
+- **No conflicts.** When someone is editing an object, other edits to it are blocked with a message saying who has it. This covers Blender's own tools too.
+- **CAD sketches.** Draw sketches with real dimensions and constraints. Change a dimension and the solver updates the shape. Built on CAD Sketcher.
+- **Blender on a screen in VR.** A panel shows the live Blender window, so you don't need to take the headset off.
+- **Native Blender history.** Each edit is one Undo step. Save from VR, reopen in Blender, and everything is there.
 
-### Verified Windows P0 versions
+## How it works
 
-| Component | Version |
-| --- | --- |
-| Unity Editor / Windows x64 Player | 6000.6.5f1 |
-| Blender | 5.2.2 LTS |
-| Blender Python | 3.13.13 |
-| OpenXR package | 1.18.0 |
-| XR Interaction Toolkit | 3.6.1 |
-| Input System | 1.20.1 |
-| Universal Render Pipeline | 17.6.0 |
-| Blender OpenSSL | 3.5.6; TLS PSK support verified on Talia's Windows PC |
+The add-on runs inside Blender on the host PC and acts as the server. The VR app and the second Blender send it edit requests. The add-on checks each request, applies it in Blender, records an Undo step and sends the result to everyone. Blender stays the single source of truth.
 
-Unity package versions are pinned in `app/Packages/manifest.json` and its lockfile.
-The P0 headset run uses Quest 3S through Meta OpenXR and USB Link; Air Link and
-two-PC event-network acceptance are separate checks. CAD Sketcher 0.32.1 with
-slvs 3.2 was checked on Talia's Blender; this does not establish second-PC CAD
-compatibility. Test evidence and outstanding gates are recorded in GitHub #5.
+```mermaid
+flowchart LR
+  subgraph pc1["Host PC"]
+    host["Blender + add-on<br/>(Host)"]
+    app["Unity VR app<br/>+ VoiceCore"]
+    capture["Screen capture helper"]
+    stdb[("SpacetimeDB")]
+  end
+  subgraph pc2["Second PC"]
+    client["Blender + add-on<br/>(Client)"]
+  end
+  quest["Quest 3S"]
+  app <-->|"JSON lines over TCP, localhost"| host
+  capture -->|"Blender window as JPEG"| app
+  client <-->|"TLS 1.3, LAN"| host
+  quest <-->|"Quest Link"| app
+  host -.->|"who is editing what"| stdb
+  stdb -.-> app
+```
 
-- **Blender add-on:** link `blender_addon/spatial_modeling` into Blender's extensions folder (`extensions/user_default/`). Then enable it under Preferences > Add-ons and pick Host or Client.
-- **Unity app:** open `app/` with Unity 6000.6.5f1. VoiceCore is referenced from `app/Packages/manifest.json` as `"com.calhacks13.voicecore": "file:../../voice/VoiceCore"`.
-- **Checks:** `pip install ruff pytest jsonschema`, then run `ruff check .` and `pytest tests`. CI runs the same on every PR.
+- **[Blender add-on](blender_addon/spatial_modeling/)** (Python): one add-on with two roles, Host and Client. It needs nothing beyond the Python that ships with Blender. Every object gets a stable ID that survives renames, Undo and save/reopen.
+- **[VR app](app/)** (Unity 6, OpenXR, XR Interaction Toolkit): the room, the table, controller input, the hand menu and the Blender screen panel.
+- **[VoiceCore](voice/VoiceCore/)** (C#): offline speech recognition with Vosk and a command grammar. It remembers the parts of a command it already has and asks only for what's missing.
+- **Secure LAN link:** the second Blender connects over TLS 1.3 using the session token as a pre-shared key. There are no certificates to set up.
+- **[SpacetimeDB](spacetime/):** tracks who is connected, who is editing which object, and a log of applied edits that survives a restart.
+- **[Wire format](contracts/README.md):** every message has a JSON Schema and an example, and CI checks both.
 
-## Working in this repo
+## Using it
 
-- Branch off `main` as `codex/<person>-<phase>-<slice>` (e.g. `codex/waaberi-p0-ping`). Open a PR with `Closes #<issue>`, and merge small working pieces every 60–90 minutes.
-- `main` can't be force-pushed or deleted. Use `git revert` to undo a change.
-- Unity: commit each asset together with its `.meta` file.
-- Never commit tokens, machine paths, build outputs or speech models. `.env` and `*.local.json` are already ignored.
+You need:
+
+- a Windows PC with the Meta Horizon Link app
+- a Quest 3S, connected with a Link cable or Air Link
+- Blender 5.2.2
+- optionally, a second PC with Blender 5.2.2 for a second editor
+
+Then:
+
+1. Link `blender_addon/spatial_modeling` into Blender's `extensions/user_default/` folder, enable Spatial Modeling under Preferences › Add-ons, and choose Host.
+2. Open a `.blend` file, for example [`samples/mechanical/p0_reference_v2.blend`](samples/mechanical/).
+3. Connect the Quest through Link and start the VR app.
+4. To add a second editor, turn on "Let a Client-role Blender join over the LAN" in the host's add-on preferences and note the session token. On the other PC, install the add-on, choose Client, and enter the host's address and the token.
+
+## Building from source
+
+- **VR app:** Unity 6000.6.5f1. Packages are pinned in `app/Packages/manifest.json`. Before opening `app/` for the first time, fetch the speech libraries and model from Git Bash:
+  ```sh
+  voice/fetch-vosk.sh
+  voice/fetch-model.sh app/Assets/StreamingAssets
+  ```
+  Then open `app/` in Unity and press Play, or build for Windows.
+- **Tests:** Python 3.13 with `pip install ruff pytest jsonschema`, then `ruff check .` and `pytest tests`. VoiceCore's tests need the .NET 10 SDK: run `voice/fetch-model.sh`, then `dotnet test tests/voice`. CI runs both on every PR.
+- **SpacetimeDB (optional):** Node.js and the SpacetimeDB CLI. See [spacetime/README.md](spacetime/README.md). Without it, the host keeps session state in memory.
+
+Team notes and repo rules are in [CONTRIBUTING.md](CONTRIBUTING.md). The demo script is in [docs/demo/DEMO_STEPS.md](docs/demo/DEMO_STEPS.md).
+
+The add-on is licensed GPL-3.0-or-later.
