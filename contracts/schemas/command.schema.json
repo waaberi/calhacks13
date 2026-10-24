@@ -20,7 +20,7 @@
       },
       "allOf": [
         {
-          "if": { "properties": { "op": { "enum": ["object.add", "object.select", "history.undo", "history.redo", "document.save", "sketch.create"] } } },
+          "if": { "properties": { "op": { "enum": ["object.add", "history.undo", "history.redo", "document.save", "sketch.create"] } } },
           "then": { "not": { "required": ["target"] } },
           "else": { "required": ["target"] }
         },
@@ -29,7 +29,6 @@
           "then": { "properties": { "args": { "type": "object", "maxProperties": 0 } } }
         },
         { "if": { "properties": { "op": { "const": "object.add" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/add" } } } },
-        { "if": { "properties": { "op": { "const": "object.select" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/select" } } } },
         { "if": { "properties": { "op": { "const": "object.move" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/move" } } } },
         { "if": { "properties": { "op": { "const": "object.rotate" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/rotate" } } } },
         { "if": { "properties": { "op": { "const": "object.scale" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/scale" } } } },
@@ -47,7 +46,6 @@
     "op": {
       "enum": [
         "object.add",
-        "object.select",
         "object.move",
         "object.rotate",
         "object.scale",
@@ -81,15 +79,6 @@
         "primitive": { "enum": ["cube", "sphere", "cylinder"] },
         "location": { "$ref": "envelope.schema.json#/$defs/coordinate3" },
         "dimensions": { "$ref": "envelope.schema.json#/$defs/length3" }
-      },
-      "additionalProperties": false
-    },
-    "select": {
-      "description": "Replace the host Blender's selection. The first id becomes the active object; [] deselects all.",
-      "type": "object",
-      "required": ["ids"],
-      "properties": {
-        "ids": { "type": "array", "items": { "$ref": "envelope.schema.json#/$defs/uuid" }, "uniqueItems": true, "maxItems": 256 }
       },
       "additionalProperties": false
     },

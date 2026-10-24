@@ -37,7 +37,7 @@ def lan_server(tls=True, token=TOKEN, handlers=None, pump=True):
 def recording_hello(seen):
     """A stand-in hello handler that records what it got."""
 
-    def handle(msg):
+    def handle(msg, conn):
         seen.append(msg["payload"])
         return protocol.message("test.welcome", re=msg["id"])
 
@@ -333,8 +333,10 @@ def test_stop_closes_lan_connections_and_restart_reuses_both_ports():
         with Client(port=listener.port, token=TOKEN) as client:
             client.send(protocol.message("ping"))
             deadline = time.monotonic() + 5
-            while srv.drain() == 0:
+            handled = 0
+            while handled < 2:  # the connection opening, then the ping
                 assert time.monotonic() < deadline
+                handled += srv.drain()
                 time.sleep(0.005)
             assert client.recv()["type"] == "pong"
     finally:

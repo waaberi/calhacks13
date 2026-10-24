@@ -11,9 +11,9 @@ The wire formats between our processes (see "Architecture" in [PHASE_PLAN.md](..
 Used by the Unity app and by Client-role add-ons to talk to the Host-role add-on.
 
 - **Transport:** TCP. The Unity app connects to `127.0.0.1:8765`: plain TCP, localhost only. Client-role add-ons connect to the host's LAN address on port `8767` (see [LAN port](#lan-port)).
-- **Framing:** one UTF-8 JSON object per line, ending in `\n`. A line longer than 16 MiB closes the connection. `NaN` and `Infinity` aren't JSON; receivers reject them.
+- **Framing:** one UTF-8 JSON object per line, ending in `\n`. A line longer than 16 MiB closes the connection. `NaN` and `Infinity` aren't JSON; receivers reject them, and numbers too large for a double (such as `1e999`).
 - **Coordinates and units:** Blender's own: right-handed, Z up, meters, radians. Unity converts in one place. Details under [Identity, revisions and units](#identity-revisions-and-units).
-- **Implementation:** [`blender_addon/spatial_modeling/protocol.py`](../blender_addon/spatial_modeling/protocol.py).
+- **Implementation:** framing in [`protocol.py`](../blender_addon/spatial_modeling/protocol.py), the host's transport in [`server.py`](../blender_addon/spatial_modeling/server.py) and [Connecting](#connecting) in [`session.py`](../blender_addon/spatial_modeling/session.py). [`tests/backend/hello_client.py`](../tests/backend/hello_client.py) joins a running host from a terminal.
 
 Every message has this envelope:
 
@@ -34,17 +34,17 @@ Every message has this envelope:
 | `error` | either way | `code`, `message`, optional `details` | P0 |
 | `ping` | either way | `{}`. Also the heartbeat | P0 |
 | `pong` | either way, answers `ping` | `{}` | P0 |
-| `scene.snapshot` | host → client | `document`, every object and sketch | P2 |
+| `scene.snapshot` | host → client | `document`, every object and sketch | P1 (empty lists), P2 |
 | `scene.update` | host → every client | `document`, changed objects and sketches, `removed` IDs | P2 |
 | `command` | client → host | request fields, `base_revision`, `source`, `op`, `target`, `args`, optional `lease` | P3A |
 | `result` | host → sender, answers `command` | the command's receipt: `outcome`, `revision`, `error` if rejected | P3A |
-| `activity` | host → every other client | the receipt of a command someone applied | P3B, P5 |
+| `activity` | host → every other client | the receipt of a command someone applied, or of an edit made directly in host Blender | P2, P3B, P5 |
 | `receipt.query` | client → host | `request_ids` (1 to 100) | P5 |
 | `receipts` | host → client, answers `receipt.query` | `receipts`, and `missing` IDs the host has no record of | P5 |
 | `lease.acquire` | client → host | request fields, `mode` (`exclusive` or `shared`), `targets` | P3B |
 | `lease.granted` | host → client, answers `lease.acquire` | the `lease` | P3B |
 | `lease.release` | client → host | `lease_id` | P3B |
-| `session.update` | host → every client | every participant and every lease | P3B, P5 |
+| `session.update` | host → every client | every participant and every lease | P1, P3B, P5 |
 
 There is no voice message type and no frame message type; see [Voice](#voice) and [Blender screen](#blender-screen).
 
@@ -57,16 +57,19 @@ The host listens on `8767` only while "Let a Client-role Blender join over the L
 
 ## Connecting
 
-1. The client connects and sends `hello`. Until it has been welcomed, the host answers only `hello` and `ping`; anything else gets `error` `permission_denied`.
+1. The client connects and sends `hello`. Until it has been welcomed, the host answers only `hello` and `ping`; anything else gets `error` `permission_denied` and the connection stays open. A `hello` that doesn't match its schema gets `invalid_message` and the connection stays open; so does a second `hello` on a welcomed connection.
    - On the LAN port with TLS, the handshake has already checked the token.
    - On the LAN port without TLS, the first message must be `hello` with the right `token`. Otherwise the host replies `error` `permission_denied` (`invalid_message` if it isn't a message at all) and closes, before any other check. The host removes `token` before any handler sees the `hello`, and ignores it on the other ports.
-2. The host replies `welcome`, then sends `scene.snapshot`, then `session.update`. The client is connected once it has the snapshot. It sends no `command` or `lease.acquire` before that.
-3. If the host refuses the `hello`, it replies `error` (with `re`) and closes the connection:
-   - `unsupported_version`: the envelope's `v` differs, or a Client-role add-on's `app.version` differs from the host's (P5-M1-3).
+2. The host replies `welcome`, then sends `scene.snapshot`, then `session.update` to every participant on either port, the new one included. The client is connected once it has the snapshot. It sends no `command` or `lease.acquire` before that. Until P2-W-1, the snapshot has empty `objects` and `sketches`: the host doesn't serialize the scene yet, so an empty scene from a P1 host doesn't mean the file is empty.
+3. If the host refuses the `hello`, it replies `error` (with `re`) and closes the connection. It checks in this order:
+   - `permission_denied`: the host doesn't admit this client here. `127.0.0.1:8765` admits only role `vr`, the LAN port only `blender-client`.
+   - `unsupported_version`: the envelope's `v` differs, or a Client-role add-on's `app.version` differs from the host's (P5-M1-3). The Unity app's version isn't compared.
    - `wrong_document`: the `hello` named a `document` and the host has another one (or another opening of it) open. `details.document` has the host's `id`, `open_epoch` and `name`.
-   - `permission_denied`: the host doesn't admit this client.
-4. Loading another `.blend` (or reverting), disabling the add-on and switching the role all close every connection. Clients reconnect and get the new document in `welcome`. A connection never spans two documents.
-5. **Heartbeat:** clients send `ping` every 2 s. A client that hears nothing from the host for 6 s shows "Blender is not responding" and disables edits; a closed socket means disconnected. The host treats a client it hasn't heard from for 6 s as gone: it closes the connection, which also ends its leases.
+4. `welcome` makes the connection a participant with its own `actor_id`. `can_edit` is true for `vr`, and false for `blender-client` until P3A-W-3. Whenever someone joins or leaves (its connection closes for any reason), every participant gets `session.update`.
+5. Loading another `.blend` (or reverting), disabling the add-on and switching the role all close every connection. Clients reconnect and get the new document in `welcome`. A connection never spans two documents.
+6. **Heartbeat:** clients send `ping` every 2 s. A client that hears nothing from the host for 6 s shows "Blender is not responding" and disables edits; a closed socket means disconnected. The host treats a client it hasn't heard from for 6 s as gone: when no complete line has arrived for 6 s it closes the connection, which also ends its leases. The host reads on its own thread, so a busy Blender (a render, a long operator) doesn't drop clients; their pongs just wait.
+
+**Starting and attaching.** The pieces can start in any order. Blender with the add-on enabled in Host role listens on 8765 from startup and again after every file load, so attaching the app to an already open Blender (with unsaved work) needs nothing from Blender. The Unity app connects, and reconnects every 2 s while it can't (see Disconnected below). The capture helper serves 8766 on its own and is independent of the add-on. Closing Blender closes the connection; the app keeps the stale scene until Blender is back.
 
 The connection states the app shows are worked out by the client, not sent as messages:
 
@@ -85,7 +88,7 @@ The connection states the app shows are worked out by the client, not sent as me
 
 A `command` gets exactly one `result`, and a rejected command's reason is in `result.payload.error`. The exception is a command that never reached its handler: it gets an `error` with `re` set (`invalid_message`, `unknown_type`, `busy` or `internal_error`). Any other failed message gets an `error`, with `re` set when its `id` could be read.
 
-The first six codes are the transport-level codes that [`server.py`](../blender_addon/spatial_modeling/server.py) sends:
+The first six codes are the transport-level codes that [`server.py`](../blender_addon/spatial_modeling/server.py) sends. It also sends `permission_denied` for anything but `hello` and `ping` before `welcome`:
 
 | Code | Meaning | Then |
 | --- | --- | --- |
@@ -111,13 +114,13 @@ The first six codes are the transport-level codes that [`server.py`](../blender_
 | --- | --- |
 | Object ID | UUID hex in the custom property `spatial_modeling_id` on each Blender object. It survives renames, Undo and save/reopen. The host assigns missing IDs and gives a duplicated object a new one. Sketches have the same kind of ID. |
 | Sketch entity and constraint IDs | Strings of 1 to 64 letters, digits, `_` or `-`, unique within their sketch and stable across Undo/Redo and save/reopen. The CAD adapter picks them. |
-| `document.id` | UUID hex the host stores in the `.blend` file the first time it opens it; it survives save/reopen. |
+| `document.id` | UUID hex the host stores in the `.blend` file the first time it opens it (the custom property `spatial_modeling_document_id` on every scene); it survives save/reopen. A file that is closed without saving gets a new one next time. |
 | `open_epoch` | New UUID hex every time the host opens or reloads the file, and whenever its revision counter restarts. |
 | `revision` | Starts at 0 for each open epoch and goes up with every accepted change: commands and direct edits in host Blender alike. It can jump by more than one when the host batches changes. Revisions are only comparable within one open epoch. Leases, presence, selection and Save don't change it. |
 | `generation` | On each object and sketch: the revision at which it last changed. |
 | `session_id` | UUID hex of the hosting session, kept with the session token in the host's add-on preferences. It stays the same when the host restarts. |
 | `host_epoch` | New UUID hex every time the host's server starts. |
-| `actor_id` | New for every connection, given in `welcome`. The host's own Blender is the participant with role `host`. |
+| `actor_id` | New for every connection, given in `welcome`. The host's own Blender is the participant with role `host` and name `Host Blender`: whoever works at the host desktop. Its `actor_id` is new with every `host_epoch`. |
 
 **Units.** Numbers on the wire are always meters and radians. The host converts Blender units to meters by multiplying by the scene's Unit Scale (`scale_length`), so a 100 mm part is `0.1` whatever the scene settings. `document.units` copies the scene's settings for display only: Unity shows millimeters when `length_unit` is `MILLIMETERS`, and the Client role copies the settings into its session file. Field names carry no unit suffix; the contract fixes the units, and the schema bounds catch the worst slips (an angle of 90 is rejected).
 
@@ -128,6 +131,8 @@ The first six codes are the transport-level codes that [`server.py`](../blender_
 `scene.snapshot` describes everything and replaces what the client had. The host sends it after `welcome`, and again whenever it can't describe a change as an update (for example after the unit settings change).
 
 `scene.update` carries changes in order, after Blender has committed them. `objects` and `sketches` hold complete records that replace those with the same `id`. An object in an update may leave out `mesh` when only its transform, name, color or visibility changed. `removed` lists deleted object and sketch IDs. `document` carries the new revision and the dirty flag, so an update with empty lists means only the dirty flag changed (after Save).
+
+**Direct edits in host Blender** (P2, with change observation) are changes like any other: the host sends `scene.update` to every client and also `activity`, with `actor` the host's own participant (role `host`), so VR and the Client role see what the host desktop did. Their receipt fields (`request_id`, `op`, `source`) are settled when P2 implements them.
 
 | Object field | Meaning |
 | --- | --- |
@@ -168,14 +173,15 @@ A `command` adds:
 | `op` | Target | `args` | Notes |
 | --- | --- | --- | --- |
 | `object.add` | none | `primitive` (`cube`, `sphere`, `cylinder`), `location` [x, y, z], `dimensions` [x, y, z] | `dimensions` is the bounding box; a cylinder's diameter is X and Y and its depth is Z. The receipt's `created` has the new ID. |
-| `object.select` | none | `ids` | Replaces the host Blender's selection so the host screen shows it; the first ID becomes active and `[]` deselects. Selection is inspection: no lease, no revision change, no Undo step. |
 | `object.move` | object | `by` [dx, dy, dz] or `to` [x, y, z] | World space. |
 | `object.rotate` | object | `by` {`axis`: `X`, `Y` or `Z`, `angle`} or `to` [w, x, y, z] | `by` turns about a world axis through the object's origin. |
 | `object.scale` | object | `by` [sx, sy, sz] or `to` [sx, sy, sz] | Along the object's own axes; `by` multiplies. |
 | `object.delete` | object | `{}` | |
 | `history.undo`, `history.redo` | none | `{}` | Blender's shared history. `base_revision` must equal the current revision, so nobody undoes a change they haven't seen. Refused with `lease_conflict` while another participant holds a lease. |
-| `document.save` | none | `{}` | Saves to the current file; `failed` if it was never saved. There is no Save As over the wire, so no client sends file paths. |
+| `document.save` | none | `{}` | Saves to the current file; `failed` if it was never saved. Save As is done only at the host desktop, in host Blender: there is no Save As over the wire, so no client sends file paths. |
 | `sketch.*` | sketch | see [Sketches](#sketches) | |
+
+**Selection is local to each client.** There is no select command: selecting in VR or in the Client role's Blender changes nothing on the host (not the host Blender's selection, not the revision, not the Undo history), and the host desktop's selection isn't sent to anyone. Others' selections may show up through presence later.
 
 **Bounds** (enforced by the schemas): coordinates within ±1000 m, lengths from 1 µm to 1000 m, scale factors from 0.001 to 1000, `rotate.by` angles within ±2π, sketch angles above 0 and up to π.
 

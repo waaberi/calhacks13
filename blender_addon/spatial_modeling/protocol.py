@@ -5,6 +5,7 @@ outside Blender.
 """
 
 import json
+import math
 import uuid
 
 VERSION = 1
@@ -23,18 +24,35 @@ def message(type_, payload=None, re=None):
 
 
 def encode(msg):
-    line = json.dumps(msg, separators=(",", ":"), ensure_ascii=False).encode("utf-8") + b"\n"
+    try:
+        text = json.dumps(msg, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+    except ValueError as e:  # NaN or Infinity: receivers would reject it
+        raise ProtocolError(f"message is not valid JSON: {e}") from e
+    line = text.encode("utf-8") + b"\n"
     if len(line) > MAX_LINE_BYTES:
         raise ProtocolError(f"message is {len(line)} bytes; the limit is {MAX_LINE_BYTES}")
     return line
+
+
+def _reject_constant(name):
+    raise ProtocolError(f"not valid JSON: {name} is not a number")
+
+
+def _finite_float(text):
+    value = float(text)
+    if not math.isfinite(value):  # for example 1e999
+        raise ProtocolError(f"not valid JSON: {text} is out of range")
+    return value
 
 
 def decode(line):
     if len(line) > MAX_LINE_BYTES:
         raise ProtocolError(f"line is {len(line)} bytes; the limit is {MAX_LINE_BYTES}")
     try:
-        msg = json.loads(line)
-    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as e:
+        msg = json.loads(line, parse_constant=_reject_constant, parse_float=_finite_float)
+    except ProtocolError:
+        raise
+    except (ValueError, RecursionError) as e:  # bad JSON or UTF-8, a 5000-digit integer
         raise ProtocolError(f"not valid JSON: {e}") from e
     if not isinstance(msg, dict):
         raise ProtocolError("message must be a JSON object")

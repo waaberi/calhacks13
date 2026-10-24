@@ -10,6 +10,9 @@ Client-role Blenders on the LAN, it also listens on port 8767 (lan.py). If the
 LAN port can't start, the localhost port still does. Changing a LAN preference
 restarts the server, which closes every connection; clients reconnect.
 
+Every start makes a new Document (a new open epoch) and a new Session (a new
+host_epoch), so stopping always closes every connection and clients rejoin.
+
 Undo: operators run from a timer don't push their own undo step, so an edit
 silently merges into the previous one and a single Undo reverts both. Register
 every handler that changes Blender data through undoable(), which pushes one
@@ -17,15 +20,20 @@ named step after it succeeds. Read-only handlers such as ping must not push.
 """
 
 import functools
+import uuid
 
 import bpy
 from bpy.app.handlers import persistent
 
-from . import lan, server
+from . import document, lan, scene, server, session
 
 DRAIN_INTERVAL = 0.02  # seconds between queue drains
+LAN_ROLES = ("blender-client",)  # 8765 admits only the Unity app (server.Listener's default)
 
 _server = None
+_session = None
+_document = None
+_session_id = None  # used only while the add-on preferences aren't available
 _starting = False
 status = "Stopped"  # shown in the add-on preferences; never contains the token
 lan_status = "Off"
@@ -40,8 +48,8 @@ def undoable(label):
 
     def wrap(handler):
         @functools.wraps(handler)
-        def run(msg):
-            reply = handler(msg)
+        def run(msg, conn):
+            reply = handler(msg, conn)
             if reply is None or reply["type"] != "error":
                 bpy.ops.ed.undo_push(message=label)
             return reply
@@ -49,6 +57,11 @@ def undoable(label):
         return run
 
     return wrap
+
+
+def participants():
+    """The connected participants, for the preferences panel."""
+    return list(_session.participants.values()) if _session is not None else []
 
 
 def _prefs():
@@ -59,6 +72,27 @@ def _prefs():
 def _role():
     prefs = _prefs()
     return prefs.role if prefs else "HOST"
+
+
+def _get_session_id():
+    """The session_id kept in the add-on preferences, so it survives restarts."""
+    global _session_id
+    prefs = _prefs()
+    if prefs is not None and session.is_uuid(prefs.session_id):
+        return prefs.session_id
+    _session_id = _session_id or uuid.uuid4().hex
+    if prefs is not None:
+        prefs.session_id = _session_id
+    return _session_id
+
+
+def _participants_changed():
+    names = ", ".join(f"{a['name']} ({a['role']})" for a in participants()) or "nobody"
+    print("Spatial Modeling: connected:", names)
+    for window in bpy.context.window_manager.windows:
+        for area in window.screen.areas:
+            if area.type == "PREFERENCES":
+                area.tag_redraw()
 
 
 def _drain():
@@ -84,7 +118,9 @@ def _lan_listener(prefs):
         lan_status = f"Not listening: {e}"
         return None
     address = prefs.lan_address.strip() or lan.ALL_INTERFACES
-    return server.Listener(address, lan.PORT, ssl=tls, token=None if tls else token)
+    return server.Listener(
+        address, lan.PORT, ssl=tls, token=None if tls else token, roles=LAN_ROLES
+    )
 
 
 def _describe_lan(listener):
@@ -97,26 +133,30 @@ def _describe_lan(listener):
     return f"Listening on {where}, {how}"
 
 
-def _start_server(extra):
-    srv = server.Server(extra_listeners=[extra] if extra else [])
+def _start_server(extra, sess):
+    srv = sess.attach(server.Server(extra_listeners=[extra] if extra else []))
     srv.start()
     return srv
 
 
 def start():
-    global _server, _starting, status, lan_status
+    global _server, _session, _document, _starting, status, lan_status
     if _server is not None:
         return
     _starting = True  # setting a generated token must not restart us from its update callback
     extra = None
+    doc = document.Document()
+    sess = session.Session(
+        doc.describe, scene.snapshot, _get_session_id(), on_change=_participants_changed
+    )
     try:
         extra = _lan_listener(_prefs())
         try:
-            srv = _start_server(extra)
+            srv = _start_server(extra, sess)
         except OSError as e:
             if extra is None:
                 raise
-            srv = _start_server(None)  # raises again if the localhost port is the problem
+            srv = _start_server(None, sess)  # raises again if the localhost port is the problem
             lan_status = f"Not listening: {e}"  # so it was the LAN port
             extra = None
     except OSError as e:
@@ -127,7 +167,7 @@ def start():
         return
     finally:
         _starting = False
-    _server = srv
+    _server, _session, _document = srv, sess, doc
     status = f"Listening on {srv.host}:{srv.port}"
     if extra is not None:
         lan_status = _describe_lan(extra)
@@ -136,13 +176,14 @@ def start():
 
 
 def stop():
-    global _server, status, lan_status
+    global _server, _session, _document, status, lan_status
     if bpy.app.timers.is_registered(_drain):
         bpy.app.timers.unregister(_drain)
     if _server is not None:
         _server.stop()
         _server = None
         print("Spatial Modeling: stopped the host server")
+    _session = _document = None
     status = "Stopped"
     lan_status = "Off"
 
@@ -175,17 +216,27 @@ def _on_load_post(*_args):
     sync()
 
 
+@persistent
+def _on_save_pre(*_args):
+    if _document is not None:
+        _document.store()  # an Undo may have removed the document ID
+
+
+_HANDLERS = (
+    (bpy.app.handlers.load_pre, _on_load_pre),
+    (bpy.app.handlers.load_post, _on_load_post),
+    (bpy.app.handlers.save_pre, _on_save_pre),
+)
+
+
 def register():
-    bpy.app.handlers.load_pre.append(_on_load_pre)
-    bpy.app.handlers.load_post.append(_on_load_post)
+    for handlers, fn in _HANDLERS:
+        handlers.append(fn)
     sync()
 
 
 def unregister():
-    for handlers, fn in (
-        (bpy.app.handlers.load_pre, _on_load_pre),
-        (bpy.app.handlers.load_post, _on_load_post),
-    ):
+    for handlers, fn in _HANDLERS:
         if fn in handlers:
             handlers.remove(fn)
     stop()

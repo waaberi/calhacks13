@@ -135,9 +135,9 @@ def main():
             code = reply["payload"].get("code") if reply["type"] == "error" else None
             if code == "permission_denied":
                 sys.exit(f"FAIL: the host refused the token ({reply['payload']['message']})")
-            print(f"hello accepted: got {reply['type']}" + (f" {code}" if code else ""))
-            if reply["type"] == "error" and code != "unknown_type":  # unknown_type: no hello yet
-                sys.exit(f"FAIL: {reply['payload']['message']}")
+            if reply["type"] == "error":  # the token was right, but the host refused the hello
+                sys.exit(f"FAIL: {code}: {reply['payload']['message']}")
+            print(f"hello accepted: got {reply['type']}")  # welcome
         ping = protocol.message("ping")
         started = time.perf_counter()
         client.send(ping)

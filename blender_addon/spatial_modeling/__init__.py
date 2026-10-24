@@ -74,6 +74,9 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
         ),
         update=_restart,
     )
+    # The hosting session's ID (welcome.session_id), made on first start and kept with
+    # the token so it survives restarts. Not secret, and not shown.
+    session_id: bpy.props.StringProperty(name="Session ID")
 
     def draw(self, context):
         layout = self.layout
@@ -82,6 +85,8 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
             layout.label(text=host.status)
             return
         layout.label(text=f"VR app: {host.status}")
+        for actor in host.participants():
+            layout.label(text=f"Connected: {actor['name']} ({actor['role']})", icon="USER")
         box = layout.box()
         box.prop(self, "lan_enabled")
         col = box.column()
