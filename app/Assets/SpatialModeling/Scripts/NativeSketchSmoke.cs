@@ -109,7 +109,7 @@ namespace SpatialModeling
             const string name = "Sketch ownership test participant";
             int port = int.Parse(Environment.GetEnvironmentVariable("CALHACKS_HOST_PORT"));
             ownershipPeer = new HostLink("127.0.0.1", port, new JObject { ["role"] = "vr", ["name"] = name,
-                ["app"] = new JObject { ["name"] = "Native sketch ownership smoke", ["version"] = "1" } });
+                ["app"] = new JObject { ["name"] = "Native sketch ownership smoke", ["version"] = Application.version } });
             double until = Time.realtimeSinceStartupAsDouble + 10;
             while (peerWelcome == null && Time.realtimeSinceStartupAsDouble < until) yield return null;
             if (peerWelcome == null) { Fail("Second local sketch editor did not join"); yield break; }
