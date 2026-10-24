@@ -177,9 +177,17 @@ namespace SpatialModeling
         {
             if (!Ready || !SceneCurrent || !CanEdit || OutcomeUnknown || Busy) return Reject("Wait for a current editable scene and the previous receipt");
             if (targeted && Selected == null) return Reject("Select the native target first");
+            JObject targetRecord = null;
+            if (targeted)
+            {
+                bool sketch = op.StartsWith("sketch.", StringComparison.Ordinal);
+                var targets = sketch ? Sketches : Objects;
+                if (!targets.TryGetValue(SelectedId, out targetRecord))
+                    return Reject(sketch ? "Select a native sketch for Sketch tools" : "Select a native object; edit sketches through Sketch tools");
+            }
             var p = (JObject)identity.DeepClone();
             p["base_revision"] = Revision; p["source"] = "ui"; p["op"] = op; p["args"] = args.DeepClone();
-            if (targeted) p["target"] = new JObject { ["id"] = SelectedId, ["generation"] = Selected["generation"] };
+            if (targeted) p["target"] = new JObject { ["id"] = SelectedId, ["generation"] = targetRecord["generation"] };
             Draft = p;
             Notice = "Draft only. Apply changes Blender; Cancel discards it.";
             Changed?.Invoke();
