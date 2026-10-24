@@ -22,6 +22,7 @@ namespace SpatialModeling
         public Action<WorkspaceNativeMenu> BuildSketchPage;
         public string Page { get; private set; } = "home";
         NativeEditBridge bridge;
+        HostScene workspace;
         RectTransform panel, content;
         Text feedback, selected, heading;
         Font font;
@@ -46,6 +47,7 @@ namespace SpatialModeling
         {
             Current = this;
             bridge = GetComponent<NativeEditBridge>();
+            workspace = FindFirstObjectByType<HostScene>();
             Session.Changed += Refresh;
             WorkspaceHandPreference.Changed += Rebind;
             font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
@@ -61,7 +63,7 @@ namespace SpatialModeling
             string offHand = WorkspaceHandPreference.Left ? "RightHand" : "LeftHand";
             toggle.AddBinding("<XRController>{" + offHand + "}/thumbstickClicked");
             toggle.AddBinding("<Keyboard>/f3");
-            toggle.performed += _ => { Visible = !Visible; panel.gameObject.SetActive(Visible); };
+            toggle.performed += _ => SetVisible(!Visible);
             toggle.Enable();
             heldTracked = false;
             FindFirstObjectByType<WorkspaceInteraction>()?.CancelGrabs();
@@ -74,6 +76,7 @@ namespace SpatialModeling
             Session.Changed -= Refresh;
             WorkspaceHandPreference.Changed -= Rebind;
             if (Current == this) Current = null;
+            if (workspace != null && workspace.Table != null) workspace.Table.SetControlsSuppressed(false);
             if (panel != null) Destroy(panel.gameObject);
         }
 
@@ -94,7 +97,8 @@ namespace SpatialModeling
 
         void LateUpdate()
         {
-            if (panel == null || Camera.main == null || !Visible) return;
+            if (panel == null || Camera.main == null) return;
+            if (!UpdatePresentation()) return;
             if (Pinned) return;
             if (heldTracked)
             {
@@ -109,6 +113,22 @@ namespace SpatialModeling
                 panel.position = camera.position + camera.forward * 0.85f - camera.right * 0.42f - Vector3.up * 0.1f;
                 panel.rotation = Quaternion.LookRotation(panel.position - camera.position, Vector3.up);
             }
+        }
+
+        void SetVisible(bool show)
+        {
+            Visible = show;
+            if (show) SelectingNative = true;
+            UpdatePresentation();
+            Refresh();
+        }
+        bool UpdatePresentation()
+        {
+            bool placed = workspace == null || workspace.Table == null || workspace.Table.IsPlaced;
+            bool presented = Visible && placed;
+            if (panel != null) panel.gameObject.SetActive(presented);
+            if (workspace != null && workspace.Table != null) workspace.Table.SetControlsSuppressed(presented);
+            return presented;
         }
 
         public void UpdateMenuHand(XRNode hand, Pose pose)
@@ -150,7 +170,7 @@ namespace SpatialModeling
         {
             ClearPage("home", "Edit Blender · native commands");
             ButtonAt("Select next", 24, 0, 275, () => CycleTarget(false));
-            ButtonAt("Arrange view", 333, 0, 275, () => { SelectingNative = false; Session.Cancel(); FindFirstObjectByType<WorkspaceInteraction>()?.CancelGrabs(); Home(); });
+            ButtonAt("Arrange view", 333, 0, 275, () => { SelectingNative = false; Session.Cancel(); FindFirstObjectByType<WorkspaceInteraction>()?.CancelGrabs(); SetVisible(false); });
             ButtonAt(Pinned ? "Hold menu" : "Pin menu", 642, 0, 275, () => { Pinned = !Pinned; Home(); });
             ButtonAt("Cube", 24, 85, 275, () => Tool("object.add", "cube"));
             ButtonAt("Sphere", 333, 85, 275, () => Tool("object.add", "sphere"));
@@ -175,7 +195,7 @@ namespace SpatialModeling
             ClearPage("settings", "Settings");
             ButtonAt("Right hand", 24, 0, 425, () => { WorkspaceHandPreference.SetLeft(false); Settings(); });
             ButtonAt("Left hand", 485, 0, 425, () => { WorkspaceHandPreference.SetLeft(true); Settings(); });
-            ButtonAt("Move Table / Recenter", 24, 100, 886, () => FindFirstObjectByType<HostScene>()?.RequestRecenter());
+            ButtonAt("Move Table / Recenter", 24, 100, 886, () => { workspace?.RequestRecenter(); UpdatePresentation(); });
             ButtonAt("Show / Hide Blender", 24, 200, 886, () => FindFirstObjectByType<BlenderScreen>()?.Toggle());
             Label(content, "Primary hand points and uses shortcuts. The other hand holds the menu.\nA/X: screen · B/Y: recenter · primary stick click: magnify\nOther stick click: show/hide menu · F3 on desktop", 24, 310, 886, 170, 27);
             ButtonAt("Back", 24, 610, 886, Home);

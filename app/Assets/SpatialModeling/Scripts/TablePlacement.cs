@@ -23,6 +23,7 @@ namespace SpatialModeling
         Transform display, preview, panel;
         float baseScale;
         bool seeded, pointing, cancelAllowed;
+        bool controlsSuppressed;
         Pose savedPose;
         float savedSize, savedHeight, savedDistance, savedYaw;
         Text title;
@@ -180,7 +181,7 @@ namespace SpatialModeling
             if (display == null) return;
             display.localScale = Vector3.one * baseScale * Size;
             display.gameObject.SetActive(IsPlaced);
-            if (panel != null) panel.gameObject.SetActive(seeded);
+            UpdateControlVisibility();
             if (preview != null)
             {
                 preview.SetPositionAndRotation(display.position - Vector3.up * 0.015f, display.rotation);
@@ -188,6 +189,16 @@ namespace SpatialModeling
                 preview.gameObject.SetActive(!IsPlaced && seeded);
             }
         }
+
+        // P3 can present native editing controls without a second panel obscuring
+        // them. Preview/move/confirmation controls always remain available.
+        public void SetControlsSuppressed(bool suppress)
+        {
+            controlsSuppressed = suppress;
+            UpdateControlVisibility();
+        }
+        void UpdateControlVisibility()
+        { if (panel != null) panel.gameObject.SetActive(seeded && (!IsPlaced || !controlsSuppressed)); }
 
         void Update()
         {
@@ -202,10 +213,14 @@ namespace SpatialModeling
             }
             if (!seeded) return; // HostScene supplies the common settled tracked-head pose.
             if (panel == null) CreatePanel();
+            UpdateControlVisibility();
             panel.SetPositionAndRotation(head.TransformPoint(new Vector3(-0.34f, -0.20f, 0.85f)), head.rotation);
             var connection = GetComponent<HostScene>();
             title.text = $"{(IsPlaced ? "Inspect table" : State == PlacementState.ConfirmTrackingReset ? "Tracking reset — confirm placement" : "Choose table position")}" +
                 $"\nHeight {Height:F2} m · distance {Distance:F2} m · size {Size:F2}×\n{connection.ConnectionText}";
+            var nativeMenu = WorkspaceNativeMenu.Current;
+            if (nativeMenu != null && !nativeMenu.Visible)
+                title.text += $"\nClick {(WorkspaceHandPreference.Left ? "right" : "left")} stick / F3 for Edit objects";
             var keyboard = Keyboard.current;
             if (keyboard != null)
             {

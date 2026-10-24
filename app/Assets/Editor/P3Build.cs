@@ -14,6 +14,7 @@ public static class P3Build
         P2Checks.Run();
         NativeEditingChecks.Run();
         NativeHandChecks.Run();
+        NativePanelChecks.Run();
         Debug.Log("P3_NATIVE_MENU_CHECKS PASS receipt correlation, stale drafts, cancellation, late permissions, owner conflict and scene admission");
         Environment.SetEnvironmentVariable("CALHACKS_P1_BUILD_PATH", full);
         P1Build.Windows(); // Real Unity ray/controller/startup/freshness checks and accepted graphics baseline.
