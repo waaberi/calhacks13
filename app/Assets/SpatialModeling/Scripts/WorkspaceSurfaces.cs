@@ -27,7 +27,6 @@ namespace SpatialModeling
         readonly List<Surface> surfaces = new List<Surface>();
         readonly List<Surface> detected = new List<Surface>();
         readonly List<Level> levels = new List<Level>();
-        readonly List<OVRSemanticLabels.Classification> labels = new List<OVRSemanticLabels.Classification>();
         readonly List<XRInputSubsystem> subsystems = new List<XRInputSubsystem>();
         readonly List<LineRenderer> outlines = new List<LineRenderer>();
         readonly HashSet<Guid> invalidLogged = new HashSet<Guid>();
@@ -40,7 +39,7 @@ namespace SpatialModeling
         }
         [Serializable] public sealed class AnchorEvidence
         {
-            public string id,kind,labels;
+            public string id,kind,labels,classifications;
             public Pose trackingPose;
             public bool plane,volume;
             public Rect planeBounds;
@@ -272,7 +271,7 @@ namespace SpatialModeling
         {
             var level=levels.Find(l=>l.Target==target); if(level==null) return desired;
             var result=LevelPose(level.Kind,desired);
-            if(AutomaticEnabled && !free && TryAttachLevel(level.Kind,result,detected,out var source,out var attached))
+            if(AutomaticEnabled && !free && TryAttachLevel(level.Kind,result,detected,out var source,out var attached,level.Replaces))
             {
                 bool changed=level.Replaces!=source.Id;
                 level.Replaces=source.Id;
@@ -287,18 +286,23 @@ namespace SpatialModeling
             local=new Vector3(Mathf.Clamp(local.x,-surface.Size.x*.5f,surface.Size.x*.5f),Mathf.Clamp(local.y,-surface.Size.y*.5f,surface.Size.y*.5f),0);
             return surface.Pose.position+surface.Pose.rotation*local;
         }
-        public static bool TryAttachLevel(string kind,Pose desired,IReadOnlyList<Surface> values,out Surface source,out Pose attached)
+        public static bool TryAttachLevel(string kind,Pose desired,IReadOnlyList<Surface> values,out Surface source,out Pose attached,Guid? preferred=null)
         {
             source=default;attached=desired;float distance=.3f;bool found=false;
+            Surface previous=default;float previousDistance=float.PositiveInfinity;
             foreach(var surface in values)
             {
                 if(surface.Name!=Title(kind)) continue;
                 var point=ClosestPoint(surface,desired.position);
                 float separation=Vector3.Distance(point,desired.position);
+                if(preferred==surface.Id&&separation<.3f) {previous=surface;previousDistance=separation;}
                 if(separation>=distance) continue;
                 distance=separation;source=surface;found=true;
-                attached=LevelPose(kind,new Pose(point+surface.Normal*.003f,surface.Pose.rotation));
             }
+            // Real scans contain overlapping tabletop annotations. Preserve the
+            // chosen anchor until another is meaningfully nearer, including corners.
+            if(found && previousDistance<=distance+.025f) source=previous;
+            if(found) attached=LevelPose(kind,new Pose(ClosestPoint(source,desired.position)+source.Normal*.003f,source.Pose.rotation));
             return found;
         }
         public Transform CreateLevel(string kind, Pose desired, Vector2? size = null, Guid? replaces = null)
@@ -441,12 +445,11 @@ namespace SpatialModeling
                 {
                     string kind = item.Kind;
                     if (kind == null && item.Anchor.TryGetComponent<OVRSemanticLabels>(out var semantic))
-                    {
-                        labels.Clear(); semantic.GetClassifications(labels);
-                        if (labels.Contains(OVRSemanticLabels.Classification.Table)) kind = "Desk";
-                        else if (labels.Contains(OVRSemanticLabels.Classification.Floor)) kind = "Floor";
-                        else if (labels.Contains(OVRSemanticLabels.Classification.WallFace)) kind = "Wall";
-                    }
+                        // SDK GetClassifications doesn't apply the DESK->TABLE alias upgrade
+                        // performed by Labels. Real room capture exposed DESK-only anchors.
+#pragma warning disable CS0618
+                        kind=ClassifyLabels(semantic.Labels);
+#pragma warning restore CS0618
                     if (kind == null) continue;
                     var world = WorkspaceInteraction.ToWorldPose(Origin, new Pose(tracked.Position.Value,tracked.Rotation.Value));
                     Surface surface;
@@ -455,11 +458,7 @@ namespace SpatialModeling
                         surface = DeskTop(world,volume.BoundingBox);
                     else if (item.Anchor.TryGetComponent<OVRBounded2D>(out var plane))
                     {
-                        var bounds = plane.BoundingBox; var center = world.position + world.rotation * new Vector3(bounds.center.x,bounds.center.y,0);
-                        var normal = world.rotation * Vector3.forward;
-                        var toward = kind != "Wall" ? Vector3.up : (Camera.main != null ? Camera.main.transform.position-center : normal);
-                        if (Vector3.Dot(normal,toward)<0) normal=-normal;
-                        surface = new Surface { Name=kind,Pose=new Pose(center,Quaternion.LookRotation(normal,world.rotation*Vector3.up)),Size=bounds.size };
+                        surface=PlaneFromMeta(kind,world,plane.BoundingBox,Camera.main!=null?Camera.main.transform.position:world.position);
                     }
                     else continue;
                     surface.Id=item.Anchor.Uuid;
@@ -473,7 +472,15 @@ namespace SpatialModeling
                 }
                 catch (Exception error) { if(invalidLogged.Add(item.Anchor.Uuid)) Debug.LogWarning("WORKSPACE_SURFACES invalid surface " + error.GetType().Name); }
             }
-            foreach (var item in candidates) if (roomCount == 1 || item.room == currentRoom) detected.Add(item.surface);
+            foreach (var item in candidates)
+            {
+                if(roomCount!=1 && item.room!=currentRoom) continue;
+                // A legacy DESK alias can also describe a nearly coplanar floor patch.
+                // Keep it as floor support, not the preferred tabletop under the wearer.
+                var floor=candidates.Find(c=>c.room==item.room && c.surface.Name=="Floor");
+                if(item.surface.Name=="Desk" && floor.surface.Name!=null && !AboveFloor(item.surface,floor.surface)) continue;
+                detected.Add(item.surface);
+            }
             var counts=Counts(detected);
             if(counts!=lastCounts) { lastCounts=counts; Debug.Log("WORKSPACE_SURFACES localized " + counts); }
             if (!loading && anchors.Count > 0) message = detected.Count > 0 ? "Automatic surfaces · adjust if needed" : "Room not localized · look around or use a level";
@@ -481,6 +488,26 @@ namespace SpatialModeling
                 UpdateLabel(level);
             RebuildSurfaces(); RefreshVisuals();
             WriteRoomEvidence();
+        }
+        public static string ClassifyLabels(string value)
+        {
+            if(string.IsNullOrEmpty(value)) return null;
+            var names=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach(var name in value.Split(',')) names.Add(name.Trim());
+            if(names.Contains("DESK")||names.Contains("TABLE")) return "Desk";
+            if(names.Contains("FLOOR")) return "Floor";
+            if(names.Contains("WALL_FACE")||names.Contains("WALL")||names.Contains("INNER_WALL_FACE")) return "Wall";
+            return null;
+        }
+        public static bool AboveFloor(Surface desk,Surface floor)
+            => Vector3.Dot(desk.Pose.position-floor.Pose.position,floor.Normal)>.1f;
+        public static Surface PlaneFromMeta(string kind,Pose world,Rect bounds,Vector3 eye)
+        {
+            var center=world.position+world.rotation*new Vector3(bounds.center.x,bounds.center.y,0);
+            var normal=world.rotation*Vector3.forward;
+            var toward=kind=="Wall"?eye-center:Vector3.up;
+            if(Vector3.Dot(normal,toward)<0) normal=-normal;
+            return new Surface {Name=kind,Pose=new Pose(center,Quaternion.LookRotation(normal,world.rotation*Vector3.up)),Size=bounds.size};
         }
         void WriteRoomEvidence()
         {
@@ -503,7 +530,9 @@ namespace SpatialModeling
                 if(!item.Locatable.TryGetSceneAnchorPose(out var pose)||!pose.Position.HasValue||!pose.Rotation.HasValue) continue;
                 var entry=new AnchorEvidence {id=item.Anchor.Uuid.ToString(),kind=item.Kind,
                     trackingPose=new Pose(pose.Position.Value,pose.Rotation.Value)};
-                try { if(item.Anchor.TryGetComponent<OVRSemanticLabels>(out var semantic)) entry.labels=semantic.Labels; } catch(Exception) {entry.labels="unavailable";}
+                try { if(item.Anchor.TryGetComponent<OVRSemanticLabels>(out var semantic))
+                    { entry.labels=semantic.Labels;var values=new List<OVRSemanticLabels.Classification>();semantic.GetClassifications(values);entry.classifications=string.Join(",",values); }
+                } catch(Exception) {entry.labels="unavailable";}
                 try { if(item.Anchor.TryGetComponent<OVRBounded2D>(out var plane)) {entry.planeBounds=plane.BoundingBox;entry.plane=true;} } catch(InvalidOperationException) {entry.plane=false;}
                 try { if(item.Anchor.TryGetComponent<OVRBounded3D>(out var volume)) {entry.volumeBounds=volume.BoundingBox;entry.volume=true;} } catch(InvalidOperationException) {entry.volume=false;}
                 data.anchors.Add(entry);

@@ -12,6 +12,71 @@ public static class ArrangementChecks
 {
     static void Check(bool value,string message) { if(!value) throw new Exception("Arrange: "+message); }
     static void Near(Vector3 a,Vector3 b,string message) => Check(Vector3.Distance(a,b)<.0001f,message);
+    public static void VerifyRecordedRoom()
+    {
+        string path=Environment.GetEnvironmentVariable("CALHACKS_ROOM_REPLAY");
+        if(string.IsNullOrEmpty(path)) return;
+        var data=JsonUtility.FromJson<WorkspaceSurfaces.RoomEvidence>(File.ReadAllText(path));
+        Check(data!=null&&data.anchors.Count>0,"actual saved-room evidence must be readable");
+        float headError=Vector3.Distance(data.metaHead.position,data.unityHead.position);
+        float angleError=Quaternion.Angle(data.metaHead.rotation,data.unityHead.rotation);
+        Check(headError<.02f&&angleError<1,"real Meta and Unity head references agree; do not invent a coordinate correction");
+        var room=new GameObject("Actual Meta room replay");room.SetActive(false);
+        try
+        {
+            room.transform.SetPositionAndRotation(data.originWorld.position,data.originWorld.rotation);
+            Near(WorkspaceInteraction.ToWorldPose(room.transform,data.unityHead).position,data.cameraWorld.position,"captured Unity tracking origin matches actual rendered camera");
+            var surfaces=new List<WorkspaceSurfaces.Surface>();
+            foreach(var anchor in data.anchors)
+            {
+                string kind=string.IsNullOrEmpty(anchor.kind)?WorkspaceSurfaces.ClassifyLabels(anchor.labels):anchor.kind;
+                if(kind==null) continue;
+                var world=WorkspaceInteraction.ToWorldPose(room.transform,anchor.trackingPose);
+                WorkspaceSurfaces.Surface surface;
+                if(kind=="Desk"&&anchor.volume) surface=WorkspaceSurfaces.DeskTop(world,anchor.volumeBounds);
+                else if(anchor.plane) surface=WorkspaceSurfaces.PlaneFromMeta(kind,world,anchor.planeBounds,data.cameraWorld.position);
+                else continue;
+                surface.Id=Guid.Parse(anchor.id);surfaces.Add(surface);
+                if(kind=="Wall")
+                {
+                    Check(Mathf.Abs(Vector3.Dot(surface.Normal,Vector3.up))<.005f,"actual wall normal stays horizontal");
+                    // Match all four rendered corners against the SDK's exact anchor/bounds
+                    // convention, including its scene handedness conversion and off-centre Rect.
+                    foreach(var corner in new[]{new Vector2(-1,-1),new Vector2(-1,1),new Vector2(1,-1),new Vector2(1,1)})
+                    {
+                        var original=world.position+world.rotation*new Vector3(anchor.planeBounds.center.x+corner.x*anchor.planeBounds.width*.5f,
+                            anchor.planeBounds.center.y+corner.y*anchor.planeBounds.height*.5f,0);
+                        var local=Quaternion.Inverse(surface.Pose.rotation)*(original-surface.Pose.position);
+                        Check(Mathf.Abs(local.z)<.0001f&&Mathf.Abs(Mathf.Abs(local.x)-surface.Size.x*.5f)<.0001f
+                            &&Mathf.Abs(Mathf.Abs(local.y)-surface.Size.y*.5f)<.0001f,"actual rendered wall corners exactly match Meta data");
+                    }
+                }
+                if(kind=="Desk") Check(surface.Normal.y>.999f,"actual tabletop from volume is gravity-facing top");
+            }
+            var floor=surfaces.Single(s=>s.Name=="Floor");
+            surfaces.RemoveAll(s=>s.Name=="Desk"&&!WorkspaceSurfaces.AboveFloor(s,floor));
+            Check(surfaces.Count(s=>s.Name=="Wall")==4&&surfaces.Count(s=>s.Name=="Desk")==3,"actual room replay recovers three real desks, four walls, and excludes mislabeled floor patch");
+            var arrangement=room.AddComponent<WorkspaceArrangement>();
+            typeof(WorkspaceArrangement).GetMethod("Awake",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(arrangement,null);
+            var detected=(List<WorkspaceSurfaces.Surface>)typeof(WorkspaceSurfaces).GetField("detected",BindingFlags.Instance|BindingFlags.NonPublic).GetValue(arrangement.Surfaces);
+            detected.AddRange(surfaces);
+            foreach(var source in surfaces.Where(s=>s.Name=="Desk"||s.Name=="Wall"))
+            {
+                string kind=source.Name.ToLowerInvariant();
+                var wrong=new Pose(source.Pose.position+source.Normal*.08f,Quaternion.Euler(23,51,17));
+                var guide=arrangement.Surfaces.CreateLevel(kind,wrong,source.Size,source.Id);
+                var attached=arrangement.Apply(guide,wrong,wrong,false,false);
+                var expected=WorkspaceSurfaces.LevelPose(kind,source.Pose);
+                Check(Vector3.Distance(attached.position,source.Pose.position+source.Normal*.003f)<.001f,
+                    "actual guide path attaches to actual Meta surface");
+                Check(Quaternion.Angle(attached.rotation,expected.rotation)<.05f,"actual guide path uses selected Meta wall/table orientation");
+                Check(kind!="desk"||Vector3.Dot(attached.rotation*Vector3.forward,Vector3.up)>.99999f,"actual desk guide remains exactly horizontal");
+                arrangement.Surfaces.ClearLevels();
+            }
+            Debug.Log("META_ROOM_REPLAY PASS actual_anchors="+data.anchors.Count+" walls=4 desks=3 floor=1 head_position_error_m="+headError.ToString("F7")+" head_angle_error_deg="+angleError.ToString("F5")+" sdk_wall_corners=True guide_attachment=True desk_horizontal=True");
+        }
+        finally {UnityEngine.Object.DestroyImmediate(room);}
+    }
     public static void Run()
     {
         var bounds=new Bounds(new Vector3(.2f,.1f,0),new Vector3(.4f,.2f,.3f));
@@ -19,6 +84,8 @@ public static class ArrangementChecks
         var before=new Pose(new Vector3(0,.85f,0),Quaternion.identity);
         var desired=new Pose(new Vector3(.1f,.65f,0),Quaternion.Euler(0,37,0));
         desk.Id=Guid.NewGuid();
+        Check(WorkspaceSurfaces.ClassifyLabels("DESK")=="Desk"&&WorkspaceSurfaces.ClassifyLabels("TABLE")=="Desk"
+            &&WorkspaceSurfaces.ClassifyLabels(" desk, TABLE ")=="Desk","legacy DESK and modern TABLE are equivalent actual scene labels");
         // Menu attention must not define the guide frame. Replay sideward/downward
         // menu gaze against a previously settled workspace at several room headings.
         foreach(float heading in new[]{0f,73f,180f,-120f})

@@ -243,6 +243,7 @@ public static class P2Checks
     {
         Run();
         ArrangementChecks.Run();
+        ArrangementChecks.VerifyRecordedRoom();
         var output=Environment.GetEnvironmentVariable("CALHACKS_P2_BUILD_PATH");
         if (string.IsNullOrWhiteSpace(output)) throw new Exception("Set CALHACKS_P2_BUILD_PATH outside the repository");
         // Run the cumulative real P1 interaction, both pose formats, startup,
