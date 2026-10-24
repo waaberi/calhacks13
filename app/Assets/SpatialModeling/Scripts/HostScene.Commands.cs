@@ -42,8 +42,12 @@ namespace SpatialModeling
                     break;
                 case HostEventKind.Closed:
                     canEdit = false;
-                    pendingOps.Clear();     // an unknown outcome is never replayed
                     if (wasConnected) ConnectionLost?.Invoke();
+                    // contracts/README.md, Outcomes: a connection lost before the result is an unknown outcome.
+                    // Report it (never replay it), so the sender can say "check the model".
+                    foreach (var re in new List<string>(pendingOps.Keys))
+                        Answer(re, null, "unknown", "", "The connection closed before Blender answered.", null);
+                    pendingOps.Clear();
                     break;
                 case HostEventKind.Scene:
                     if (e.Snapshot) generations.Clear();
@@ -101,6 +105,9 @@ namespace SpatialModeling
             if (id != null) pendingOps[id] = op;
             return id;
         }
+
+        // The object is in the current scene (its generation is known, so a command can target it).
+        public bool HasObject(string id) => id != null && generations.ContainsKey(id);
 
         // (object ID, name) of every object that is shown with a mesh: what the voice grammar may refer to.
         public void GetShownObjects(List<KeyValuePair<string, string>> into)

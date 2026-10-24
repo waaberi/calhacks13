@@ -41,10 +41,12 @@ namespace SpatialModeling
         readonly HashSet<string> voiceRequests = new HashSet<string>();
         float noteUntil;
 
-        VoiceCommand deleteWaiting;
-        float deleteUntil;
+        VoiceCommand deleteWaiting;      // a complete Delete, until the controller confirms it
+        DateTime deleteExpiresAt;
         string pointerId;
         string typed = "";
+        string shownError;                // the VoiceInput error already shown, so it isn't repeated every 4 s
+        string grammarNames;              // the names the recognizer grammar was last built from
 
         InputAction talk, confirm, cancel;
 
@@ -76,15 +78,22 @@ namespace SpatialModeling
             talk.started += _ => { Debug.Log("TALK down. ready=" + input?.Ready + " error=" + input?.Error); input?.StartUtterance(); };
             talk.canceled += _ => { Debug.Log("TALK up"); input?.StopUtterance(); };
             confirm.started += _ => ConfirmDelete();
-            cancel.started += _ => Handle(session.Cancel());
+            cancel.started += _ => CancelPressed();
             talk.Enable(); confirm.Enable(); cancel.Enable();
         }
 
         void Start()
         {
             host.SceneChanged += OnScene;
-            host.ConnectionLost += () => Handle(session.ConnectionLost());
-            host.DocumentChanged += () => Handle(session.DocumentChanged());
+            host.ConnectionLost += () => { DropDelete(Prompt.ConnectionLost); Handle(session.ConnectionLost()); };
+            host.DocumentChanged += () =>
+            {
+                // contracts/README.md, Wrong document: drop everything held for the old document. Object IDs survive
+                // a reopen, so a waiting delete would otherwise hit the same object in the reopened file.
+                DropDelete(Prompt.DocumentChanged);
+                pointerId = null;   // the session forgets its pointer; report it again even if the gaze stays put
+                Handle(session.DocumentChanged());
+            };
             host.CommandAnswered += OnAnswered;
             StartCoroutine(PlayLoop());
             StartVoice();
@@ -122,7 +131,12 @@ namespace SpatialModeling
             PumpMic();
             if (input != null)
             {
-                if (input.Error != null && Time.time > noteUntil) Note("Voice off: " + input.Error);
+                if (input.Error != null && input.Error != shownError)
+                {
+                    shownError = input.Error;
+                    Debug.LogWarning("VoiceUiAdapter: voice off: " + input.Error);
+                    Note("Voice off: " + input.Error);
+                }
                 while (input.TryGetResult(out RecognitionResult result))
                 {
                     Debug.Log("HEARD: " + result);
@@ -133,10 +147,12 @@ namespace SpatialModeling
             Handle(session.Tick());
             UpdatePointer();
 
+            if (deleteWaiting != null && DateTime.UtcNow >= deleteExpiresAt) DropDelete(Prompt.TimedOut);
             PendingCommand pending = session.Pending;
-            if (pending != null) panel.Show(pending); else if (panel.Visible) panel.Hide();
+            if (pending != null) panel.Show(pending);
+            else if (deleteWaiting != null) panel.ShowDelete(deleteWaiting.ToString(), deleteExpiresAt);
+            else if (panel.Visible) panel.Hide();
 
-            if (deleteWaiting != null && Time.time > deleteUntil) deleteWaiting = null;
             if (feedback.gameObject.activeSelf && Time.time > noteUntil && prompts.Count == 0)
                 feedback.gameObject.SetActive(false);
             PlaceFeedback();
@@ -206,17 +222,32 @@ namespace SpatialModeling
             var shown = new List<KeyValuePair<string, string>>();
             host.GetShownObjects(shown);
             var list = new List<SceneObject>();
-            foreach (var o in shown) list.Add(MakeObject(o.Key, o.Value));
+            var names = new List<string>();
+            bool deleteTargetShown = false;
+            foreach (var o in shown)
+            {
+                list.Add(MakeObject(o.Key, o.Value));
+                names.Add(o.Value);
+                if (deleteWaiting != null && o.Key == deleteWaiting.TargetId) deleteTargetShown = true;
+            }
+            if (deleteWaiting != null && !deleteTargetShown) DropDelete(Prompt.TargetDeleted);
             Handle(session.SetObjects(list));
-            input?.SetGrammar(session.GrammarPhrases());
+            // Only when the names change (voice/README.md): a host drag sends up to 20 updates a second, and every
+            // new grammar makes Vosk build a new recognizer.
+            string key = string.Join("\n", names);
+            if (key != grammarNames) { grammarNames = key; input?.SetGrammar(session.GrammarPhrases()); }
         }
 
         // ---------- turns, sending ----------
 
         void Handle(VoiceTurn turn)
         {
-            foreach (Prompt p in turn.Prompts) Enqueue(p, null);
             VoiceCommand vc = turn.Command;
+            // A new command (complete, or a question about one) replaces a delete that waits for its confirmation,
+            // as VoiceSession does with its own pending command. Cancel cancels it instead (CancelPressed).
+            if (deleteWaiting != null && (vc != null ? vc.Kind != CommandKind.Cancel : session.Pending != null))
+                DropDelete(Prompt.ReplacedPending);
+            foreach (Prompt p in turn.Prompts) Enqueue(p, null);
             if (vc == null) return;
 
             HostCommand command = HostCommand.From(vc);
@@ -225,17 +256,31 @@ namespace SpatialModeling
                 if (vc.Kind == CommandKind.Select && vc.TargetId != null)
                     Handle(session.SetSelection(new[] { vc.TargetId }));
                 else if (vc.Kind == CommandKind.Cancel)
-                    Handle(session.Cancel());
+                    CancelPressed();
                 return;
             }
             if (vc.RequiresConfirmation)
             {
                 deleteWaiting = vc;
-                deleteUntil = Time.time + 15f;
+                deleteExpiresAt = DateTime.UtcNow.AddSeconds(15);
                 Enqueue(Prompt.ConfirmDelete, null);
                 return;
             }
             Send(command);
+        }
+
+        // Left trigger, Esc, or "cancel": drops the delete waiting for its confirmation and the pending command.
+        void CancelPressed()
+        {
+            DropDelete(Prompt.Cancelled);
+            Handle(session.Cancel());
+        }
+
+        void DropDelete(Prompt why)
+        {
+            if (deleteWaiting == null) return;
+            deleteWaiting = null;
+            Enqueue(why, null);
         }
 
         void ConfirmDelete()
@@ -248,10 +293,14 @@ namespace SpatialModeling
 
         void Send(HostCommand c)
         {
-            string id = host.CanSend
-                ? host.SendCommand(c.Op, c.TargetId, JObject.FromObject(c.Args), HostCommand.Source)
-                : null;
-            if (id == null) { Enqueue(Prompt.NotConnected, null); return; }
+            if (!host.CanSend) { Enqueue(Prompt.NotConnected, null); return; }
+            string id = host.SendCommand(c.Op, c.TargetId, JObject.FromObject(c.Args), HostCommand.Source);
+            if (id == null)
+            {
+                // Connected but not sent: the target is no longer in the scene, or the socket just failed.
+                Enqueue(c.TargetId != null && !host.HasObject(c.TargetId) ? Prompt.TargetDeleted : Prompt.NotConnected, null);
+                return;
+            }
             voiceRequests.Add(id);
         }
 

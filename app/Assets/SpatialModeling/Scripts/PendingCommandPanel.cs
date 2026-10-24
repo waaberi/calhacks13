@@ -13,6 +13,8 @@ namespace SpatialModeling
 
         TextMesh text;
         PendingCommand pending;
+        string deleting;                             // a Delete waiting for the controller confirmation
+        DateTime expiresAt;                          // UTC, like the session clock
 
         void Awake()
         {
@@ -25,24 +27,42 @@ namespace SpatialModeling
             Hide();
         }
 
-        public bool Visible => pending != null;
+        public bool Visible => pending != null || deleting != null;
 
-        public void Show(PendingCommand p) { pending = p; gameObject.SetActive(true); Refresh(); }
+        public void Show(PendingCommand p)
+        {
+            pending = p; deleting = null; expiresAt = p.ExpiresAt;
+            gameObject.SetActive(true);
+            Refresh();
+        }
 
-        public void Hide() { pending = null; gameObject.SetActive(false); }
+        // The confirmation stays visible for as long as the trigger would still delete.
+        public void ShowDelete(string command, DateTime expiresAtUtc)
+        {
+            pending = null; deleting = command; expiresAt = expiresAtUtc;
+            gameObject.SetActive(true);
+            Refresh();
+        }
+
+        public void Hide() { pending = null; deleting = null; gameObject.SetActive(false); }
 
         void Refresh()
         {
-            if (pending == null) return;
-            double left = Math.Max(0, (pending.ExpiresAt - DateTime.UtcNow).TotalSeconds);
-            text.text = "Pending: " + pending.Command + "\n" +
-                        "Missing: " + pending.Missing + "\n" +
-                        "Select a target, or Cancel (" + left.ToString("0") + "s)";
+            string left = Math.Max(0, (expiresAt - DateTime.UtcNow).TotalSeconds).ToString("0") + "s";
+            if (deleting != null)
+                text.text = deleting + "?\n" +
+                            "Confirm: right trigger (`)\n" +
+                            "Cancel: left trigger (Esc) (" + left + ")";
+            else if (pending != null)
+                text.text = "Pending: " + pending.Command + "\n" +
+                            "Missing: " + pending.Missing + "\n" +
+                            ((pending.Missing & MissingFields.Target) != 0 ? "Select or look at the object" : "Say the missing value") +
+                            ", or cancel: left trigger (Esc) (" + left + ")";
         }
 
         void LateUpdate()
         {
-            if (pending == null) return;
+            if (!Visible) return;
             if (head == null && Camera.main != null) head = Camera.main.transform;
             if (head == null) return;
             transform.position = head.TransformPoint(offset);
