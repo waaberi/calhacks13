@@ -1,5 +1,11 @@
 # Spatial Modeling
 
+![Blender 5.2](https://img.shields.io/badge/Blender-5.2-E87D0D?logo=blender&logoColor=white)
+![Unity 6](https://img.shields.io/badge/Unity-6-000000?logo=unity&logoColor=white)
+![Meta Quest 3S](https://img.shields.io/badge/Meta_Quest-3S-0467DF?logo=meta&logoColor=white)
+![SpacetimeDB](https://img.shields.io/badge/SpacetimeDB-session_state-5B3FD9)
+![CalHacks 13](https://img.shields.io/badge/CalHacks-13-FDB515)
+
 Edit a real Blender file in VR. A Quest headset shows your scene on a table in your room, and every change you make there is applied by Blender itself as an ordinary Undo step. A second person can edit the same file from Blender on another PC at the same time.
 
 Built at CalHacks 13 by Waaberi Ibrahim, Lee Jae-yeon, Jihyeon and Talia.
@@ -47,9 +53,18 @@ flowchart LR
 
 ## Status
 
-Working on `main`: live scene sync from Blender to VR, the host command path with Undo/Redo/Save, edit locks that also stop Blender's own tools, recovery after reconnects and host restarts, the encrypted link for the second Blender, and VoiceCore.
-
-In open PRs: editing from VR with the hand menu, edit modes and lock warnings in VR, CAD sketches, voice in the headset, editing from the second PC, and the Blender screen panel.
+- [x] Live scene sync from Blender to VR, on a table you place
+- [x] Host command path with native Undo, Redo and Save
+- [x] Edit locks, including ones that stop Blender's own tools
+- [x] Recovery after reconnects and host restarts
+- [x] Encrypted LAN link for the second Blender
+- [x] VoiceCore: offline recognition and follow-up questions
+- [ ] Editing from VR with the hand menu (PR open)
+- [ ] Edit modes and lock warnings in VR (PR open)
+- [ ] CAD sketches with constraints (PR open)
+- [ ] Voice in the headset
+- [ ] Editing from the second PC
+- [ ] Blender screen panel in VR (PR open)
 
 Progress is on the [project board](https://github.com/users/waaberi/projects/3).
 
