@@ -37,6 +37,8 @@ public static class NativePanelChecks
             var pose = new Pose(scene.Placement.position, scene.Placement.rotation);
             var size = scene.Placement.localScale;
             Check((bool)present.Invoke(menu, null) && nativePanel.gameObject.activeSelf && !panel.gameObject.activeSelf && scene.Placement.gameObject.activeSelf, "placed table controls must yield to actual native menu while model remains visible");
+            var action = panel.GetComponentsInChildren<TableAction>(true)[0];
+            Check(!table.RaycastControls(new Ray(action.transform.position - action.transform.forward, action.transform.forward), out _), "hidden table controls must not intercept controller rays");
             table.BeginMove();
             Check(!(bool)present.Invoke(menu, null) && !nativePanel.gameObject.activeSelf && panel.gameObject.activeSelf, "Move/Cancel/confirmation must preempt the native menu");
             table.CancelMove();

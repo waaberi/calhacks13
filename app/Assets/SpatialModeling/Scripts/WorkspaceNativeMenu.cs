@@ -19,6 +19,7 @@ namespace SpatialModeling
         public NativeEditSession Session => bridge.Session;
         public bool Pinned { get; private set; }
         public bool Visible { get; private set; } = true;
+        public bool Presented => panel != null && panel.gameObject.activeInHierarchy;
         public Action<WorkspaceNativeMenu> BuildSketchPage;
         public string Page { get; private set; } = "home";
         NativeEditBridge bridge;
@@ -63,7 +64,7 @@ namespace SpatialModeling
             string offHand = WorkspaceHandPreference.Left ? "RightHand" : "LeftHand";
             toggle.AddBinding("<XRController>{" + offHand + "}/thumbstickClicked");
             toggle.AddBinding("<Keyboard>/f3");
-            toggle.performed += _ => SetVisible(!Visible);
+            toggle.performed += _ => ToggleMenu();
             toggle.Enable();
             heldTracked = false;
             FindFirstObjectByType<WorkspaceInteraction>()?.CancelGrabs();
@@ -122,6 +123,7 @@ namespace SpatialModeling
             UpdatePresentation();
             Refresh();
         }
+        public void ToggleMenu() => SetVisible(!Visible);
         bool UpdatePresentation()
         {
             bool placed = workspace == null || workspace.Table == null || workspace.Table.IsPlaced;

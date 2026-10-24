@@ -81,6 +81,19 @@ namespace SpatialModeling
             menu.Home(); if (!Click("Save") || !Click("Apply")) yield break; yield return Receipt("save"); if (!Success()) yield break;
             report["object_ids"] = new JArray(ids); report["document"] = session.Document.DeepClone();
             report["objects"] = new JArray(session.Objects.Values); report["source"] = Application.buildGUID;
+            long beforePanels = session.Revision;
+            menu.Home(); if (!Click("Arrange view")) yield break;
+            yield return null;
+            if (menu.Visible || menu.Presented || !HasTableControls()) { Fail("Arrange view did not hand control to the table panel"); yield break; }
+            if (!NativeSmokeWorkspace.Capture(Path.ChangeExtension(output, ".arrange.png"))) { Fail("Actual Arrange view camera capture failed"); yield break; }
+            menu.ToggleMenu(); // Exact production callback used by F3 / other-stick binding.
+            if (!menu.Visible || !menu.SelectingNative || !menu.Presented || HasTableControls()) { Fail("One menu toggle did not restore native editing exclusively"); yield break; }
+            if (!Click("Settings") || !Click("Move Table / Recenter")) yield break;
+            if (menu.Presented || scene.Table.IsPlaced || !HasTableControls()) { Fail("Tracking/placement confirmation did not preempt native controls"); yield break; }
+            if (!NativeSmokeWorkspace.Place(scene)) { Fail("Place Table could not return from placement confirmation"); yield break; }
+            yield return null;
+            if (session.Revision != beforePanels) { Fail("Control-panel handoff changed native revision"); yield break; }
+            Step("Edit / Arrange / menu return / placement confirmation", new JObject { ["native_revision_unchanged"] = true, ["arrange_image"] = Path.ChangeExtension(output, ".arrange.png") });
             session.Select(ids[0]);
             menu.Home();
             yield return null;
@@ -91,6 +104,7 @@ namespace SpatialModeling
             yield return new WaitForSecondsRealtime(2); WorkspaceShutdown.Quit(0);
         }
         bool aborted;
+        static bool HasTableControls() { foreach (var action in FindObjectsByType<TableAction>(FindObjectsSortMode.None)) if (action.isActiveAndEnabled) return true; return false; }
         bool Click(string title) { if (menu.SmokeClick(title)) return true; Fail("Missing usable menu control: " + title); return false; }
         IEnumerator Receipt(string name, bool requireApplied = true)
         {
