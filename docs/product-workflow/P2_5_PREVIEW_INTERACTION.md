@@ -53,4 +53,4 @@ The normal P2 launch stays unchanged. A P2.5 build requires this branch's add-on
 
 Do not use the existing P2 headset session to validate this branch without coordination. Existing P2 menu acceptance is retained, not requested again. See [verification and remaining runtime gates](P2_5_RESULTS.md) and [spatial/native integration contract](P2_5_SPATIAL_BRIDGE.md).
 
-The verified Windows candidate is the complete external `artifacts/p25-preview-spatial-v2` directory, built from app source `900b7a7`. Keep its executable, data directory and runtime dependencies together. It has been built and checked without launching a competing Player.
+The preserved P2.5 software checkpoint is the complete external `artifacts/p25-preview-spatial-v6` directory, built from app source `e4d3108`. Keep its executable, data directory and runtime dependencies together. It has been built and checked without launching a competing Player. P2's subsequently published surface controls are being reconciled separately; the results document identifies the later integrated candidate when available.
