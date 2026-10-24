@@ -6,7 +6,75 @@ P2 headset test is requested or repeated by this verification workflow. FPS is
 not an acceptance criterion. A compiler or simulated input pass cannot establish
 that a native Blender button or spatial drawing gesture works in the headset.
 
-## Headless control regression pass
+## Model tools button expansion
+
+The user requested more working buttons while P2 completes. Frozen source
+`129137ada2dfb6fb6fe129788785695e4ebd82e5` adds 18 typed native object actions:
+three primitives, signed XYZ move/turn, inverse uniform scale and explicit-target
+delete. The overlay also provides object selection, step/size choices and the
+existing native history/save/cancel path. No backend, contract, client-role,
+placement, capture or XR configuration change is needed for these buttons.
+
+`NativeObjectTools` only builds drafts around the existing `NativeEditSession`.
+It preserves explicit object UUIDs and generations, waits for delayed created
+records, rejects removed-target fallback and ignores unrelated creation receipts.
+The bridge requires fresh editable Object Mode, completed preview cleanup and no
+native modal/UI reservation. A context loss cancels pending acquisition before a
+late grant can emit an edit, including wrong identity followed by valid recovery.
+
+| New verification | Result | External evidence |
+| --- | --- | --- |
+| Full offline C# compilation and actual managed object controller | Passed | `p25-model-tools-offline2/compile-manifest.json` |
+| Actual `Button.onClick` mappings, bridge/session admission and routing | Passed inside Unity | `p25-model-tools-cumulative2-editor.log` / `p25-model-tools-editor-result.json` |
+| Cumulative P1/P2/arrangement/controller/visual and keyboard-last gates | Passed, exit 0 | Same cumulative Editor result; original gates unchanged |
+| Actual held-input release and native session-end ordering | 2 cases passed | `p25-model-tools-release-http-result.json`; actual sender with fake loopback acknowledgements |
+| Existing actual Unity HTTP regressions on final source | 9 cases passed | `p25-model-tools-http9-result.json` |
+| Native typed handlers, leases and actual Blender outcomes | 602 assertions / 302 receipts passed in four processes | Private create/reopen at units 1/.001; [detailed native cases](P2_5_OBJECT_ACTIONS_NATIVE.md) |
+| Full Python suite | 873 passed, 36 skipped | `p25-model-tools-pytest.log`; skips remain explicit |
+| Capture/input/launcher/bootstrap suite | 77 passed | `p25-model-tools-helper-final.log` |
+| Repository-wide Ruff | Passed | `p25-model-tools-ruff.log` |
+| Final Windows v10 build | Passed, zero errors/exit 0 | `p25-preview-spatial-v10-build-result.json` / build log; every mandatory gate passed, no Player launch |
+
+The current complete Windows candidate is external
+`artifacts/p25-preview-spatial-v10/`. Its manifest records exact source/meta
+hashes, matching cumulative UI/HTTP evidence, final keyboard isolation and all
+prior cumulative gates. The own-Library build used BelowNormal priority and one
+worker. Generated settings were preserved externally, verified as whitespace-only
+changes and restored to the frozen baseline. V9 and prior evidence remain intact.
+
+| Final v10 identity | Value |
+| --- | --- |
+| Frozen app source | `129137ada2dfb6fb6fe129788785695e4ebd82e5` |
+| Git app tree | `38bd73d5918e1ea1119e4f2316e5fb7c51abd3f9` |
+| Managed assembly SHA-256 | `477a5015daf9b816174c015f774987b039b14896c46aa15b55d77771394b3e3e` |
+| Executable SHA-256 | `001aeebfb92718f8b49f0c0e0a03e313c54669552b08e952b2fee3ddd143683a` |
+
+The actual UI gate invokes every new modeling action, history controls, target
+selectors and step selectors. It checks no-target/stale/placement/Edit Mode/modal/
+owner/token/ending/transition/read-only refusals, exact captured command payloads,
+late grants after identity or scene recovery, Cancel and Close, active overlay
+gaps, disabled buttons, nearer occlusion, grip and other-hand priority. The two
+HTTP cases show invalid release acknowledgement keeps Model tools blocked;
+successful release sends `preview.ui.end`, then a matching native ended reply is
+still required before the mode opens. Invalid acknowledgements were deliberately
+simulated; they are not evidence of an actual reconnection failure.
+
+Preserved verification setup failures: the first Editor attempt ignored
+`P25ObjectChecks.cs` because its new meta GUID had 33 characters, yielding CS0103
+before any gate ran. The owner corrected it to a unique 32-character GUID; full
+compilation and the real Editor retry passed. The initial helper invocations used
+incomplete test environments (missing PIL, then windows_capture); the passing
+invocation uses bundled Python 3.12 with existing `capture-deps` on child
+`PYTHONPATH`, without installing/changing packages. Earlier logs are retained.
+These observations and the context-invalidation source repair are recorded in
+[issue 139](https://github.com/waaberi/calhacks13/issues/139#issuecomment-6390355637).
+
+No interactive Blender/helper, desktop input injection, Player or headset was
+launched. Native outcomes and Editor callbacks pass; actual headset reachability,
+readability, button delivery and direct VR drawing remain separate later gates.
+P2's current room reconstruction/registration repair stays with its owner.
+
+## Earlier headless control regression pass (v9)
 
 The user explicitly requested headless testing. This pass launches no interactive
 Blender, capture helper, desktop input injection, Player or headset session. Its
@@ -38,7 +106,7 @@ synchronized input is revoked and cannot POST after this response.
 | Full Python suite and repository-wide Ruff | 873 passed, 36 skipped; Ruff passed | `p25-headless-final-pytest.log` / `p25-headless-final-ruff.log`; explicit skips are not native acceptance |
 | Final Windows v9 build | Passed, zero errors/exit 0 | `p25-preview-spatial-v9-build-result.json` / build log; frozen source `07db58c`, complete mandatory gates, no Player launch |
 
-The current complete runtime directory is external
+The earlier complete runtime directory is external
 `artifacts/p25-preview-spatial-v9/`. It was built headlessly in this worktree's own
 Library, with BelowNormal priority and one worker. All HTTP9 source hashes match
 the frozen build source. Generated settings were preserved to external evidence,
@@ -245,7 +313,7 @@ the testing slot even while its Player is closed.
 
 The pre-integration v6 checkpoint remains preserved at frozen `e4d3108`, DLL
 SHA-256 `1c9ba81a69fe8a1e74d18451f5787433f13e4dc6ef75726317823f87d5717736`,
-with its original build log/result manifest. V9 above is the current headless-verified candidate.
+with its original build log/result manifest. Later candidates are recorded above.
 
 The first v1 build began before the component-disable cleanup repair was frozen
 and picked up that repair during Player compilation. It is retained as a
