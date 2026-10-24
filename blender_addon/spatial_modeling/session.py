@@ -26,7 +26,7 @@ def _manifest_version():
 
 
 APP = {"name": "spatial_modeling", "version": _manifest_version()}
-HOST_NAME = "Host Blender"  # the host's own participant: whoever sits at the host desktop
+HOST_NAME = "Host Blender"  # the host's own participant, unless the host entered "Your name"
 ROLES = ("vr", "blender-client")
 _UUID = re.compile(r"[0-9a-f]{32}")
 _VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?")
@@ -40,6 +40,12 @@ def is_uuid(value):
 
 def _is_name(value):
     return isinstance(value, str) and 1 <= len(value) <= 256
+
+
+def host_name(name):
+    """The host participant's name: the "Your name" preference, or HOST_NAME if it's blank."""
+    name = (name or "").strip()[:256].strip()
+    return name or HOST_NAME
 
 
 def _hello_problem(msg):
@@ -79,14 +85,21 @@ class Session:
     on_change() runs after someone joins or leaves. All run on the main thread.
     The token never reaches this module: server.py checks it and strips it from
     hello first.
+
+    name: the host desktop user's name for its participant (see host_name()).
+    client_can_edit: the add-on preference that lets Client-role connections send
+    commands (P3A-W-3, off by default). welcome's can_edit and conn.can_edit
+    follow it; the Unity app can always edit.
     """
 
-    def __init__(self, document, snapshot, session_id, on_change=None):
+    def __init__(self, document, snapshot, session_id, on_change=None, name=None,
+                 client_can_edit=False):
         self.document = document
         self.snapshot = snapshot
         self.session_id = session_id
         self.host_epoch = uuid.uuid4().hex
-        self.host = {"actor_id": uuid.uuid4().hex, "name": HOST_NAME, "role": "host"}
+        self.host = {"actor_id": uuid.uuid4().hex, "name": host_name(name), "role": "host"}
+        self.client_can_edit = client_can_edit
         self.participants = {}  # joined Connection -> actor, in joining order
         self.on_change = on_change
         self._server = None
@@ -130,16 +143,18 @@ class Session:
             return self._refuse(conn, msg, "wrong_document", text, {"document": current})
 
         actor = {"actor_id": uuid.uuid4().hex, "name": payload["name"], "role": role}
+        can_edit = role == "vr" or self.client_can_edit  # the Client role only behind the flag
         welcome = protocol.message("welcome", {
             "session_id": self.session_id,
             "host_epoch": self.host_epoch,
             "actor_id": actor["actor_id"],
-            "can_edit": role == "vr",  # the Client role stays read-only until P3A-W-3
+            "can_edit": can_edit,
             "app": APP,
             "document": doc,
         }, re=msg["id"])
         conn.send(welcome, protocol.message("scene.snapshot", self.snapshot(doc)))
         conn.joined = True
+        conn.can_edit = can_edit
         self.participants[conn] = actor
         self._changed()
         return None
@@ -147,6 +162,13 @@ class Session:
     def left(self, conn):
         """A connection closed. If it had joined, tell everyone else."""
         if self.participants.pop(conn, None) is not None:
+            self._changed()
+
+    def rename_host(self, name):
+        """Set the host participant's name; everyone gets session.update if it changed."""
+        name = host_name(name)
+        if name != self.host["name"]:
+            self.host = {**self.host, "name": name}
             self._changed()
 
     def session_update(self):
