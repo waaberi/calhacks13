@@ -1,55 +1,15 @@
-# CalHacks 13: Collaborative Blender VR
+# calhacks13
 
-[![CI](https://github.com/waaberi/calhacks13/actions/workflows/ci.yml/badge.svg)](https://github.com/waaberi/calhacks13/actions/workflows/ci.yml)
+Edit a real Blender project in VR on a Quest 3S over Air Link, while a second person edits the same session from desktop Blender.
 
-A Windows VR app for building and editing a real Blender project from a Quest 3S over Air Link. A second person edits the same session from Blender on another PC. Edits in VR update native Blender, and changes made in Blender show up in VR.
+- **Who owns what, and the phases:** [PHASE_PLAN.md](PHASE_PLAN.md). Its technical choices are a starting point, not final.
+- **Tasks:** [project board](https://github.com/users/waaberi/projects/3)
+- **Deadline:** feature freeze Sat Oct 24, 7 pm PT. Everything done by 11 pm PT.
 
-- **Plan:** [PHASE_PLAN.md](PHASE_PLAN.md) covers product behavior, phases, checklists and acceptance.
-- **Board:** [GitHub Project](https://github.com/users/waaberi/projects/3). Each checklist task in the plan is an issue, and each phase is a milestone.
-- **How we work:** [CONTRIBUTING.md](CONTRIBUTING.md) covers branches, merging, tags and file rules.
+## Working in this repo
 
-## Deadlines
-
-| When | Pacific | Toronto |
-| --- | --- | --- |
-| Feature freeze | Sat Oct 24, 7 pm | Sat Oct 24, 10 pm |
-| Final integrated rehearsal | Sat Oct 24, 9 to 11 pm | Sun Oct 25, 12 to 2 am |
-| **Everything done** | **Sat Oct 24, 11 pm** | **Sun Oct 25, 2 am** |
-| Sleep, then pitch prep. Arrive by | Sun Oct 25, 8 am | Sun Oct 25, 11 am |
-| Devpost submissions close | Sun Oct 25, 9 am | Sun Oct 25, 12 pm |
-
-## Repository layout and owners
-
-| Path | Owner |
-| --- | --- |
-| `contracts/`, `host/`, `voice-spec/`, `tests/backend/`, `tests/voice/` | Waaberi |
-| `blender_addon/spatial_modeling/` (except `sketch/` and `remote_client/`) | Waaberi |
-| `app/Assets/SpatialModeling/Scripts/VoiceCore/` | Waaberi |
-| Root Git, CI and `.github/` | Waaberi |
-| `desktop-capture/`, `scripts/windows-release/`, `tests/protocol/`, `tests/security/` | Lee Jae-yeon |
-| `blender_addon/spatial_modeling/sketch/`, `blender_addon/spatial_modeling/remote_client/` | Lee Jae-yeon |
-| `app/` (Unity project, except VoiceCore) | Jihyeon |
-| `samples/mechanical/`, `acceptance/native-reference/`, `docs/product-workflow/`, `docs/demo/` | Talia |
-
-Jihyeon creates the Unity project directly in `app/`. Until then, that folder does not exist.
-
-## Tool versions
-
-These are the initial targets. Verify and lock them in P0, then update this table.
-
-| Tool | Version |
-| --- | --- |
-| Unity | 6000.6.5f1 |
-| Blender | 5.2.2 (bundles Python 3.13) |
-| OpenXR / Meta Horizon Link | to be pinned in P0 |
-| CAD Sketcher and solver | to be pinned in P0 (GPL-3.0) |
-| Speech recognition library and model | to be pinned in P4 |
-
-## Getting started
-
-```sh
-git clone https://github.com/waaberi/calhacks13.git   # outside OneDrive/iCloud/Dropbox
-cd calhacks13
-pip install -r requirements-dev.txt                   # Python 3.13: ruff, pytest, jsonschema
-python .github/scripts/check_repo.py                  # same hygiene checks CI runs
-```
+- Branch off `main` as `codex/<person>-<phase>-<slice>` (e.g. `codex/waaberi-p0-ping`). Open a PR, and merge small working pieces every 60–90 minutes.
+- `main` can't be force-pushed or deleted. Use `git revert` to undo a change.
+- Keep your code in the folders you own (see the ownership table in the plan). Create a folder when you first need it.
+- Unity: commit each asset together with its `.meta` file.
+- Never commit tokens, machine paths or build outputs. `.env` and `*.local.json` are already ignored.
