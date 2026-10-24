@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "voice.grammar_query.schema.json",
+  "title": "voice.grammar_query",
+  "description": "Client to host. Ask for the phrases the recognizer should know; the host answers voice.grammar. A host without voice answers error unknown_type: keep the client's own grammar.",
+  "$ref": "envelope.schema.json",
+  "properties": {
+    "type": { "const": "voice.grammar_query" },
+    "payload": { "type": "object", "additionalProperties": false }
+  }
+}

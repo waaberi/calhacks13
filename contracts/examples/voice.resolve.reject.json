@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "type": "voice.resolve",
+  "id": "0a9b8c7d6e5f44a3b2c1d0e9f8a7b6c5",
+  "payload": {
+    "text": "this is our project",
+    "confidence": 0.71
+  }
+}

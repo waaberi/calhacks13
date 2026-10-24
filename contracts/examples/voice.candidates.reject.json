@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "type": "voice.candidates",
+  "id": "e2a6c3d4f5b64c7d9e0f1a2b3c4d5e6f",
+  "re": "0a9b8c7d6e5f44a3b2c1d0e9f8a7b6c5",
+  "payload": {
+    "resolution": "b1c2d3e4f5a64b7c8d9e0f1a2b3c4d5e",
+    "decision": "reject",
+    "reason": "I don't know that command.",
+    "expires_in": 30,
+    "candidates": []
+  }
+}
