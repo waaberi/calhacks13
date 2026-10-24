@@ -16,10 +16,13 @@ applied by the editor on Blender's main thread and answered with exactly one
    (wrong_document).
 5. The target exists (not_found) and its generation is current; Undo and Redo
    need base_revision to be the current revision (stale_revision).
-6. Leases: none are granted before P3B, so a command naming one gets not_found.
+6. Leases: leases.Leases.check(), right before the write: a named `lease` must
+   be this actor's and cover the target (not_found, permission_denied), and no
+   other participant's lease may cover what would change (lease_conflict).
 7. editor.apply() changes Blender, reads the result back, flushes (scene.update
-   to everyone) and pushes one Undo step; then this module sends `result` to
-   the sender and `activity` to the others, in that order.
+   to everyone) and pushes one Undo step, inside session.commit() so no lease
+   ends halfway; then this module sends `result` to the sender and `activity`
+   to the others, in that order.
 
 The editor (edits.py in Blender, a fake in the tests) provides flush() -> the
 current revision after broadcasting pending scene updates (sync.flush),
@@ -362,12 +365,14 @@ class Commands:
     """Handles `command` and `receipt.query` for a session, on Blender's main thread.
 
     session: the session.Session (participants, identity, broadcast, document and
-    snapshot). editor: see the module docstring.
+    snapshot). editor: see the module docstring. leases: the leases.Leases that
+    step 6 asks; without one nobody holds a lease, so a named lease is not_found.
     """
 
-    def __init__(self, session, editor, max_receipts=None):
+    def __init__(self, session, editor, max_receipts=None, leases=None):
         self.session = session
         self.editor = editor
+        self.leases = leases
         self.max_receipts = MAX_RECEIPTS if max_receipts is None else max_receipts
         self.receipts = OrderedDict()  # request_id -> (payload digest, receipt), oldest first
         self.evicted = False  # the store has dropped receipts: unseen IDs may have been applied
@@ -502,13 +507,18 @@ class Commands:
         if op in HISTORY_OPS and p["base_revision"] != revision:
             return rejected("stale_revision", "The document changed since you last saw it. "
                             "Look again, then retry.", {"revision": revision})
-        # 6. Leases (P3B)
-        if "lease" in p:
-            return rejected("not_found", "That lease doesn't exist; this host grants no leases "
-                            "yet, so leave lease out.")
+        # 6. Leases, immediately before the write
+        if self.leases is not None:
+            refusal = self.leases.check(actor["actor_id"], op, target and target["id"],
+                                        p.get("lease"))
+            if refusal is not None:
+                return rejected(*refusal)
+        elif "lease" in p:
+            return rejected("not_found", "That lease doesn't exist.")
         # 7. Apply, read back, publish (scene.update) and commit as one Undo step
         try:
-            done = self.editor.apply(op, target and target["id"], p["args"])
+            with self.session.commit():
+                done = self.editor.apply(op, target and target["id"], p["args"])
         except Refused as e:
             return rejected(e.code, e.message, e.details)
         except Exception as e:  # including a flush that failed after the change

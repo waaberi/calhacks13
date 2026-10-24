@@ -86,7 +86,11 @@ class Proxy:
                 downstream, _ = self.listener.accept()
             except OSError:
                 return
-            upstream = socket.create_connection(("127.0.0.1", self.upstream))
+            try:
+                upstream = socket.create_connection(("127.0.0.1", self.upstream))
+            except OSError:  # the host has stopped (this or an earlier test): hang up, as it would
+                downstream.close()
+                continue
             self._sockets += [downstream, upstream]
             for src, dst, way in ((downstream, upstream, "up"), (upstream, downstream, "down")):
                 threading.Thread(target=self._pump, args=(number, src, dst, way), daemon=True).start()
@@ -558,10 +562,12 @@ def test_before_welcome_only_hello_and_ping_are_answered():
         again = hello()
         c.send(again)
         assert_error(c.recv(), "invalid_message", again["id"])
-        for kind in ("lease.acquire", "welcome"):
-            msg = protocol.message(kind)
-            c.send(msg)
-            assert_error(c.recv(), "unknown_type", msg["id"])
+        msg = protocol.message("welcome")
+        c.send(msg)
+        assert_error(c.recv(), "unknown_type", msg["id"])
+        msg = protocol.message("lease.acquire")
+        c.send(msg)
+        assert_error(c.recv(), "invalid_message", msg["id"])
 
 
 def test_malformed_lines_get_invalid_message_and_the_connection_stays_open():
@@ -761,6 +767,157 @@ def test_idle_timeout_closes_silent_connections():
         assert [c.recv()["type"] for _ in range(3)] == ["welcome", "scene.snapshot", "session.update"]
         assert c.recv() is None
         assert any("nothing heard" in line for line in host.logs)
+
+
+# Leases, with the real host's rules (tests/backend/test_leases.py checks the host)
+
+
+def lease_acquire(welcome, mode="shared", targets=(), **extra):
+    payload = {k: welcome[k] for k in ("session_id", "host_epoch", "actor_id")}
+    payload.update(document_id=welcome["document"]["id"],
+                   open_epoch=welcome["document"]["open_epoch"], mode=mode,
+                   targets=list(targets), **extra)
+    return protocol.message("lease.acquire", payload)
+
+
+def ask(c, msg):
+    """Send msg; return (the messages before its answer, the answer), all schema-checked."""
+    c.send(msg)
+    before = []
+    while (reply := c.recv()) is not None and reply.get("re") != msg["id"]:
+        assert_valid(reply)
+        before.append(reply)
+    assert_valid(reply)
+    return before, reply
+
+
+def granted_lease(c, welcome, mode="shared", targets=()):
+    before, reply = ask(c, lease_acquire(welcome, mode, targets))
+    assert reply["type"] == "lease.granted", reply
+    assert [m["type"] for m in before] == ["session.update"], before
+    lease = reply["payload"]["lease"]
+    assert lease in before[0]["payload"]["leases"]
+    return lease
+
+
+def next_message(c, kind):
+    msg = c.recv()
+    assert_valid(msg)
+    assert msg["type"] == kind, msg
+    return msg
+
+
+def test_fake_host_leases_cover_children_and_block_others():
+    with running_host() as host:
+        a, wa = welcomed(host.port)
+        b, wb = welcomed(host.port)
+        next_message(a, "session.update")  # b joined
+        lease = granted_lease(a, wa, "shared", [BASE_PLATE])
+        assert lease["targets"] == [BASE_PLATE, SHAFT]  # Shaft is Base plate's child
+        assert lease["owner"]["actor_id"] == wa["actor_id"] and lease["owner"]["name"] == "Talia"
+        assert next_message(b, "session.update")["payload"]["leases"] == [lease]
+
+        _, reply = ask(b, lease_acquire(wb, "shared", [SHAFT]))
+        assert_error(reply, "lease_conflict", reply["re"])
+        assert reply["payload"]["details"]["lease"] == lease
+        assert reply["payload"]["message"] == "Talia is editing this."
+        shaft = {"id": SHAFT, "generation": 0}
+        receipt = result(ask(b, command(wb, "object.move", shaft, {"by": [0.01, 0, 0]}))[1],
+                         "rejected", "lease_conflict")
+        assert receipt["error"]["details"]["lease"] == lease
+        result(ask(b, command(wb, "history.undo"))[1], "rejected", "lease_conflict")
+        result(ask(b, command(wb, "object.add", args={
+            "primitive": "cube", "location": [0, 0, 0], "dimensions": [0.01, 0.01, 0.01]}))[1])
+        camera = granted_lease(b, wb, "shared", [fake_host.CAMERA_ID])
+        assert camera["targets"] == [fake_host.CAMERA_ID]
+        sketch = granted_lease(b, wb, "shared", [SKETCH])  # a sketch is leased whole, by ID
+        assert sketch["targets"] == [SKETCH]
+
+        # Talia's own lease: moves under it, and the lease must be hers and cover the target.
+        _, reply = ask(a, command(wa, "object.move", shaft, {"by": [0.01, 0, 0]},
+                                  lease=lease["lease_id"]))
+        result(reply)
+        _, reply = ask(b, command(wb, "object.delete", {"id": fake_host.CAMERA_ID,
+                                                        "generation": 0}, lease=lease["lease_id"]))
+        assert result(reply, "rejected", "permission_denied")["error"]["message"] == (
+            "That lease is someone else's.")
+        a.close()  # Talia's lease ends with her connection
+        b.sock.settimeout(5)
+        while (msg := b.recv())["type"] != "session.update" or msg["payload"]["leases"] != [
+                camera, sketch]:
+            assert_valid(msg)
+        assert [p["name"] for p in msg["payload"]["participants"]] == [
+            fake_host.HOST_ACTOR["name"], "Talia"]
+        b.close()
+
+
+def test_fake_host_exclusive_release_and_repeats():
+    with running_host() as host:
+        a, wa = welcomed(host.port)
+        b, wb = welcomed(host.port)
+        next_message(a, "session.update")
+        msg = lease_acquire(wa, "exclusive")
+        _, first = ask(a, msg)
+        assert first["type"] == "lease.granted"
+        whole = first["payload"]["lease"]
+        assert whole["targets"] == []
+        next_message(b, "session.update")
+        before, again = ask(a, copy.deepcopy(msg))  # same ID and payload: the same lease
+        assert before == [] and again["payload"] == first["payload"]
+        changed = copy.deepcopy(msg)
+        changed["payload"]["mode"], changed["payload"]["targets"] = "shared", [SHAFT]
+        assert_error(ask(a, changed)[1], "duplicate_request", msg["id"])
+        assert granted_lease(a, wa, "shared", [SHAFT])  # her own leases never conflict
+        next_message(b, "session.update")
+        _, reply = ask(b, lease_acquire(wb, "shared", [fake_host.CAMERA_ID]))
+        assert reply["payload"]["message"] == "Talia is editing the whole document."
+        result(ask(b, command(wb, "document.save"))[1], "rejected", "lease_conflict")
+
+        release = protocol.message("lease.release", {"lease_id": whole["lease_id"]})
+        assert_error(ask(b, release)[1], "permission_denied", release["id"])
+        a.send(release)  # no reply on success
+        for c in (a, b):
+            leases = next_message(c, "session.update")["payload"]["leases"]
+            assert whole["lease_id"] not in [x["lease_id"] for x in leases]
+        assert_error(ask(a, release)[1], "not_found", release["id"])
+        result(ask(b, command(wb, "document.save"))[1])
+        a.close()
+        b.close()
+
+
+def test_fake_client_leases_and_the_started_editing_notice():
+    with proxied() as (_host, proxy), joined(proxy.port, "Talia") as a, \
+            joined(proxy.port, "Jihyeon") as b:
+        reply = a.run("lease base")
+        assert reply["type"] == "lease.granted", reply
+        assert reply["payload"]["lease"]["targets"] == [BASE_PLATE, SHAFT]
+        wait_until(lambda: any("started editing Base plate, Shaft" in line for line in b.output))
+        assert not any("started editing" in line for line in a.output)  # not for your own
+        assert b.run("lease shaft")["payload"]["code"] == "lease_conflict"
+        a.run("release")
+        wait_until(lambda: b.leases == [])
+        assert b.run("lease all")["type"] == "lease.granted"
+        wait_until(lambda: any("started editing the document" in line for line in a.output))
+    assert {("up", "lease.acquire"), ("up", "lease.release"),
+            ("down", "lease.granted")} <= proxy.assert_all_valid()
+
+
+LEASE_CHANGES = [
+    {}, {"payload.mode": "exclusive"}, {"payload.mode": "exclusive", "payload.targets": []},
+    {"payload.targets": []}, {"payload.targets": [SHAFT, SHAFT]}, {"payload.targets": ["x"]},
+    {"payload.mode": "both"}, {"payload.actor_id": None}, {"payload.colour": "pink"},
+]
+
+
+@pytest.mark.parametrize("changes", LEASE_CHANGES)
+def test_lease_checks_agree_with_the_schema(changes):
+    msg = _changed(example("lease.acquire.json"), changes)
+    try:
+        fake_host.check_lease_acquire(msg["payload"])
+        accepted = True
+    except fake_host.Invalid:
+        accepted = False
+    assert accepted == VALIDATORS["lease.acquire"].is_valid(msg)
 
 
 # The scripts, as people run them

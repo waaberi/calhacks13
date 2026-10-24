@@ -1,0 +1,29 @@
+{
+  "v": 1,
+  "type": "result",
+  "id": "5d2e9b1c7a3f4e08b6c1d4a2f9e07b35",
+  "re": "c41f8e2a9b6d4c37a0e5f1b8d2c69a04",
+  "payload": {
+    "request_id": "c41f8e2a9b6d4c37a0e5f1b8d2c69a04",
+    "op": "object.move",
+    "target": "fd7bd4ddae444528a4fedbc562fe018b",
+    "actor": { "actor_id": "be10cd89a4e841e7b708ae9cdbefeb77", "name": "Talia", "role": "vr" },
+    "source": "ui",
+    "outcome": "rejected",
+    "revision": 43,
+    "error": {
+      "code": "lease_conflict",
+      "message": "Lee Jae-yeon is editing this.",
+      "details": {
+        "lease": {
+          "lease_id": "092c1bc6bec64e90927ee8d232ccb9e8",
+          "mode": "shared",
+          "owner": { "actor_id": "cf91fda963c247488874e12161956976", "name": "Lee Jae-yeon", "role": "blender-client" },
+          "targets": ["f21f7d20394f4c02afce7ab1e6f4a1a8", "fd7bd4ddae444528a4fedbc562fe018b"],
+          "acquired_at": 1792875604200
+        }
+      }
+    },
+    "at": 1792875605300
+  }
+}

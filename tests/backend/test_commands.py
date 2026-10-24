@@ -19,6 +19,7 @@ import uuid
 
 import commands
 import lan
+import leases
 import protocol
 import pytest
 import server
@@ -72,6 +73,8 @@ class FakeEditor:
         self.flush_error = None  # raise this from flush()
         self.halfway = None  # an op that raises halfway through
         self.refusal = None  # (code, message) that apply() refuses with
+        self.links = {}  # ID -> IDs that changing it changes too, for linked()
+        self.during_apply = None  # called inside apply(), before the change
         for oid, name in ((PLATE, "Base plate"), (SHAFT, "Shaft")):
             self.objects[oid] = {"id": oid, "name": name, "generation": 0, "location": [0, 0, 0]}
 
@@ -112,8 +115,20 @@ class FakeEditor:
         obj = self.objects.get(oid)
         return None if obj is None else obj["generation"]
 
+    def linked(self, ids):
+        """Like edits.Editor.linked: everything reachable through self.links."""
+        found, queue = set(ids), list(ids)
+        while queue:
+            for oid in self.links.get(queue.pop(), ()):
+                if oid not in found:
+                    found.add(oid)
+                    queue.append(oid)
+        return sorted(found)
+
     def apply(self, op, target, args):
         """Change, then publish like edits.py: the receipt's revision is the flush's."""
+        if self.during_apply is not None:
+            self.during_apply()
         done = self._change(op, target, args)
         done.revision = self.flush()
         return done
@@ -257,6 +272,7 @@ class Peer(Client):
 class Host:
     def __init__(self, srv, sess, cmds, editor):
         self.srv, self.sess, self.cmds, self.editor = srv, sess, cmds, editor
+        self.leases = cmds.leases
 
     def vr(self, name="Talia"):
         peer = Peer(self.srv.port)
@@ -279,8 +295,9 @@ def hosting(editor=None, lan_port=False, **session_args):
                                      roles=("blender-client",)))
     sess = session.Session(editor.describe, editor.snapshot, SESSION_ID, **session_args)
     editor.session = sess
-    cmds = commands.Commands(sess, editor)
-    srv = cmds.attach(sess.attach(server.Server(port=0, extra_listeners=extra)))
+    lses = leases.Leases(sess, editor)
+    cmds = commands.Commands(sess, editor, leases=lses)
+    srv = lses.attach(cmds.attach(sess.attach(server.Server(port=0, extra_listeners=extra))))
     srv.start()
     stop = threading.Event()
 
@@ -556,7 +573,7 @@ def test_nothing_to_undo_is_failed():
         other.assert_quiet()
 
 
-def test_a_lease_is_not_found_before_p3b():
+def test_a_lease_nobody_holds_is_not_found():
     with two_peers() as (host, talia, _):
         assert_rejected(talia.run("object.move", SHAFT, {"by": [0.01, 0, 0]}, lease=LEASE),
                         "not_found")

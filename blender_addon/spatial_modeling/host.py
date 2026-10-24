@@ -19,7 +19,9 @@ the session: a restart, a file load included, drops them, and receipt.query
 then answers the old host_epoch's requests as `unknown` (contracts/README.md,
 "Reconnecting"). They aren't kept on disk: every restart also starts a new open
 epoch, so an old receipt couldn't be checked against the scene anyway, and the
-fresh snapshot is what clients trust.
+fresh snapshot is what clients trust. Participants and leases live as long too
+(session.py, leases.py; in memory). may_write() is where the host desktop's own
+edits ask for permission (#77).
 
 Undo: operators run from a timer don't push their own undo step, so an edit
 silently merges into the previous one and a single Undo reverts both. Every
@@ -37,7 +39,7 @@ import uuid
 import bpy
 from bpy.app.handlers import persistent
 
-from . import commands, document, edits, lan, server, session
+from . import commands, document, edits, lan, leases, server, session
 from . import sync as scene_sync  # host.sync() is the role switch below
 
 DRAIN_INTERVAL = 0.02  # seconds between queue drains
@@ -47,6 +49,7 @@ _server = None
 _session = None
 _document = None
 _commands = None
+_leases = None
 _session_id = None  # used only while the add-on preferences aren't available
 _starting = False
 status = "Stopped"  # shown in the add-on preferences; never contains the token
@@ -80,6 +83,26 @@ def participants():
     return list(_session.participants.values()) if _session is not None else []
 
 
+def current_leases():
+    """Every lease (contract `lease` dicts, the host's own included), for ownership display."""
+    return _session.store.leases() if _session is not None else []
+
+
+def may_write(objects=(), whole=False):
+    """May the host desktop change these Blender objects now? The blocking lease, or None.
+
+    The question #77 asks before Blender's own editing tools change data: None
+    means go ahead; otherwise the contract `lease` dict says who holds it
+    (lease["owner"]["name"]). whole=True asks for a change that affects
+    everything, such as Undo and Redo. With no objects, only an exclusive lease
+    blocks. Also None while the host isn't running.
+    """
+    if _leases is None:
+        return None
+    ids = [scene_sync.object_id(obj) for obj in objects]
+    return _leases.may_write(ids, whole=whole)
+
+
 def _prefs():
     addon = bpy.context.preferences.addons.get(__package__)
     return addon.preferences if addon else None
@@ -102,12 +125,23 @@ def _get_session_id():
     return _session_id
 
 
-def _participants_changed():
-    names = ", ".join(f"{a['name']} ({a['role']})" for a in participants()) or "nobody"
-    print("Spatial Modeling: connected:", names)
+_shown = None  # (participants, leases) as last printed
+
+
+def _session_changed():
+    global _shown
+    people, held = participants(), current_leases()
+    if _shown is None or people != _shown[0]:
+        names = ", ".join(f"{a['name']} ({a['role']})" for a in people) or "nobody"
+        print("Spatial Modeling: connected:", names)
+    if _shown is not None and held != _shown[1]:
+        owners = ", ".join(f"{x['owner']['name']} ({x['mode']}, {len(x['targets'])} targets)"
+                           for x in held) or "none"
+        print("Spatial Modeling: leases:", owners)
+    _shown = (people, held)
     for window in bpy.context.window_manager.windows:
         for area in window.screen.areas:
-            if area.type == "PREFERENCES":
+            if area.type in ("PREFERENCES", "VIEW_3D"):  # ownership display (#78)
                 area.tag_redraw()
 
 
@@ -152,14 +186,15 @@ def _describe_lan(listener):
     return f"Listening on {where}, {how}"
 
 
-def _start_server(extra, sess, cmds):
-    srv = cmds.attach(sess.attach(server.Server(extra_listeners=[extra] if extra else [])))
+def _start_server(extra, sess, cmds, lses):
+    srv = server.Server(extra_listeners=[extra] if extra else [])
+    srv = lses.attach(cmds.attach(sess.attach(srv)))
     srv.start()
     return srv
 
 
 def start():
-    global _server, _session, _document, _commands, _starting, status, lan_status
+    global _server, _session, _document, _commands, _leases, _starting, status, lan_status
     if _server is not None:
         return
     _starting = True  # setting a generated token must not restart us from its update callback
@@ -168,19 +203,21 @@ def start():
     doc = document.Document()
     sess = session.Session(  # hello gets the document and snapshot from scene sync
         scene_sync.describe, scene_sync.snapshot, _get_session_id(),
-        on_change=_participants_changed,
+        on_change=_session_changed,
         name=prefs.host_name if prefs else None,
         client_can_edit=bool(prefs and prefs.client_edits),
     )
-    cmds = commands.Commands(sess, edits.Editor(scene_sync, undoable, doc))
+    editor = edits.Editor(scene_sync, undoable, doc)
+    lses = leases.Leases(sess, editor)
+    cmds = commands.Commands(sess, editor, leases=lses)
     try:
         extra = _lan_listener(prefs)
         try:
-            srv = _start_server(extra, sess, cmds)
+            srv = _start_server(extra, sess, cmds, lses)
         except OSError as e:
             if extra is None:
                 raise
-            srv = _start_server(None, sess, cmds)  # raises again if the localhost port failed
+            srv = _start_server(None, sess, cmds, lses)  # raises if the localhost port failed
             lan_status = f"Not listening: {e}"  # so it was the LAN port
             extra = None
     except OSError as e:
@@ -191,7 +228,7 @@ def start():
         return
     finally:
         _starting = False
-    _server, _session, _document, _commands = srv, sess, doc, cmds
+    _server, _session, _document, _commands, _leases = srv, sess, doc, cmds, lses
     scene_sync.start(doc, sess)
     status = f"Listening on {srv.host}:{srv.port}"
     if extra is not None:
@@ -201,7 +238,7 @@ def start():
 
 
 def stop():
-    global _server, _session, _document, _commands, status, lan_status
+    global _server, _session, _document, _commands, _leases, _shown, status, lan_status
     if bpy.app.timers.is_registered(_drain):
         bpy.app.timers.unregister(_drain)
     scene_sync.stop()
@@ -209,7 +246,7 @@ def stop():
         _server.stop()
         _server = None
         print("Spatial Modeling: stopped the host server")
-    _session = _document = _commands = None
+    _session = _document = _commands = _leases = _shown = None
     status = "Stopped"
     lan_status = "Off"
 

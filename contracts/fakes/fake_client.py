@@ -59,6 +59,9 @@ or m to lengths and deg or rad to angles.
   add cube|sphere|cylinder X Y Z DX DY DZ             add cylinder -20mm 0 30mm 20mm 20mm 40mm
   delete OBJ                    object.delete
   undo | redo | save            history.undo, history.redo, document.save
+  lease OBJ [OBJ ...]           lease.acquire shared  lease Shaft
+  lease all                     lease.acquire exclusive (the whole document)
+  release [LEASE]               lease.release (default: your newest lease)
   {"op": ..., "target": OBJ, "args": {...}}           any command: request fields,
                                 base_revision, source and the target's generation
                                 are filled in
@@ -485,8 +488,14 @@ class FakeClient:
         elif kind == "scene.update":
             self._on_update(p)
         elif kind == "session.update":
+            seen = {lease["lease_id"] for lease in self.leases}
             self.participants, self.leases = p["participants"], p["leases"]
             self.out("session.update: " + self._describe_session())
+            me = self.welcome["actor_id"] if self.welcome else None
+            for lease in self.leases:  # a new lease is the notice that someone started editing
+                if lease["lease_id"] not in seen and lease["owner"]["actor_id"] != me:
+                    what = ", ".join(self._name(t) for t in lease["targets"]) or "the document"
+                    self.out(f"{describe_actor(lease['owner'])} started editing {what}")
         elif kind == "result":
             self._on_receipt("result", p)
         elif kind == "activity":
@@ -695,6 +704,30 @@ class FakeClient:
         if verb == "delete":
             need(1, "delete OBJ")
             return self.command({"op": "object.delete", "target": rest[0]})
+        if verb == "lease":
+            if not rest:
+                raise UsageError("usage: lease OBJ [OBJ ...] | lease all")
+            if not self.welcome:
+                raise UsageError("not connected yet")
+            w = self.welcome
+            payload = {k: w[k] for k in ("session_id", "host_epoch", "actor_id")}
+            payload.update(document_id=w["document"]["id"], open_epoch=w["document"]["open_epoch"])
+            if rest == ["all"]:
+                payload.update(mode="exclusive", targets=[])
+            else:
+                payload.update(mode="shared", targets=[self.resolve(r)["id"] for r in rest])
+            return message("lease.acquire", payload)
+        if verb == "release":
+            me = self.welcome["actor_id"] if self.welcome else None
+            mine = [x["lease_id"] for x in self.leases if x["owner"]["actor_id"] == me]
+            if len(rest) > 1:
+                raise UsageError("usage: release [LEASE]")
+            found = [i for i in mine if not rest or i.startswith(rest[0])]
+            if rest and not found:
+                found = [rest[0]]  # send it anyway; the host answers not_found
+            if not found:
+                raise UsageError("you hold no lease")
+            return message("lease.release", {"lease_id": found[-1]})
         ops = {"undo": "history.undo", "redo": "history.redo", "save": "document.save"}
         if verb in ops:
             need(0, verb)
