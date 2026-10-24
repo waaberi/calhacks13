@@ -108,10 +108,11 @@ Final isolated verification on 2026-10-24:
 | Spatial native matrix gates | Pass inside Unity | Known world/native oracles; no physical gesture |
 | Cumulative P2/arrangement/P1 interaction and visual gates | Pass inside Unity | Synthetic/editor checks preserve existing requirements; no new physical acceptance |
 | Actual keyboard ownership and controller-axis isolation | Pass inside Unity | Real Input System synthetic edges and actual table update; no OS input injected |
-| Windows Player build | Pass, exit 0 and zero errors | Frozen app source `e4d3108`; resulting Player never launched |
+| Integrated P2 visible-level and preview occlusion gates | Pass inside Unity | Actual RawImage/RouteHand respects nearer levels, primary hand and grip routing |
+| Windows Player build | Pass, exit 0 and zero errors | Frozen app source `ccb2c56`, published P2 `e880714` integrated; resulting Player never launched |
 | Broad native UI workflows and direct VR drawing in headset | Pending | Requires later coordinated P2.5 runtime slot |
 
-The external `p25-offline-v3/compile-manifest.json` records the exact runtime source
+The external `p25-offline-p2-integration/compile-manifest.json` records the exact runtime source
 hashes and compiled assembly hashes for its run; subsequent source changes require
 a fresh run. Later Editor-fixture repairs were compiled and executed by Unity's
 narrow and complete build gates. A previous in-flight compile correctly refused a missing drawing
@@ -131,7 +132,7 @@ proof of a working VR gesture. The captured native button/menu workflows remain
 pending runtime acceptance.
 
 The verified Windows checkpoint is the external directory
-`artifacts/p25-preview-spatial-v6/`. The build used this feature worktree's own
+`artifacts/p25-preview-spatial-v7/`. The build used this feature worktree's own
 Library, Unity 6000.6.5f1 in batch/nographics mode with two job workers, and a
 BelowNormal Editor process. `P25Build.Windows` passed its mapping, transport and
 spatial gates, then the cumulative P2 placement/menu/scene, arrangement, accepted
@@ -140,13 +141,29 @@ mandatory keyboard isolation. Unity reported
 `Succeeded errors=0` and exited with code 0. No Player, capture helper or interactive
 Blender was launched by this build. P2's active test runtime was not replaced.
 
-| Verified v6 identity | Value |
+| Verified v7 identity | Value |
 | --- | --- |
-| Frozen app source | `e4d3108be9c871f42bbe8ff60739c66c56b194dc` |
-| Git app tree | `8af1ec38f336b8a96c85820c83390d38a2913b2c` |
-| `SpatialModeling_Data/Managed/Assembly-CSharp.dll` SHA-256 | `1c9ba81a69fe8a1e74d18451f5787433f13e4dc6ef75726317823f87d5717736` |
+| Frozen app source | `ccb2c56f5090cf391024e71c8f0037025ed2c0b0` |
+| Git app tree | `444e52685e56bfdeede1f00df159cbfe6c89bebb` |
+| `SpatialModeling_Data/Managed/Assembly-CSharp.dll` SHA-256 | `c5e28b0358dbb0d55c359828fa48be2cf334c422423719245b28bba08baf9828` |
 | `SpatialModeling.exe` SHA-256 | `001aeebfb92718f8b49f0c0e0a03e313c54669552b08e952b2fee3ddd143683a` |
-| Build evidence | `evidence/p25-preview-spatial-v6-build.log` and `p25-preview-spatial-v6-build-result.json` |
+| Build evidence | `evidence/p25-preview-spatial-v7-build.log` and `p25-preview-spatial-v7-build-result.json` |
+
+V7 selectively integrates the six published P2 surface/visible-level files from
+`e880714` through feature-branch merge `8937c95`. Accepted grip and P2.5 hooks are
+retained: closer level geometry bounds the preview route, and a closer preview
+control wins its ray hit. RawImage layout and capture behavior were not changed.
+Offline/managed checks and the complete fresh-Editor P2/arrangement/P1/P2.5 sequence
+passed before the v7 build, including real `RouteHand` calls against an active
+RawImage with nearer/farther occlusion limits. Evidence is
+`p25-p2-integration-editor.log`. The P2 owner still reports an open OpenXR runtime
+lifecycle failure, `XR_ERROR_LIMIT_REACHED`; this never-launched P2.5 candidate
+does not establish a fix or new headset acceptance. P2's runtime owner retains
+the testing slot even while its Player is closed.
+
+The pre-integration v6 checkpoint remains preserved at frozen `e4d3108`, DLL
+SHA-256 `1c9ba81a69fe8a1e74d18451f5787433f13e4dc6ef75726317823f87d5717736`,
+with its original build log/result manifest. V7 is the current integration candidate.
 
 The first v1 build began before the component-disable cleanup repair was frozen
 and picked up that repair during Player compilation. It is retained as a
@@ -155,7 +172,7 @@ The historical v2 rebuild used frozen `900b7a7`; its C# source was verified unch
 The equal v1/v2 DLL hashes reflect the first build having already incorporated the
 repair. Their historical DLL hash is `1a838542e58e1760f681b10ab4e010dcbc5d4e091e83e832cae25482816e5f18`.
 They precede the explicit new-sketch target and expanded keyboard regressions and
-are superseded by v6. Generated settings diffs were preserved to external evidence for each run,
+are superseded by v7. Generated settings diffs were preserved to external evidence for each run,
 verified to contain only line-ending/trailing-whitespace changes, then restored.
 No generated render/XR/project settings were included in this feature change.
 
