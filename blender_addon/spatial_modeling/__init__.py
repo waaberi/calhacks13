@@ -77,6 +77,21 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
     # The hosting session's ID (welcome.session_id), made on first start and kept with
     # the token so it survives restarts. Not secret, and not shown.
     session_id: bpy.props.StringProperty(name="Session ID")
+    host_name: bpy.props.StringProperty(
+        name="Your name",
+        description="Shown to the others as the person at this Blender. Blank: Host Blender",
+        maxlen=256,
+        update=lambda self, context: host.rename(),
+    )
+    client_edits: bpy.props.BoolProperty(
+        name="Let the Client role edit (test only)",
+        description=(
+            "Unfinished: lets a Client-role Blender send edit commands. Keep it off in "
+            "normal use. Changing it disconnects everyone; they reconnect"
+        ),
+        default=False,
+        update=_restart,
+    )
 
     def draw(self, context):
         layout = self.layout
@@ -84,6 +99,7 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
         if self.role != "HOST":
             layout.label(text=host.status)
             return
+        layout.prop(self, "host_name")
         layout.label(text=f"VR app: {host.status}")
         for actor in host.participants():
             layout.label(text=f"Connected: {actor['name']} ({actor['role']})", icon="USER")
@@ -97,6 +113,7 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
         row.prop(self, "session_token")
         row.operator(CopySessionToken.bl_idname, text="", icon="COPYDOWN")
         row.operator(NewSessionToken.bl_idname, text="", icon="FILE_REFRESH")
+        col.prop(self, "client_edits")
         col.label(text=f"LAN: {host.lan_status}")
         if self.lan_security == "TOKEN":
             col.label(text="Without TLS anyone on the network can read the token.", icon="ERROR")

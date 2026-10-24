@@ -17,16 +17,18 @@ applied by the editor on Blender's main thread and answered with exactly one
 5. The target exists (not_found) and its generation is current; Undo and Redo
    need base_revision to be the current revision (stale_revision).
 6. Leases: none are granted before P3B, so a command naming one gets not_found.
-7. editor.apply() changes Blender, pushes one Undo step and reads the result
-   back; then editor.flush() sends scene.update to everyone, and this module
-   sends `result` to the sender and `activity` to the others, in that order.
+7. editor.apply() changes Blender, reads the result back, flushes (scene.update
+   to everyone) and pushes one Undo step; then this module sends `result` to
+   the sender and `activity` to the others, in that order.
 
 The editor (edits.py in Blender, a fake in the tests) provides flush() -> the
-current revision after broadcasting pending scene updates, generation(id) ->
-int or None if there is no such object, and apply(op, target_id, args) ->
-Applied. apply() raises Refused when Blender changed nothing; any other
-exception means the outcome is unknown. Then the host stops writes, re-reads
-the scene, sends everyone a fresh scene.snapshot and accepts writes again.
+current revision after broadcasting pending scene updates (sync.flush),
+generation(id) -> int or None if there is no such object, and
+apply(op, target_id, args) -> Applied, whose revision is what its own flush
+returned. apply() raises Refused when Blender changed nothing; any other
+exception, a failed flush included, means the outcome is unknown. Then the
+host stops writes, re-reads the scene, sends everyone a fresh scene.snapshot
+and accepts writes again.
 
 This module must not import bpy, so the tests can run it outside Blender.
 Received data is only ever compared and copied, never executed.
@@ -88,10 +90,14 @@ class Refused(Exception):
 
 @dataclass
 class Applied:
-    """What an editor reports after Blender committed a change."""
+    """What an editor reports after Blender committed a change and it was published.
+
+    revision: what the editor's flush() returned after the change.
+    """
 
     summary: str
     created: list = field(default_factory=list)
+    revision: int = 0
 
 
 # Step 1: the schema, by hand.
@@ -451,20 +457,15 @@ class Commands:
         if "lease" in p:
             return rejected("not_found", "That lease doesn't exist; this host grants no leases "
                             "yet, so leave lease out.")
-        # 7. Apply, commit as one Undo step, read back; then publish
+        # 7. Apply, read back, publish (scene.update) and commit as one Undo step
         try:
             done = self.editor.apply(op, target and target["id"], p["args"])
         except Refused as e:
             return rejected(e.code, e.message, e.details)
-        except Exception as e:
+        except Exception as e:  # including a flush that failed after the change
             log.exception("%s failed halfway", op)
             return self._unknown(conn, rid, p, e)
-        try:
-            revision = self.editor.flush()
-        except Exception as e:
-            log.exception("could not publish %s", op)
-            return self._unknown(conn, rid, p, e)
-        return self._receipt(conn, rid, p, "applied", revision, summary=done.summary,
+        return self._receipt(conn, rid, p, "applied", done.revision, summary=done.summary,
                              created=done.created)
 
     def _unknown(self, conn, rid, p, exc):

@@ -113,6 +113,12 @@ class FakeEditor:
         return None if obj is None else obj["generation"]
 
     def apply(self, op, target, args):
+        """Change, then publish like edits.py: the receipt's revision is the flush's."""
+        done = self._change(op, target, args)
+        done.revision = self.flush()
+        return done
+
+    def _change(self, op, target, args):
         self.applied.append((op, target, copy.deepcopy(args)))
         if self.refusal is not None:
             raise Refused(*self.refusal)

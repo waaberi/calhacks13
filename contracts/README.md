@@ -65,7 +65,7 @@ The host listens on `8767` only while "Let a Client-role Blender join over the L
    - `permission_denied`: the host doesn't admit this client here. `127.0.0.1:8765` admits only role `vr`, the LAN port only `blender-client`.
    - `unsupported_version`: the envelope's `v` differs, or a Client-role add-on's `app.version` differs from the host's (P5-M1-3). The Unity app's version isn't compared.
    - `wrong_document`: the `hello` named a `document` and the host has another one (or another opening of it) open. `details.document` has the host's `id`, `open_epoch` and `name`.
-4. `welcome` makes the connection a participant with its own `actor_id`. `can_edit` is true for `vr`, and false for `blender-client` until P3A-W-3. Whenever someone joins or leaves (its connection closes for any reason), every participant gets `session.update`.
+4. `welcome` makes the connection a participant with its own `actor_id`. `can_edit` is true for `vr`. For `blender-client` it is false unless the host turned on "Let the Client role edit (test only)" in its add-on preferences (P3A-W-3; off by default, and changing it reconnects everyone). A connection that can't edit gets `permission_denied` for every `command`. Whenever someone joins or leaves (its connection closes for any reason), every participant gets `session.update`.
 5. Loading another `.blend` (or reverting), disabling the add-on and switching the role all close every connection. Clients reconnect and get the new document in `welcome`. A connection never spans two documents.
 6. **Heartbeat:** clients send `ping` every 2 s. A client that hears nothing from the host for 6 s shows "Blender is not responding" and disables edits; a closed socket means disconnected. The host treats a client it hasn't heard from for 6 s as gone: when no complete line has arrived for 6 s it closes the connection, which also ends its leases. The host reads on its own thread, so a busy Blender (a render, a long operator) doesn't drop clients; their pongs just wait.
 
@@ -120,7 +120,7 @@ The first six codes are the transport-level codes that [`server.py`](../blender_
 | `generation` | On each object and sketch: the revision at which it last changed. |
 | `session_id` | UUID hex of the hosting session, kept with the session token in the host's add-on preferences. It stays the same when the host restarts. |
 | `host_epoch` | New UUID hex every time the host's server starts. |
-| `actor_id` | New for every connection, given in `welcome`. The host's own Blender is the participant with role `host` and name `Host Blender`: whoever works at the host desktop. Its `actor_id` is new with every `host_epoch`. |
+| `actor_id` | New for every connection, given in `welcome`. The host's own Blender is the participant with role `host`: whoever works at the host desktop. Its name is the "Your name" add-on preference, or `Host Blender` if that is blank; a change reaches everyone as `session.update`. Its `actor_id` is new with every `host_epoch`. |
 
 **Units.** Numbers on the wire are always meters and radians. The host converts Blender units to meters by multiplying by the scene's Unit Scale (`scale_length`), so a 100 mm part is `0.1` whatever the scene settings. `document.units` copies the scene's settings for display only: Unity shows millimeters when `length_unit` is `MILLIMETERS`, and the Client role copies the settings into its session file. Field names carry no unit suffix; the contract fixes the units, and the schema bounds catch the worst slips (an angle of 90 is rejected).
 
@@ -222,6 +222,16 @@ A `command` adds:
 5. The target exists (`not_found`) and its generation is current; for Undo/Redo, `base_revision` is current (`stale_revision`).
 6. Leases (`lease_conflict`), described below.
 7. Apply on Blender's main thread, push one Undo step, read the result back. Then send `scene.update` to every client, `result` to the sender and `activity` to the others, in that order. When a `result` arrives, the sender's scene already includes the change.
+
+**In host Blender**, [`commands.py`](../blender_addon/spatial_modeling/commands.py) runs these checks and [`edits.py`](../blender_addon/spatial_modeling/edits.py) applies the command. It changes Blender's data directly, so the host desktop's selection and active object stay as they are, and each applied command is one Undo step named after its `summary`. It reads every edit back, and what Blender can't do exactly is refused with `failed`, leaving nothing changed:
+
+- host Blender isn't in Object Mode (Save works in any mode);
+- the target has constraints, is linked from another file, or doesn't end up where asked (a driver, or a parent scaled unevenly);
+- a move would end more than 100 km from the origin, or a scale would leave the range 10⁻⁶ to 10⁶;
+- `rotate.to` isn't a unit quaternion (within 0.001);
+- nothing to undo or redo; Save of a file that was never saved.
+
+`object.add` names the object as Blender's Add menu does (`Cube`, `Sphere`, `Cylinder`, then `.001` and so on), with 32 segments (and 16 rings for the sphere), centered on `location`, in the active collection. `object.delete` leaves the deleted object's children where they are. Undo and Redo say which command they undid in `summary` ("Undid: Moved Cube 10 mm along X"), or "Undid a change made in host Blender". Until P3C sketch ops get `failed`, and until P3B a command naming a `lease` gets `not_found`. The host keeps the receipts of the newest 10,000 requests, for deduplication and `receipt.query`, until its server restarts.
 
 ### Outcomes
 
