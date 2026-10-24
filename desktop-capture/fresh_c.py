@@ -297,6 +297,10 @@ def run(args, *, existing_players, capture_status):
     verify_protocol(ready, identity["app_version"])
     require_selected_host(capture_status("/selection"), host.pid, args.window)
     record["captured_at_ms"] = require_fresh_pixels()
+    # A build/output can change during the user's picker wait. Recheck the exact
+    # assembly immediately before spawning, just as we recheck the effective HWND.
+    record["player_identity"] = verify_player(args.player, args.player_assembly_sha256,
+                                               args.player_source_revision)
     player_env = os.environ.copy()
     player_env["CALHACKS_HOST_PORT"] = str(PORT)
     with (session / "player-console.log").open("w", encoding="utf-8") as output:
