@@ -22,6 +22,18 @@ namespace SpatialModeling
         public long LastAgeMs { get; private set; }
         public bool HasImage => image != null && image.enabled;
         public float Magnification { get; private set; } = 1f;
+        public static string CaptureBaseUrl
+        {
+            get
+            {
+                return HostScene.TryResolvePort(Environment.GetEnvironmentVariable("CALHACKS_CAPTURE_PORT"), 8766, out int port)
+                    ? "http://127.0.0.1:" + port : null;
+            }
+        }
+        public RectTransform ImageRectTransform => image != null ? image.rectTransform : null;
+        public string DisplayedCaptureInstance { get; private set; } = "";
+        public long DisplayedSelectionGeneration { get; private set; } = -1;
+        public string DisplayedCaptureGeometry { get; private set; } = "";
 
         const float ScreenWidth = 1800f, ScreenHeight = 1100f, ScreenDistance = 1.25f;
 
@@ -74,7 +86,8 @@ namespace SpatialModeling
             toggle.AddBinding("<XRController>{RightHand}/primaryButton"); // A
             toggle.AddBinding("<XRController>{LeftHand}/primaryButton"); // X
             toggle.AddBinding("<Keyboard>/f2");
-            toggle.performed += _ => Toggle();
+            toggle.performed += context =>
+            { if (!(context.control?.device is Keyboard && PreviewInteraction.BlocksDesktopShortcuts)) Toggle(); };
             toggle.Enable();
             select = new InputAction("Select Blender screen button", InputActionType.Button);
             select.AddBinding("<XRController>{RightHand}/triggerPressed");
@@ -84,7 +97,9 @@ namespace SpatialModeling
             magnify = new InputAction("Magnify Blender screen", InputActionType.Button);
             magnify.AddBinding("<XRController>{RightHand}/thumbstickClicked");
             magnify.AddBinding("<Keyboard>/z");
-            magnify.performed += _ => { if (Visible && (interaction==null || !interaction.IsHolding)) CycleMagnification(); };
+            magnify.performed += context => { if (!(context.control?.device is Keyboard && PreviewInteraction.BlocksDesktopShortcuts)
+                && Visible && (interaction==null || !interaction.IsHolding)
+                && !(PreviewInteraction.Current?.CapturesScroll ?? false)) CycleMagnification(); };
             magnify.Enable();
             panAction = new InputAction("Pan magnified Blender screen", InputActionType.Value);
             panAction.AddBinding("<XRController>{RightHand}/thumbstick");
@@ -155,7 +170,8 @@ namespace SpatialModeling
                 button.GetComponent<Image>().color = hovering
                     ? new Color(0.15f, 0.5f, 0.72f, 1f) : new Color(0.08f, 0.22f, 0.33f, 1f);
             }
-            if (Visible && Magnification > 1f && (interaction == null || !interaction.IsHolding))
+            if (Visible && Magnification > 1f && (interaction == null || !interaction.IsHolding)
+                && !(PreviewInteraction.Current?.CapturesScroll ?? false))
             {
                 var axis = panAction.ReadValue<Vector2>();
                 if (axis.sqrMagnitude > 0.04f) pan += axis * (0.3f * Time.unscaledDeltaTime);
@@ -224,6 +240,16 @@ namespace SpatialModeling
             var local = Placement.InverseTransformPoint(ray.GetPoint(distance));
             return Mathf.Abs(local.x) <= 920 && ((Visible && local.y>=-820 && local.y<=790)
                 || (!Visible && ((local.y>=-820 && local.y<=-560) || (local.y>=685 && local.y<=790))));
+        }
+
+        public bool TryPreviewPoint(Ray ray, out Vector2 normalized, out float distance)
+        {
+            normalized = default; distance = 0;
+            if (!Visible || !HasImage || image == null || !image.gameObject.activeInHierarchy
+                || !new Plane(image.rectTransform.forward, image.rectTransform.position).Raycast(ray, out distance)
+                || distance <= 0 || distance > 4) return false;
+            return PreviewInputMapping.TryMap(image.rectTransform.rect, image.uvRect,
+                image.rectTransform.InverseTransformPoint(ray.GetPoint(distance)), out normalized);
         }
 
         public bool HoverController(Ray ray, bool pressed)
@@ -366,6 +392,7 @@ namespace SpatialModeling
 
         void Unavailable(string message)
         {
+            DisplayedCaptureInstance = ""; DisplayedSelectionGeneration = -1; DisplayedCaptureGeometry = "";
             CaptureState = message;
             etag = null;
             if (image != null) { image.enabled = false; image.texture = null; }
@@ -381,7 +408,8 @@ namespace SpatialModeling
                 if (image == null) { yield return null; continue; }
                 // Keep checking when hidden: reopening never shows a queued/stale frame.
                 // Native DownloadHandlerTexture decodes off the render thread.
-                var request = UnityWebRequestTexture.GetTexture("http://127.0.0.1:8766/frame", true);
+                if (CaptureBaseUrl == null) { Unavailable("Invalid local capture port"); yield break; }
+                var request = UnityWebRequestTexture.GetTexture(CaptureBaseUrl + "/frame", true);
                 requests[lane] = request;
                 request.timeout = 2;
                 if (etag != null) request.SetRequestHeader("If-None-Match", etag);
@@ -415,6 +443,10 @@ namespace SpatialModeling
                             var scale = Mathf.Min(ScreenWidth / texture.width, ScreenHeight / texture.height);
                             image.rectTransform.sizeDelta = new Vector2(texture.width * scale, texture.height * scale);
                             lastCaptured = captured;
+                            DisplayedCaptureInstance = request.GetResponseHeader("X-Capture-Instance") ?? "";
+                            DisplayedCaptureGeometry = request.GetResponseHeader("X-Capture-Geometry") ?? "";
+                            DisplayedSelectionGeneration = long.TryParse(request.GetResponseHeader("X-Selection-Generation"), out var selectedGeneration)
+                                ? selectedGeneration : -1;
                             lastConfirmed = alive;
                             etag = request.GetResponseHeader("ETag");
                             long.TryParse(etag?.Trim('"'), out var frame);
@@ -437,8 +469,13 @@ namespace SpatialModeling
                 }
                 else if (request.responseCode == 304)
                 {
+                    bool sameSource = !PreviewInteraction.Requested || (PreviewInputMapping.FrameMatches(
+                        DisplayedCaptureInstance, DisplayedSelectionGeneration,
+                        request.GetResponseHeader("X-Capture-Instance"),
+                        long.TryParse(request.GetResponseHeader("X-Selection-Generation"), out var selectedGeneration) ? selectedGeneration : -1)
+                        && DisplayedCaptureGeometry == request.GetResponseHeader("X-Capture-Geometry"));
                     // A live HTTP server cannot certify arbitrarily old pixels.
-                    if (long.TryParse(request.GetResponseHeader("X-Capture-Alive"), out var alive)
+                    if (sameSource && long.TryParse(request.GetResponseHeader("X-Capture-Alive"), out var alive)
                         && long.TryParse(request.GetResponseHeader("X-Captured-At"), out var captured)
                         && CaptureIsFresh(captured, alive, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()))
                         lastConfirmed = alive;
