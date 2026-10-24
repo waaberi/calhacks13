@@ -30,6 +30,11 @@ rejoins and gets the true receipt with receipt.query; forces an unknown outcome
 and sees writes refused on both ports until the add-on's timer sends both the
 fresh snapshot; and restarts the server, after which the old requests are
 answered `unknown`.
+
+The lease check (P3B) has two VR clients lease objects in this Blender: the
+same object conflicts and a different one doesn't, a second object sharing the
+mesh is covered, Undo is refused while the other client holds a lease, and a
+closed connection frees its leases.
 """
 
 import json
@@ -697,6 +702,7 @@ def commands(prefs):
     server.HEARTBEAT_TIMEOUT = 120.0  # these clients don't ping
     try:
         yield from native_commands(prefs)
+        yield from lease_checks()
         yield from client_role_commands(prefs)
     finally:
         server.HEARTBEAT_TIMEOUT = 6.0
@@ -836,6 +842,98 @@ def native_commands(prefs):
     assert new_id not in objects, "the deleted cylinder came back"
     log(f"a fresh Blender process reopens {blend.name} with the edits: Cube at "
         f"{saved['location']} mm, rotation {saved['rotation']}, scale {saved['scale']}")
+
+
+def acquire(welcome, mode, targets):
+    w = welcome
+    return protocol.message("lease.acquire", {
+        "session_id": w["session_id"], "host_epoch": w["host_epoch"],
+        "document_id": w["document"]["id"], "open_epoch": w["document"]["open_epoch"],
+        "actor_id": w["actor_id"], "mode": mode, "targets": list(targets)})
+
+
+def leased(peer, welcome, mode, targets):
+    """Acquire a lease that must be granted; yields until it is. Returns the lease."""
+    before, reply = yield from ask(peer, acquire(welcome, mode, targets))
+    assert reply is not None and reply["type"] == "lease.granted", reply
+    updates = [m for m in before if m["type"] == "session.update"]
+    assert updates and reply["payload"]["lease"] in updates[-1]["payload"]["leases"], before
+    return reply["payload"]["lease"]
+
+
+def session_update(peer, what, until):
+    """Yields until peer gets a session.update for which until(payload) is true."""
+    while True:
+        msg = yield from off_thread(peer.recv, what)
+        assert msg is not None, f"the connection closed while waiting for {what}"
+        if msg["type"] == "session.update" and until(msg["payload"]):
+            return msg["payload"]
+
+
+def lease_checks():
+    """Leases on objects in this Blender (P3B), between two VR clients."""
+    host, sync = mod("host"), mod("sync")
+    collection = bpy.context.scene.collection
+    cube = bpy.data.objects["Cube"]
+    twin = bpy.data.objects.new("Cube twin", cube.data)  # a linked duplicate: same mesh
+    lone = bpy.data.objects.new("Lone", bpy.data.meshes.new("Lone"))
+    collection.objects.link(twin)
+    collection.objects.link(lone)
+    bpy.ops.ed.undo_push(message="Lease check set-up")
+    cube_id, twin_id, lone_id = (sync.object_id(o) for o in (cube, twin, lone))
+
+    yield from nobody_joined()
+    talia, tw = (yield from joined("Talia"))[:2]
+    jihyeon, jw = (yield from joined("Jihyeon"))[:2]
+    yield from next_update(talia, "Talia's session.update for Jihyeon")
+    t, j = Commander(talia, tw), Commander(jihyeon, jw)
+
+    lease = yield from leased(talia, tw, "shared", [cube_id])
+    assert lease["targets"] == [cube_id, twin_id], (lease, twin_id)
+    assert host.may_write([twin]) == lease and host.may_write([lone]) is None
+    log(f"Talia's shared lease on Cube also covers {twin.name}, which shares its mesh")
+
+    for target in (cube_id, twin_id):
+        _, reply = yield from ask(jihyeon, acquire(jw, "shared", [target]))
+        assert reply["type"] == "error" and reply["payload"]["code"] == "lease_conflict", reply
+        assert reply["payload"]["details"]["lease"] == lease, reply
+    x = twin.location.x
+    receipt, _ = yield from j.send(j.command("object.move", twin_id, {"by": [0.001, 0, 0]}))
+    assert receipt["error"]["code"] == "lease_conflict", receipt
+    assert receipt["error"]["details"]["lease"]["owner"]["name"] == "Talia", receipt
+    assert twin.location.x == x, "a refused move changed Blender"
+    own = yield from leased(jihyeon, jw, "shared", [lone_id])
+    assert own["targets"] == [lone_id], own
+    receipt, _, _ = yield from j.run("object.move", lone_id, {"by": [0.001, 0, 0]})
+    assert lone.location.x == 1, tuple(lone.location)
+    log("Jihyeon: Cube and its twin get lease_conflict (Blender unchanged); a different object "
+        "is leased and moved")
+
+    for commander, holder in ((j, "Talia"), (t, "Jihyeon")):
+        _, reply = yield from ask(commander.peer, commander.command("history.undo"))
+        receipt = reply["payload"]  # Talia also has Jihyeon's move and lease waiting
+        assert receipt["error"]["code"] == "lease_conflict", receipt
+        assert receipt["error"]["details"]["lease"]["owner"]["name"] == holder, receipt
+    assert lone.location.x == 1, "a refused Undo changed Blender"
+    log("Undo is refused with lease_conflict for each while the other holds a lease")
+
+    talia.close()
+    update = yield from session_update(jihyeon, "the session.update after Talia left",
+                                       lambda p: "Talia" not in [a["name"] for a in
+                                                                 p["participants"]])
+    assert update["leases"] == [own], update
+    assert host.may_write([cube]) is None
+    receipt, _, _ = yield from j.run("object.move", twin_id, {"by": [0.001, 0, 0]})
+    assert twin.location.x == f32(x + 1), tuple(twin.location)
+    jihyeon.send(protocol.message("lease.release", {"lease_id": own["lease_id"]}))
+    yield from session_update(jihyeon, "the session.update after the release",
+                              lambda p: p["leases"] == [])
+    receipt, _, _ = yield from j.run("history.undo")
+    twin = bpy.data.objects["Cube twin"]  # Undo replaced the data-blocks
+    assert twin.location.x == x, "Undo didn't revert the twin's move"
+    jihyeon.close()
+    log("closing Talia's connection freed her lease (one session.update); Jihyeon then moved "
+        "the twin, released her lease and undid the move")
 
 
 def client_role_commands(prefs):

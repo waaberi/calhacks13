@@ -20,7 +20,7 @@ from test_contracts import REGISTRY, SCHEMAS
 
 CHECK = Path(__file__).with_name("blender_check.py")
 SENT = {"welcome", "scene.snapshot", "scene.update", "session.update", "error", "pong", "result",
-        "activity", "receipts"}
+        "activity", "receipts", "lease.granted"}
 
 
 def run_check(cmd, tmp_path):
