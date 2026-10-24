@@ -1,0 +1,238 @@
+{
+  "status": "PASSED",
+  "checked_at_utc": "2026-10-24T01:02:53.610165+00:00",
+  "scope": "Native P0 fixture reopened in a separate Blender process; no headset, app, bridge or CAD-solver acceptance.",
+  "fixture": "p0_reference.blend",
+  "sha256": "30198378bf254ea0a7617d495a33b902d0e354af8fab064c271f781c10713c81",
+  "blender_version": "5.2.2 LTS",
+  "checks": [
+    {
+      "check": "fixture_version",
+      "actual": "p0-v1",
+      "expected": "p0-v1",
+      "passed": true
+    },
+    {
+      "check": "Blender_version",
+      "actual": "5.2.2",
+      "expected": "5.2.2",
+      "passed": true
+    },
+    {
+      "check": "unit_system",
+      "actual": "METRIC",
+      "expected": "METRIC",
+      "passed": true
+    },
+    {
+      "check": "unit_scale",
+      "actual": 1.0,
+      "expected": 1.0,
+      "passed": true
+    },
+    {
+      "check": "display_length",
+      "actual": "MILLIMETERS",
+      "expected": "MILLIMETERS",
+      "passed": true
+    },
+    {
+      "check": "mesh_names",
+      "actual": [
+        "Cube_20mm",
+        "Cylinder_D10_H30mm"
+      ],
+      "expected": [
+        "Cube_20mm",
+        "Cylinder_D10_H30mm"
+      ],
+      "passed": true
+    },
+    {
+      "check": "Cube_20mm.exists",
+      "actual": true,
+      "expected": true,
+      "passed": true
+    },
+    {
+      "check": "Cube_20mm.type",
+      "actual": "MESH",
+      "expected": "MESH",
+      "passed": true
+    },
+    {
+      "check": "Cube_20mm.fixture_id",
+      "actual": "p0-cube-20mm",
+      "expected": "p0-cube-20mm",
+      "passed": true
+    },
+    {
+      "check": "Cube_20mm.dimensions_mm.X",
+      "actual": 19.999999552965164,
+      "expected": 20.0,
+      "passed": true
+    },
+    {
+      "check": "Cube_20mm.dimensions_mm.Y",
+      "actual": 19.999999552965164,
+      "expected": 20.0,
+      "passed": true
+    },
+    {
+      "check": "Cube_20mm.dimensions_mm.Z",
+      "actual": 19.999999552965164,
+      "expected": 20.0,
+      "passed": true
+    },
+    {
+      "check": "Cube_20mm.location_mm.X",
+      "actual": -19.999999552965164,
+      "expected": -20.0,
+      "passed": true
+    },
+    {
+      "check": "Cube_20mm.location_mm.Y",
+      "actual": 0.0,
+      "expected": 0.0,
+      "passed": true
+    },
+    {
+      "check": "Cube_20mm.location_mm.Z",
+      "actual": 9.999999776482582,
+      "expected": 10.0,
+      "passed": true
+    },
+    {
+      "check": "Cube_20mm.scale.X",
+      "actual": 1.0,
+      "expected": 1.0,
+      "passed": true
+    },
+    {
+      "check": "Cube_20mm.scale.Y",
+      "actual": 1.0,
+      "expected": 1.0,
+      "passed": true
+    },
+    {
+      "check": "Cube_20mm.scale.Z",
+      "actual": 1.0,
+      "expected": 1.0,
+      "passed": true
+    },
+    {
+      "check": "Cube_20mm.rotation_degrees.X",
+      "actual": 0.0,
+      "expected": 0.0,
+      "passed": true
+    },
+    {
+      "check": "Cube_20mm.rotation_degrees.Y",
+      "actual": 0.0,
+      "expected": 0.0,
+      "passed": true
+    },
+    {
+      "check": "Cube_20mm.rotation_degrees.Z",
+      "actual": 0.0,
+      "expected": 0.0,
+      "passed": true
+    },
+    {
+      "check": "Cylinder_D10_H30mm.exists",
+      "actual": true,
+      "expected": true,
+      "passed": true
+    },
+    {
+      "check": "Cylinder_D10_H30mm.type",
+      "actual": "MESH",
+      "expected": "MESH",
+      "passed": true
+    },
+    {
+      "check": "Cylinder_D10_H30mm.fixture_id",
+      "actual": "p0-cylinder-d10-h30mm",
+      "expected": "p0-cylinder-d10-h30mm",
+      "passed": true
+    },
+    {
+      "check": "Cylinder_D10_H30mm.dimensions_mm.X",
+      "actual": 9.999999776482582,
+      "expected": 10.0,
+      "passed": true
+    },
+    {
+      "check": "Cylinder_D10_H30mm.dimensions_mm.Y",
+      "actual": 9.999999776482582,
+      "expected": 10.0,
+      "passed": true
+    },
+    {
+      "check": "Cylinder_D10_H30mm.dimensions_mm.Z",
+      "actual": 29.999999329447746,
+      "expected": 30.0,
+      "passed": true
+    },
+    {
+      "check": "Cylinder_D10_H30mm.location_mm.X",
+      "actual": 19.999999552965164,
+      "expected": 20.0,
+      "passed": true
+    },
+    {
+      "check": "Cylinder_D10_H30mm.location_mm.Y",
+      "actual": 0.0,
+      "expected": 0.0,
+      "passed": true
+    },
+    {
+      "check": "Cylinder_D10_H30mm.location_mm.Z",
+      "actual": 14.999999664723873,
+      "expected": 15.0,
+      "passed": true
+    },
+    {
+      "check": "Cylinder_D10_H30mm.scale.X",
+      "actual": 1.0,
+      "expected": 1.0,
+      "passed": true
+    },
+    {
+      "check": "Cylinder_D10_H30mm.scale.Y",
+      "actual": 1.0,
+      "expected": 1.0,
+      "passed": true
+    },
+    {
+      "check": "Cylinder_D10_H30mm.scale.Z",
+      "actual": 1.0,
+      "expected": 1.0,
+      "passed": true
+    },
+    {
+      "check": "Cylinder_D10_H30mm.rotation_degrees.X",
+      "actual": 0.0,
+      "expected": 0.0,
+      "passed": true
+    },
+    {
+      "check": "Cylinder_D10_H30mm.rotation_degrees.Y",
+      "actual": 0.0,
+      "expected": 0.0,
+      "passed": true
+    },
+    {
+      "check": "Cylinder_D10_H30mm.rotation_degrees.Z",
+      "actual": 0.0,
+      "expected": 0.0,
+      "passed": true
+    },
+    {
+      "check": "saved_file_loaded",
+      "actual": true,
+      "expected": true,
+      "passed": true
+    }
+  ]
+}

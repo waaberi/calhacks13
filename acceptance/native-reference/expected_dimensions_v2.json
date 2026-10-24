@@ -1,0 +1,86 @@
+{
+  "fixture_version": "p0-v2",
+  "blender_version": "5.2.2",
+  "unit_system": "METRIC",
+  "unit_scale": 1.0,
+  "display_length": "MILLIMETERS",
+  "geometry_units": "meters",
+  "up_axis": "Z",
+  "tolerance_mm": 0.001,
+  "objects": [
+    {
+      "name": "Cube_20mm",
+      "fixture_id": "p0-cube-20mm",
+      "dimensions_mm": [
+        20.0,
+        20.0,
+        20.0
+      ],
+      "location_mm": [
+        -20.0,
+        0.0,
+        10.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "rotation_degrees": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "color_rgba_linear": [
+        0.12,
+        0.42,
+        0.8,
+        1.0
+      ]
+    },
+    {
+      "name": "Cylinder_D10_H30mm",
+      "fixture_id": "p0-cylinder-d10-h30mm",
+      "dimensions_mm": [
+        10.0,
+        10.0,
+        30.0
+      ],
+      "location_mm": [
+        20.0,
+        0.0,
+        15.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "rotation_degrees": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "color_rgba_linear": [
+        0.95,
+        0.38,
+        0.1,
+        1.0
+      ]
+    }
+  ],
+  "later_acceptance": {
+    "translate_cube_x_mm": 10.0,
+    "cube_final_x_mm": -10.0,
+    "rotate_cube_z_degrees": 90.0,
+    "cad_rectangle_initial_mm": [
+      100.0,
+      60.0
+    ],
+    "cad_rectangle_changed_mm": [
+      120.0,
+      60.0
+    ],
+    "note": "Future checks, not implemented or passed by the P0 fixture. Coordinate conversion and transport units require team agreement."
+  }
+}
