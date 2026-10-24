@@ -1,0 +1,44 @@
+{
+  "v": 1,
+  "type": "voice.candidates",
+  "id": "c0e4a1b2d3f44a5b9c8d7e6f5a4b3c21",
+  "re": "5b1f0c7e9a2d4e61b3f8c0a4d6e2f917",
+  "payload": {
+    "resolution": "e3a9d1c4b7f24e0a8c6b5d4e3f2a1b09",
+    "decision": "run",
+    "reason": null,
+    "expires_in": 30,
+    "candidates": [
+      {
+        "choice": 1,
+        "say": "Array, 5 copies along Z",
+        "operator": "object.modifier_add",
+        "properties": {
+          "type": "ARRAY"
+        },
+        "set": {
+          "count": 5,
+          "relative_offset_displace": [
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "needs_target": true
+      },
+      {
+        "choice": 2,
+        "say": "Subdivision Surface, level 1",
+        "operator": "object.modifier_add",
+        "properties": {
+          "type": "SUBSURF"
+        },
+        "set": {
+          "levels": 1,
+          "render_levels": 1
+        },
+        "needs_target": true
+      }
+    ]
+  }
+}
