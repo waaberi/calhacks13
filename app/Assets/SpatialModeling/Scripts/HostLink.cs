@@ -144,7 +144,9 @@ namespace SpatialModeling
                 {
                     case "welcome":
                         var d = p?["document"] as JObject;
-                        Post(new HostEvent(HostEventKind.Welcome) { Text = (string)d?["name"] ?? "" });
+                        Post(new HostEvent(HostEventKind.Welcome) {
+                            Text = (string)d?["name"] ?? "", DocumentId = (string)d?["id"] ?? ""
+                        });
                         break;
                     case "scene.snapshot": Post(DecodeScene(p, snapshot: true)); break;
                     case "scene.update": Post(DecodeScene(p, snapshot: false)); break;
@@ -291,6 +293,7 @@ namespace SpatialModeling
         public readonly HostEventKind Kind;
         public string Text = "";   // Closed: why. Welcome: document name. Error: the host's message. Warning.
         public string Code = "";   // Error
+        public string DocumentId = "";
         public bool Snapshot;      // Scene
         public long? Revision;
         public readonly List<string> Removed = new List<string>();
