@@ -45,6 +45,7 @@ namespace SpatialModeling
             if (camera == null) return false;
             const int width = 1920, height = 1080;
             var previous = RenderTexture.active;
+            var previousTarget = camera.targetTexture;
             float aspect = camera.aspect;
             RenderTexture target = null, resolved = null;
             Texture2D pixels = null;
@@ -74,6 +75,7 @@ namespace SpatialModeling
             finally
             {
                 camera.aspect = aspect;
+                camera.targetTexture = previousTarget;
                 RenderTexture.active = previous;
                 if (resolved != null) RenderTexture.ReleaseTemporary(resolved);
                 if (target != null) { target.Release(); Object.Destroy(target); }
