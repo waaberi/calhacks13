@@ -79,3 +79,36 @@ software checks. The accepted `p1-capture-recovery-v20` executable remains the
 rollback artifact. Historical preparation notes in P2_LOCAL_RESULTS.md describe
 the earlier isolated candidate; the overnight user instruction authorizes this
 integration and supersedes that earlier hold.
+
+
+## Final cumulative software checkpoint
+
+Compiled source: `c491999e4a76211b83aba99617b4862f72b30abf`, containing frozen P1
+`5d7110dd7d077b3cb393b444f5f126b266a501a1` and prepared P2 `47c6b6a`.
+Windows build succeeded with zero errors. All real P1 gates and P2 checks passed.
+The final capture/launcher suite has **17 passing tests**, and Ruff passes across
+the relevant native/backend/capture/reference code.
+
+The actual Windows Player connected to its own ephemeral loopback native host,
+received a current snapshot, decoded a real native 10mm movement, created/deleted
+the sphere through the production receiver, explicitly marked a dropped session
+stale and applied a fresh reconnect snapshot. Native Undo/Redo invariance passed;
+client wire traffic remained hello/ping only. The exact binary passed normal
+close/relaunch and ten toggles/magnification/fresh-pixel smoke with exit0.
+
+Deliberately changing viewport content passed the exact Player live-pixel gate at
+full source detail/JPEG95/4:4:4, with no unavailable samples. Detailed timings and
+raw observations are in the local role evidence. An observed peak is not a
+sustained40fps certification, and the headset was inactive/standby (eye target0x0).
+Physical model visibility after Place, comfort, binocular quality, passthrough,
+controller usability and real second-PC/network acceptance remain pending.
+
+An earlier actual Player run exposed `ArgumentNullException(shader)` in table
+startup despite Editor/build passes. The fix clones the scene-referenced HostObject
+material so its shader is retained. Failed runs and harness-only failures remain
+preserved; the issue and repair are documented on
+[#45](https://github.com/waaberi/calhacks13/issues/45#issuecomment-6383306785).
+No required failure was converted into a pass. Main and the accepted v20 rollback
+artifact remain untouched.
+
+Runtime assembly SHA256: `52af0c54253b9f1e01591d3a505ee324b7d3cf3f4c81b0496a67b71a115a3db5`.
