@@ -4,7 +4,8 @@ One add-on, two roles chosen in the add-on preferences:
 
 - Host (Talia's PC) owns the document. It serves the Unity app on localhost and
   Client-role add-ons on the LAN, and applies every edit in Blender. Lives in
-  host.py (lifecycle) and server.py (networking, no bpy).
+  host.py (lifecycle), server.py (networking, no bpy) and lan.py (the LAN
+  port's session token and TLS, shared with the Client role).
 - Client (Lee Jae-yeon's PC) joins a host, mirrors its scene and sends edits
   as requests. Lives in remote_client/.
 
@@ -14,7 +15,11 @@ through bpy.app.timers. Never execute received data as Python.
 
 import bpy
 
-from . import host
+from . import host, lan
+
+
+def _restart(self, context):
+    host.restart()
 
 
 class SpatialModelingPreferences(bpy.types.AddonPreferences):
@@ -29,17 +34,103 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
         default="HOST",
         update=lambda self, context: host.sync(),
     )
+    lan_enabled: bpy.props.BoolProperty(
+        name="Let a Client-role Blender join over the LAN",
+        description=f"Listen on port {lan.PORT} for a second Blender with the session token",
+        default=False,
+        update=_restart,
+    )
+    lan_address: bpy.props.StringProperty(
+        name="Listen on",
+        description=(
+            f"{lan.ALL_INTERFACES} listens on every network interface of this PC. "
+            "Enter one of this PC's addresses to listen only there"
+        ),
+        default=lan.ALL_INTERFACES,
+        update=_restart,
+    )
+    lan_security: bpy.props.EnumProperty(
+        name="Security",
+        items=[
+            (
+                "TLS",
+                "TLS with the token",
+                "Encrypted. Only a Blender with the session token completes the handshake",
+            ),
+            (
+                "TOKEN",
+                "Token only, no TLS",
+                "Fallback if TLS fails: the token is sent in hello, unencrypted. Isolated routes only",
+            ),
+        ],
+        default="TLS",
+        update=_restart,
+    )
+    session_token: bpy.props.StringProperty(
+        name="Session token",
+        description=(
+            "Give this to the Client-role user. Generated when the LAN port starts if empty. "
+            "Kept in your Blender preferences, never in the project"
+        ),
+        update=_restart,
+    )
 
     def draw(self, context):
-        self.layout.prop(self, "role", expand=True)
-        self.layout.label(text=host.status)
+        layout = self.layout
+        layout.prop(self, "role", expand=True)
+        if self.role != "HOST":
+            layout.label(text=host.status)
+            return
+        layout.label(text=f"VR app: {host.status}")
+        box = layout.box()
+        box.prop(self, "lan_enabled")
+        col = box.column()
+        col.active = self.lan_enabled
+        col.prop(self, "lan_address")
+        col.row().prop(self, "lan_security", expand=True)
+        row = col.row(align=True)
+        row.prop(self, "session_token")
+        row.operator(CopySessionToken.bl_idname, text="", icon="COPYDOWN")
+        row.operator(NewSessionToken.bl_idname, text="", icon="FILE_REFRESH")
+        col.label(text=f"LAN: {host.lan_status}")
+        if self.lan_security == "TOKEN":
+            col.label(text="Without TLS anyone on the network can read the token.", icon="ERROR")
+
+
+class CopySessionToken(bpy.types.Operator):
+    """Copy the session token to the clipboard"""
+
+    bl_idname = "spatial_modeling.copy_session_token"
+    bl_label = "Copy Session Token"
+
+    def execute(self, context):
+        prefs = context.preferences.addons[__package__].preferences
+        context.window_manager.clipboard = prefs.session_token
+        self.report({"INFO"}, "Copied the session token")  # never the token itself
+        return {"FINISHED"}
+
+
+class NewSessionToken(bpy.types.Operator):
+    """Make a new random session token. Connected clients are disconnected"""
+
+    bl_idname = "spatial_modeling.new_session_token"
+    bl_label = "New Session Token"
+
+    def execute(self, context):
+        context.preferences.addons[__package__].preferences.session_token = lan.new_token()
+        return {"FINISHED"}
+
+
+CLASSES = (SpatialModelingPreferences, CopySessionToken, NewSessionToken)
 
 
 def register():
-    bpy.utils.register_class(SpatialModelingPreferences)
+    for cls in CLASSES:
+        bpy.utils.register_class(cls)
     host.register()
 
 
 def unregister():
     host.unregister()
-    bpy.utils.unregister_class(SpatialModelingPreferences)
+    for cls in reversed(CLASSES):
+        bpy.utils.unregister_class(cls)

@@ -1,9 +1,14 @@
-"""Host role lifecycle: run the localhost server while this Blender is the host.
+"""Host role lifecycle: run the server while this Blender is the host.
 
 The server runs while the add-on is enabled in Host role. It stops when the
 add-on is disabled, when the role changes to Client and while another .blend
 file loads, then starts again after the load. A timer drains its queue on
 Blender's main thread, so handlers may use bpy.
+
+It always serves the Unity app on 127.0.0.1:8765. When the preferences allow
+Client-role Blenders on the LAN, it also listens on port 8767 (lan.py). If the
+LAN port can't start, the localhost port still does. Changing a LAN preference
+restarts the server, which closes every connection; clients reconnect.
 
 Undo: operators run from a timer don't push their own undo step, so an edit
 silently merges into the previous one and a single Undo reverts both. Register
@@ -16,12 +21,14 @@ import functools
 import bpy
 from bpy.app.handlers import persistent
 
-from . import server
+from . import lan, server
 
 DRAIN_INTERVAL = 0.02  # seconds between queue drains
 
 _server = None
-status = "Stopped"  # shown in the add-on preferences
+_starting = False
+status = "Stopped"  # shown in the add-on preferences; never contains the token
+lan_status = "Off"
 
 
 def undoable(label):
@@ -44,9 +51,14 @@ def undoable(label):
     return wrap
 
 
-def _role():
+def _prefs():
     addon = bpy.context.preferences.addons.get(__package__)
-    return addon.preferences.role if addon and addon.preferences else "HOST"
+    return addon.preferences if addon else None
+
+
+def _role():
+    prefs = _prefs()
+    return prefs.role if prefs else "HOST"
 
 
 def _drain():
@@ -56,25 +68,72 @@ def _drain():
     return DRAIN_INTERVAL
 
 
+def _lan_listener(prefs):
+    """The LAN listener the preferences ask for, or None with lan_status saying why."""
+    global lan_status
+    if prefs is None or not prefs.lan_enabled:
+        lan_status = "Off"
+        return None
+    if not prefs.session_token.strip():
+        prefs.session_token = lan.new_token()  # kept in the user's Blender preferences only
+    token = prefs.session_token
+    try:
+        lan.normalize_token(token)
+        tls = lan.server_tls_context(token) if prefs.lan_security == "TLS" else None
+    except (lan.TokenError, NotImplementedError) as e:
+        lan_status = f"Not listening: {e}"
+        return None
+    address = prefs.lan_address.strip() or lan.ALL_INTERFACES
+    return server.Listener(address, lan.PORT, ssl=tls, token=None if tls else token)
+
+
+def _describe_lan(listener):
+    if listener.host == lan.ALL_INTERFACES:
+        here = lan.local_address()
+        where = f"all interfaces, port {listener.port}" + (f" (this PC: {here})" if here else "")
+    else:
+        where = f"{listener.host}:{listener.port}"
+    how = "TLS with the session token" if listener.ssl else "NO TLS, token in hello"
+    return f"Listening on {where}, {how}"
+
+
+def _start_server(extra):
+    srv = server.Server(extra_listeners=[extra] if extra else [])
+    srv.start()
+    return srv
+
+
 def start():
-    global _server, status
+    global _server, _starting, status, lan_status
     if _server is not None:
         return
-    srv = server.Server()
+    _starting = True  # setting a generated token must not restart us from its update callback
     try:
-        srv.start()
+        extra = _lan_listener(_prefs())
+        try:
+            srv = _start_server(extra)
+        except OSError as e:
+            if extra is None:
+                raise
+            lan_status = f"Not listening: {e}"  # the error names the address that failed
+            extra = None
+            srv = _start_server(None)  # the Unity app's port works without the LAN one
     except OSError as e:
-        status = f"Could not listen on {srv.host}:{srv.port}: {e}"
+        status = f"Could not listen on {server.HOST}:{server.PORT}: {e}"
         print("Spatial Modeling:", status)
         return
+    finally:
+        _starting = False
     _server = srv
     status = f"Listening on {srv.host}:{srv.port}"
+    if extra is not None:
+        lan_status = _describe_lan(extra)
     bpy.app.timers.register(_drain, first_interval=DRAIN_INTERVAL, persistent=True)
-    print("Spatial Modeling:", status)
+    print("Spatial Modeling:", status, "| LAN:", lan_status)
 
 
 def stop():
-    global _server, status
+    global _server, status, lan_status
     if bpy.app.timers.is_registered(_drain):
         bpy.app.timers.unregister(_drain)
     if _server is not None:
@@ -82,6 +141,7 @@ def stop():
         _server = None
         print("Spatial Modeling: stopped the host server")
     status = "Stopped"
+    lan_status = "Off"
 
 
 def sync():
@@ -92,6 +152,14 @@ def sync():
     else:
         stop()
         status = "Not hosting: this Blender is a Client"
+
+
+def restart():
+    """Apply changed LAN preferences. Closes every connection; clients reconnect."""
+    if _starting:
+        return
+    stop()
+    sync()
 
 
 @persistent
