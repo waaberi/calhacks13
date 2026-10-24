@@ -1,7 +1,7 @@
 {
   "dependencies": {
     "com.calhacks13.voicecore": {
-      "version": "file:/Users/jihyeon/Documents/GitHub/calhacks13/voice/VoiceCore",
+      "version": "file:../../voice/VoiceCore",
       "depth": 0,
       "source": "local",
       "dependencies": {}
