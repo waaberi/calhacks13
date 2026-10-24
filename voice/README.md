@@ -8,9 +8,11 @@ Owner: Waaberi. The Unity side, `VoiceUiAdapter.cs` in `app/`, is Jihyeon's.
 | --- | --- |
 | `VoiceCore/Runtime/` | Assembly `SpatialModeling.VoiceCore`, no Unity or Vosk references: `VoiceSession` (conversation memory), `HostCommand` (mapping to the contract), `VoiceInput` (recognizer on a worker thread), `PcmConverter`, `Prompt`. |
 | `VoiceCore/Vosk/` | Assembly `SpatialModeling.VoiceCore.Vosk`: `VoskSpeechRecognizer` on libvosk's C API. It compiles without the native library. |
+| `VoiceCore/Whisper/` | Assembly `SpatialModeling.VoiceCore.Whisper`, no Unity references: `VoiceRecognizers.Create` (the app's recognizer), `FastPathRecognizer` (Vosk first, Whisper when Vosk isn't sure), `WhisperServerRecognizer` and `WhisperServer` (a local whisper.cpp server the app starts and stops), `PhraseSnapper`. See [Choosing the recognizer](#choosing-the-recognizer). |
 | `VoiceCore/Prompts/Resources/VoiceCorePrompts/` | One clip per `Prompt`, made by `make-prompts.py`. |
 | `VoiceCore/Plugins/` | Vosk's native libraries, from `fetch-vosk.sh`. Not in Git. |
 | `fetch-model.sh`, `fetch-vosk.sh` | Download the pinned model and native libraries, with SHA-256 checks. |
+| `fetch-whisper.sh` | Downloads the pinned whisper-server for Windows and the tiny.en and base.en models, with SHA-256 checks. |
 | `VoskSpike/` | Measures real recognition on audio files through the same path as the app. |
 
 ## Setup on every machine
@@ -21,8 +23,14 @@ From the repository root (Git Bash on Windows):
 voice/fetch-vosk.sh                                # native libraries into voice/VoiceCore/Plugins/
 voice/fetch-model.sh app/Assets/StreamingAssets    # model for the app (also in the Windows build)
 voice/fetch-model.sh                               # model for the tests and the spike, in voice/models/
+voice/fetch-whisper.sh app/Assets/StreamingAssets  # whisper-server.exe and its models for the app (Windows)
 dotnet test tests/voice
 ```
+
+`fetch-whisper.sh` puts about 240 MB into `StreamingAssets/whisper/`, which is never committed. The Windows PC that
+runs the app needs the [Visual C++ 2015-2022 Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe)
+for whisper-server.exe; most PCs with games or Unity already have it. Without the download the app runs as before, on
+Vosk alone.
 
 Run `fetch-vosk.sh` before opening Unity. Without it everything still compiles, and `VoiceInput.Error` reports the
 missing library at run time.
@@ -56,7 +64,7 @@ its `Command` if there is one.
 
 ```csharp
 using SpatialModeling.VoiceCore;
-using SpatialModeling.VoiceCore.Vosk;
+using SpatialModeling.VoiceCore.Whisper;
 
 VoiceSession session = new VoiceSession();
 VoiceInput input;
@@ -66,8 +74,8 @@ int read;
 
 void Start()
 {
-    string model = Path.Combine(Application.streamingAssetsPath, VoskSpeechRecognizer.ModelName);
-    input = new VoiceInput(() => VoskSpeechRecognizer.Load(model));      // input.Error says why if it fails
+    var recognizer = VoiceRecognizerSettings.ForStreamingAssets(Application.streamingAssetsPath, Debug.Log);
+    input = new VoiceInput(() => VoiceRecognizers.Create(recognizer));  // input.Error says why if it fails
     Microphone.GetDeviceCaps(null, out int min, out int max);
     int rate = min == 0 && max == 0 ? 16000 : Mathf.Clamp(16000, min, max);
     mic = Microphone.Start(null, true, 1, rate);                         // a 1 s ring buffer
@@ -113,6 +121,105 @@ void Handle(VoiceTurn turn)
     SendCommand(payload, turn.Command.RequiresConfirmation);         // Delete waits for the controller confirmation
 }
 ```
+
+## Choosing the recognizer
+
+The app makes its recognizer with `VoiceRecognizers.Create(settings)` inside VoiceInput's factory, so it runs on
+VoiceInput's worker thread and never stalls a frame. `VoiceRecognizerSettings.ForStreamingAssets(path, log)` fills in
+the paths of `fetch-model.sh` and `fetch-whisper.sh`; `log` (for example `Debug.Log`) says which recognizer runs and why.
+
+| `Kind` | What it does |
+| --- | --- |
+| `FastPath` (default) | Vosk in grammar mode answers when it heard exactly one grammar phrase at confidence 0.9 or more (about 7 ms after release). Otherwise whisper tiny.en decodes the utterance (about 0.45 s on 4 CPU threads) and its transcript is snapped onto the grammar. If whisper-server can't start (no download, no VC++ runtime), it logs why and runs Vosk alone. |
+| `Vosk` | Vosk alone, VoiceCore's behaviour before Whisper. Use it for an open microphone: the fast path answers on release only. |
+| `Whisper` | Whisper for every utterance. For measurements. |
+
+**What Whisper's text turns into.** Whisper is trained on real speech, so it hears real voices better than Vosk's small
+model, but it writes free text ("At a cone.", "Rotate it 90°."). `PhraseSnapper` maps it onto the grammar with the
+parser's tokenizer: either the closest single phrase by character similarity, or a split into consecutive grammar
+phrases the way Vosk chains them, whichever is closer. Repeated words ("left, left, left") count once. Then:
+
+- word for word (at most some words left out): the result's confidence is the similarity, 1 when nothing was dropped;
+- words replaced ("devil" became "bevel"): a guess, confidence at most 0.49, just under `MinConfidence`. Today that gives
+  the LowConfidence prompt; once results below `MinConfidence` reach the host, the host may only ask about it;
+- similarity under 0.65: chatter, nothing is raised (no prompt).
+
+The prompt is the Blender vocabulary prompt plus the grammar's other words (object names, choice words), up to 600
+characters.
+
+**whisper-server.** `WhisperServer` starts `StreamingAssets/whisper/whisper-server.exe -m ggml-tiny.en.bin --host
+127.0.0.1 --port 8178 -t 4 -l en -nt -ng` (CPU only: the GPU renders VR) without a console window, while Vosk loads
+its model. It waits for `/health`, warms the model up with half a second of silence (about 0.5 s in total for tiny.en,
+1 s for base.en) and is killed when VoiceInput is disposed. A server already answering on the port, for example one
+left over from a crash, is reused. If the server dies, it is started again at the next utterance; an utterance whose
+request fails or takes longer than 4 s gets Vosk's result instead. It listens on 127.0.0.1 only, so Windows asks no
+firewall question. Settings: `WhisperModel` (`ggml-tiny.en.bin`, or `ggml-base.en.bin`), `WhisperPort`,
+`WhisperThreads`, `WhisperTimeoutMs`, `PromptWithGrammar`, `WhisperGuessConfidence` (1 lets guesses run),
+`SnapThreshold`, `MinFastConfidence`.
+
+**In the Unity adapter** the change is one line, plus `using SpatialModeling.VoiceCore.Whisper;`:
+
+```csharp
+// before: input = new VoiceInput(() => VoskSpeechRecognizer.Load(model));
+input = new VoiceInput(() => VoiceRecognizers.Create(
+    VoiceRecognizerSettings.ForStreamingAssets(Application.streamingAssetsPath, m => Debug.Log("[Voice] " + m))));
+```
+
+**Tests on Linux or macOS.** The unit tests need nothing. `WhisperIntegrationTests` run a real whisper-server and are
+skipped without one (CI has none). There is no prebuilt server for Linux or macOS; build whisper.cpp v1.9.5:
+
+```sh
+git clone --depth 1 --branch v1.9.5 https://github.com/ggml-org/whisper.cpp /tmp/whisper.cpp
+cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF
+cmake --build /tmp/whisper.cpp/build --target whisper-server -j
+voice/fetch-whisper.sh --models-only                         # models into voice/models/whisper/
+cp /tmp/whisper.cpp/build/bin/whisper-server voice/models/whisper/
+dotnet test tests/voice
+```
+
+`WHISPER_SERVER` (the executable) and `WHISPER_MODELS` (the folder with the models) point the tests elsewhere.
+
+### Measured (Linux, Ryzen AI 9 HX 370, CPU, 4 threads)
+
+Through the repo's `VoiceInput` and `VoiceRecognizers.Create`, with the grammar the app will use after the host's phrase
+list lands (VoiceSession's words plus the 428 phrases of `match_v2.grammar_phrases('demo')`), scored through the
+voice-matching study's emulation of VoiceCore's routing and the host resolver, where results under confidence 0.5 may
+only be asked about. Latencies were taken at a load average of 3 to 6 on 24 threads.
+
+| | Vosk alone | Fast path, tiny.en |
+| --- | --- | --- |
+| Real speech: 1,008 Speech Commands clips, 220 speakers, 35-word grammar (right / wrong)¹ | 961 / 30 | 962 / 21 (base.en: 964 / 16) |
+| TTS corpus (5 voices): 270 commands and choice words, top-1 / wrong runs / run or asked right | 244 / 0 / 87% | 247 / 1 / 88% |
+| the same corpus: 20 chatter clips that ran / were asked about | 1 / 3 | 0 / 0 |
+| realvoice kit², 108 commands per condition, top-1 / wrong runs / run or asked right: clean | 96 / 0 / 86% | 91 / 1 / 81% |
+| first 200 ms cut off | 54 / 2 / 39% | 62 / 3 / 56% |
+| far microphone | 91 / 1 / 82% | 83 / 1 / 74% |
+| phone band | 86 / 2 / 78% | 88 / 2 / 80% |
+| all three ("Lee-like"); 8 chatter clips ran | 26 / 6 / 20%; 3 | 30 / 4 / 27%; 0 |
+
+| Release to text, 58 Piper clips, 3 repeats | median of medians | whisper-server CPU per utterance |
+| --- | --- | --- |
+| Vosk (the fast path answered 165 of the 290 corpus clips) | 7 ms | – |
+| whisper tiny.en, Blender and grammar prompt | 464 ms (466 / 464 / 464) | 1.8 s |
+| whisper tiny.en, Blender prompt only | 426 ms | 1.6 s |
+| whisper base.en, Blender and grammar prompt | 1,004 ms (1,010 / 1,004 / 1,003) | 3.9 s |
+
+¹ Google Speech Commands v0.02 test set (CC BY 4.0). Vosk through `VoiceInput` on the clips padded 300 ms before and
+150 ms after, Whisper on the clips with a prompt of the 35 words; combined offline with this `PhraseSnapper` and the
+fast-path rule. Whisper alone, snapped: tiny.en 909 / 29, base.en 913 / 27.
+² Piper and espeak-en-us clips of the corpus, degraded to mimic what went wrong in #93 (cut-off starts, a distant laptop
+microphone, a narrow band).
+
+So on TTS the fast path is no better than Vosk with the full phrase grammar: it wins on cut-off and narrow-band audio,
+loses on clean and distant audio, and runs fewer wrong commands and less chatter. Its case rests on real voices, where
+Vosk's small model with today's word grammar got 3 of 20 intended commands in #93; the team's own recordings are the
+test that decides.
+
+tiny.en is the default: base.en is no more accurate here (2 more right of 1,008 real clips, 3 fewer of 270 on the TTS
+corpus) and takes twice as long and twice the CPU. Whisper alone on real single words is worse than Vosk (909 of 1,008),
+which is why Vosk answers first. The grammar words in the prompt are worth 9 of 270 for 38 ms. All but the Speech
+Commands rows are TTS, so treat them as a proxy for real voices; the Quest microphone over Air Link is unmeasured.
+On the demo PC the CPU also runs Unity and Blender, so expect whisper to be slower there.
 
 ## Windows checks (Lee, #93)
 

@@ -11,6 +11,8 @@ namespace SpatialModeling.VoiceCore.Whisper
     /// fast results go out as they are, which is VoiceCore's behaviour without Whisper.
     /// Measured on the TTS corpus with Vosk G2 and whisper tiny.en (voice-asr-alternatives study): 196/250 commands
     /// top-1 vs 151 for Vosk alone, 0/20 and 0/48 chatter accepted, and 65% of utterances on the fast path.
+    /// Needs push-to-talk: results come out at <see cref="Stop"/>, so with an open microphone (Start once, never
+    /// Stop) use Vosk alone.
     /// </summary>
     public sealed class FastPathRecognizer : ISpeechRecognizer
     {
