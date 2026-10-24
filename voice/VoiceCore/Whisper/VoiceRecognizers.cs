@@ -44,6 +44,13 @@ namespace SpatialModeling.VoiceCore.Whisper
         /// <summary>CPU threads per decode (measured: 4).</summary>
         public int WhisperThreads = 4;
 
+        /// <summary>
+        /// Decode on the GPU: null (the default) does when <see cref="WhisperFolder"/> holds the CUDA build
+        /// (<c>voice/fetch-whisper.sh --cuda</c>, see <see cref="WhisperServer.HasGpuBuild"/>); true or false forces it.
+        /// The CPU build always decodes on the CPU.
+        /// </summary>
+        public bool? WhisperUseGpu;
+
         /// <summary>Longest wait for a transcript; after it the utterance falls back to Vosk's result.</summary>
         public int WhisperTimeoutMs = 4000;
 
@@ -95,6 +102,15 @@ namespace SpatialModeling.VoiceCore.Whisper
     /// Builds the app's recognizer, so the Unity adapter changes one line:
     /// <c>new VoiceInput(() =&gt; VoiceRecognizers.Create(settings))</c>. Runs on VoiceInput's worker thread: loading
     /// Vosk and starting whisper-server happen side by side there, never on a frame.
+    /// <para><b>GPU or CPU.</b> Which whisper-server runs is decided by what <c>voice/fetch-whisper.sh</c> put in
+    /// StreamingAssets/whisper, not here. On a Windows PC with an NVIDIA GPU (the demo PC), prefer the CUDA 12.4 build
+    /// (<c>voice/fetch-whisper.sh --cuda app/Assets/StreamingAssets</c>, about 690 MB, needs an NVIDIA driver for
+    /// CUDA 12.4 or later): <see cref="VoiceRecognizerSettings.WhisperUseGpu"/> then lets it decode on the GPU
+    /// (a Linux GPU build took 18-22 ms for tiny.en on an idle RTX 5070 Ti, against about 460 ms on 4 CPU threads; the
+    /// Windows CUDA build and a GPU busy rendering VR are unmeasured, so set WhisperUseGpu = false if frames drop or
+    /// it fails to start, which falls back as below). Everywhere else use the CPU
+    /// build (the default download) with tiny.en (<see cref="VoiceRecognizerSettings.WhisperModel"/>). If
+    /// whisper-server can't start at all (no driver, no VC++ runtime), FastPath falls back to Vosk alone and logs why.</para>
     /// </summary>
     public static class VoiceRecognizers
     {
@@ -160,7 +176,7 @@ namespace SpatialModeling.VoiceCore.Whisper
 
         static WhisperServer Server(VoiceRecognizerSettings settings, Action<string> log) =>
             new WhisperServer(settings.ExecutablePath(), settings.ModelPath(), settings.WhisperPort, settings.WhisperThreads,
-                settings.WhisperStartTimeoutMs, log);
+                settings.WhisperStartTimeoutMs, log, settings.WhisperUseGpu ?? WhisperServer.HasGpuBuild(settings.ExecutablePath()));
 
         static WhisperServerRecognizer Recognizer(VoiceRecognizerSettings settings, WhisperServer server) =>
             new WhisperServerRecognizer(settings.WhisperPort, settings.WhisperPrompt, settings.PromptWithGrammar,

@@ -139,16 +139,37 @@ model, but it writes free text ("At a cone.", "Rotate it 90°."). `PhraseSnapper
 parser's tokenizer: either the closest single phrase by character similarity, or a split into consecutive grammar
 phrases the way Vosk chains them, whichever is closer. Repeated words ("left, left, left") count once. Then:
 
-- word for word (at most some words left out): the result's confidence is the similarity, 1 when nothing was dropped;
+- word for word (at most some words left out, or a word the grammar doesn't know turned into the grammar's form of it:
+  "add a mirror, modify," gives "add a mirror modifier"): the result's confidence is the similarity, 1 when nothing
+  was dropped;
 - words replaced ("devil" became "bevel"): a guess, confidence at most 0.49, just under `MinConfidence`. Today that gives
   the LowConfidence prompt; once results below `MinConfidence` reach the host, the host may only ask about it;
-- similarity under 0.65: chatter, nothing is raised (no prompt).
+- a word the grammar knows is never turned into another form of it: "make it smooth." can't become "make it smoother"
+  (with "make it smooth" in the host grammar, #147, it is exact);
+- similarity under 0.65: speech that is no command. It raises `WhisperServerRecognizer.NoResult`, a result with text
+  "" and confidence 0, so the app can say "didn't catch that" (`WhisperServerRecognizer.IsNoResult`).
+  `VoiceSession.Hear` ignores a result without text, so nothing changes for a session that doesn't look for it.
+
+**No speech raises nothing.** Before Whisper is asked, a speech gate needs three 30 ms frames at RMS 100 (-50 dBFS) or
+more (`WhisperServerRecognizer.DefaultMinSpeechRms`; the quietest of 1,100 real Speech Commands clips reached 293, the
+silent press of the Unity run 0). Whisper's silence hallucinations ("you", "thank you", "thanks for watching", "bye",
+"[BLANK_AUDIO]", "(music)", a lone "um") are dropped too; in `FastPath` only when Vosk heard nothing, so a "you" that
+Vosk also heard goes out. So an accidental press of push-to-talk says nothing; `FastPathRecognizer.LastOutcome` is
+`Silence`.
+
+Measured on whisper tiny.en's transcripts (290 TTS clips, 48 chatter clips, the 16 of the Unity run) against the host
+grammar the Unity run used: the TTS commands that run and the chatter accepted are unchanged (chatter 18 of 68
+accepted, 6 above 0.5, as before); 8 commands that were guesses now run word for word ("make it symmetric", "add a
+screw modifier", "add a subdivision surface modifier level two"). With #147's new phrases every cue-card transcript
+of the Unity run snaps right: "make it smooth", "smooth the object", "add a mirror modifier" (0.90, runs), "subdivide
+it twice", "subdivide level two". Tried and left out: letting every grammar word stand alone in the phrase sequence;
+it kept "make it smooth" too, but three more chatter clips would have run ("wait on a second").
 
 The prompt is the Blender vocabulary prompt plus the grammar's other words (object names, choice words), up to 600
 characters.
 
 **whisper-server.** `WhisperServer` starts `StreamingAssets/whisper/whisper-server.exe -m ggml-tiny.en.bin --host
-127.0.0.1 --port 8178 -t 4 -l en -nt -ng` (CPU only: the GPU renders VR) without a console window, while Vosk loads
+127.0.0.1 --port 8178 -t 4 -l en -nt -ng` (CPU only; without `-ng` for the CUDA build, see below) without a console window, while Vosk loads
 its model. It waits for `/health`, warms the model up with half a second of silence (about 0.5 s in total for tiny.en,
 1 s for base.en) and is killed when VoiceInput is disposed. It runs at below-normal priority, so a decode never delays
 a VR frame. On Windows it first checks for the VC++ runtime DLLs: without them Windows would show a "DLL was not found"
@@ -159,7 +180,15 @@ dies or goes away, it is started again at the next utterance, once: if that fail
 utterance whose request fails or takes longer than 4 s gets Vosk's result instead. It listens on 127.0.0.1 only, so
 Windows asks no firewall question. Settings: `WhisperModel` (`ggml-tiny.en.bin`, or `ggml-base.en.bin`),
 `WhisperPort`, `WhisperThreads`, `WhisperTimeoutMs`, `WhisperStartTimeoutMs`, `PromptWithGrammar`,
-`WhisperGuessConfidence` (1 lets guesses run), `SnapThreshold`, `MinFastConfidence`.
+`WhisperGuessConfidence` (1 lets guesses run), `SnapThreshold`, `MinFastConfidence`, `WhisperUseGpu`.
+
+**GPU or CPU.** On a Windows PC with an NVIDIA GPU, prefer the CUDA 12.4 build of the same release:
+`voice/fetch-whisper.sh --cuda app/Assets/StreamingAssets` (685 MB zip, SHA-256 pinned; about 1.2 GB unpacked with
+cuBLAS; needs an NVIDIA driver for CUDA 12.4 or later). With `ggml-cuda.dll` in the folder, `WhisperUseGpu` (null:
+auto) drops `-ng` and the GPU decodes; a Linux GPU build took 18-22 ms for tiny.en on an idle RTX 5070 Ti, against
+about 460 ms on the CPU. The Windows CUDA build and a GPU busy rendering VR are unmeasured: set `WhisperUseGpu = false`
+if frames drop. Without an NVIDIA GPU use the default CPU build with tiny.en. Running the script again with or without
+`--cuda` swaps the build.
 
 **In the Unity adapter** the change is one line, plus `using SpatialModeling.VoiceCore.Whisper;`:
 
