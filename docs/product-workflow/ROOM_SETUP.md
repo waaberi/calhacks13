@@ -76,6 +76,51 @@ acceptance is implied by software tests. The original entire P2 menu is already
 accepted; do not ask for another menu exercise. Keep room geometry private/local.
 No FPS work, P2.5/other-phase implementation or main merge is included.
 
+## Build and install the separate companion
+
+Use `app/build_room_setup.py quest --editor <Unity-with-Android-support>
+--output <new-outside-worktree-path>/RoomSetup.apk --log <outside-worktree-log>`.
+The wrapper restores the tracked PC settings after the serialized build and rejects
+a reused artifact path. A successful build must report zero errors. Keep generated
+Unity/Android outputs outside the OneDrive source workspace.
+
+`app/install_room_setup.ps1 -Adb <adb.exe> -Apk <RoomSetup.apk> -Launch` installs
+only after ADB reports an authorized device and resolves the actual Android launch
+activity. It does not uninstall an existing app on a signature mismatch. Leave Link
+and run the companion on the headset; this does not replace the Windows Blender app.
+
+Meta requires headset Developer Mode for this local APK deployment. Its current
+supported setup path is the **Meta Horizon phone app → headset icon → paired Quest
+→ Headset Settings → Developer Mode**. The developer account/team prerequisites
+are described in Meta's device-setup guide. A USB file-access or Link prompt is
+different from **Allow USB debugging**; accept the debugging prompt on the headset.
+
+In this session, USB PID5010 exposed healthy Link interfaces but no ADB interface.
+The installed, signed Meta driver already supported the correct ADB hardware ID;
+restarting ADB did not repair detection. Enabling Developer Mode changed the USB
+configuration to PID5013 and exposed the signed ADB interface immediately. ADB then
+reported `unauthorized`, correctly requiring the headset's debugging confirmation.
+This was a headset development prerequisite, not evidence of a Windows firewall or
+driver failure, nor evidence about saved-room availability. Do not force a Link
+interface onto an ADB driver or weaken firewall/security settings for this symptom.
+
+The first Android build compiled the scene checks, C# and ARM64 libraries, then
+failed on five Google/Maven artifact download timeouts. The exact official JARs
+and POMs were downloaded in bounded HTTPS ranges and checked against publisher
+SHA1 values; every complete JAR also passed ZIP CRC checks. A local Maven
+repository supplied those five modules, and the same `:launcher:assembleRelease`
+target used by Unity passed offline (119 tasks, exit 0). Copying artifact files
+into Gradle's cache alone did not create its metadata, so that initial recovery
+attempt failed. An interim root aggregate target also attempted an unnecessary
+standalone Unity-library AAR whose app icon/name belong to the launcher; the
+launcher target is the correct APK target. All failed logs are retained.
+
+Verified companion APK SHA256:
+`3d15562b08201cc755f54d7b4823792cc423b210e97479dc799dc2b09662c6a4`.
+APK signature verification passed, package `com.calhacks13.roomsetup`, ARM64,
+min SDK29 / target36, with scene and anchor permissions. This establishes a
+built APK, not successful installation, room-data access or physical fit.
+
 ## Official references
 
 - [Scene model and on-device Space Setup](https://developers.meta.com/vr/documentation/unity/unity-scene-build-mixed-reality/)
@@ -83,6 +128,8 @@ No FPS work, P2.5/other-phase implementation or main merge is included.
 - [MRUK samples and EffectMesh](https://developers.meta.com/vr/documentation/unity/unity-mr-utility-kit-samples/)
 - [Scene mesh and MRUK migration](https://developers.meta.com/vr/documentation/unity/unity-scene-migrate-mruk/)
 - [Official Spatial SDK MRUK capture/reload reference](https://github.com/meta-quest/Meta-Spatial-SDK-Samples/blob/main/MrukSample/app/src/main/java/com/meta/spatial/samples/mruksample/anchor_mesh/MrukAnchorMeshSampleActivity.kt)
+- [Developer Mode, Windows drivers and USB debugging setup](https://developers.meta.com/vr/documentation/native/android/mobile-device-setup/)
+- [Official ADB connection troubleshooting](https://developers.meta.com/vr/documentation/native/android/ts-adb/)
 
 SDK207 explicitly disables the archived HiFi V2 model and falls back to V1. This
 implementation does not promise that archived API. Quest3S supports the ordinary
