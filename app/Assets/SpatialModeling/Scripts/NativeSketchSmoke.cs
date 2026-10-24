@@ -77,12 +77,12 @@ namespace SpatialModeling
             foreach (JObject e in (JArray)session.Sketches[angleSketch]["entities"]) if ((string)e["kind"] == "line") { var ep = (JArray)e["points"]; vectors.Add(anglePoints[(string)ep[1]] - anglePoints[(string)ep[0]]); }
             if (Math.Abs(Vector2.Angle(vectors[0], vectors[1]) - 90) > 0.01) { Fail("90degree dimension did not change real solved line geometry"); yield break; }
             menu.Home(); if (!Click("Save") || !Click("Apply")) yield break; yield return Receipt("save editable sketches"); if (failed) yield break;
-            report["sketches"] = new JArray(session.Sketches.Values); report["passed"] = true; Write();
+            report["sketches"] = new JArray(session.Sketches.Values); Write();
             yield return null; yield return null;
             int activeLines = 0; foreach (var line in scene.Placement.GetComponentsInChildren<LineRenderer>())
                 if (line.isActiveAndEnabled && line.gameObject.activeInHierarchy && line.positionCount > 1 && line.sharedMaterial != null) activeLines++;
             if (activeLines == 0) { Fail("Native solver records exist but no active solved-geometry line renderer is visible after placement"); yield break; }
-            report["active_solved_line_renderers"] = activeLines; Write();
+            report["active_solved_line_renderers"] = activeLines; report["passed"] = true; Write();
             SketchHome(); ScreenCapture.CaptureScreenshot(Path.ChangeExtension(output, ".png"));
             Debug.Log("P3_CAD_PLAYER_SMOKE PASS actual menu/native solver/100x60to120x60/conflict/UndoRedo/circle/angle/Save");
             yield return new WaitForSecondsRealtime(2); WorkspaceShutdown.Quit(0);
