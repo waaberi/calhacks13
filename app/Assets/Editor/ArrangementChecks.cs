@@ -96,6 +96,10 @@ public static class ArrangementChecks
             level.SetPositionAndRotation(moved.position,moved.rotation);
             typeof(WorkspaceSurfaces).GetMethod("LateUpdate",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(provider,null);
             Near(provider.Surfaces.Single().Pose.position,moved.position,"placed plane reads the moved grid's world pose exactly once");
+            var detectedSurfaces=(List<WorkspaceSurfaces.Surface>)typeof(WorkspaceSurfaces).GetField("detected",BindingFlags.Instance|BindingFlags.NonPublic).GetValue(provider);
+            detectedSurfaces.Add(desk); detectedSurfaces.Add(wall);
+            typeof(WorkspaceSurfaces).GetMethod("RebuildSurfaces",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(provider,null);
+            Check(provider.Surfaces.Count==2 && provider.Surfaces.Count(s=>s.Name=="Desk")==1,"manual desk replaces inaccurate automatic desk, while automatic wall remains usable");
             provider.ToggleAutomatic();
             Check(!provider.AutomaticEnabled && provider.LevelCount==1,"turning off an inaccurate room scan preserves manual levels");
             typeof(WorkspaceSurfaces).GetMethod("LateUpdate",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(provider,null);

@@ -36,6 +36,7 @@ namespace SpatialModeling
             : "Auto detection OFF · levels " + levels.Count;
         public int LevelCount => levels.Count;
         string message = "Checking saved room";
+        string lastCounts;
         bool loading, disposed, reloadPending, wasPresent;
         int generation, attempts, roomCount;
         float retryAt;
@@ -299,6 +300,8 @@ namespace SpatialModeling
                 catch (Exception error) { if(invalidLogged.Add(item.Anchor.Uuid)) Debug.LogWarning("WORKSPACE_SURFACES invalid surface " + error.GetType().Name); }
             }
             foreach (var item in candidates) if (roomCount == 1 || item.room == currentRoom) detected.Add(item.surface);
+            var counts=Counts(detected);
+            if(counts!=lastCounts) { lastCounts=counts; Debug.Log("WORKSPACE_SURFACES localized " + counts); }
             if (!loading && anchors.Count > 0) message = detected.Count > 0 ? "Saved room loaded" : "Room not localized · look around or use a level";
             foreach (var level in levels)
             {
