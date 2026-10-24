@@ -25,7 +25,15 @@ namespace SpatialModeling
             Session.SceneCurrent = scene.IsCurrent;
             if (e.Kind == HostEventKind.Closed) { connected = false; Session.Disconnect(e.Text); }
             if (e.Kind == HostEventKind.InvalidScene) { Session.Disconnect("Native scene was rejected; waiting for a valid reconnect snapshot"); return; }
-            if (e.RawMessage != null) Session.Receive(e.RawMessage);
+            if (e.RawMessage != null)
+            {
+                try { Session.Receive(e.RawMessage); }
+                catch (Exception error)
+                {
+                    Session.Disconnect("Invalid editing state from Blender; reconnect required");
+                    Debug.LogWarning("P3 rejected malformed host editing state: " + error.Message);
+                }
+            }
         }
 
         void Update()
