@@ -43,6 +43,7 @@ namespace SpatialModeling
             go.AddComponent<NativeEditBridge>();
             go.AddComponent<WorkspaceNativeMenu>();
             go.AddComponent<NativeOwnershipOverlay>();
+            go.AddComponent<NativeSketchEditor>();
         }
 
         void OnEnable()
@@ -241,6 +242,7 @@ namespace SpatialModeling
                 || double.IsNaN(value) || double.IsInfinity(value)) throw new FormatException("Enter a finite number using a decimal point");
             return value;
         }
+        public void ShowError(string error) { localError = error; Refresh(); }
         public JArray Values(int first, int count, double multiplier, bool positive = false)
         {
             var values = new JArray();
