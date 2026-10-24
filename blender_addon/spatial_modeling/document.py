@@ -54,6 +54,7 @@ class Document:
         self.open_epoch = uuid.uuid4().hex
         self.revision = 0  # P2: goes up with every accepted change
         self._id = None
+        self._dirty = None  # what a command did this tick, ahead of Blender's flag; see saved()
 
     @property
     def id(self):
@@ -68,6 +69,27 @@ class Document:
             if scene.library is None and scene.get(ID_PROPERTY) != self.id:
                 scene[ID_PROPERTY] = self.id
 
+    def saved(self):
+        """A command just saved the file (edits.py).
+
+        bpy.data.is_dirty stays set until Blender's event loop handles the save
+        notifier, after the timer tick that saved (and never in background
+        Blender). So describe() reports a clean file until the next tick or edit.
+        """
+        self._dirty = False
+
+    def edited(self):
+        """A command is changing Blender (edits.py), before its Undo step sets is_dirty.
+
+        Its scene.update goes out before the step is pushed, so describe()
+        reports unsaved changes from now until the next tick.
+        """
+        self._dirty = True
+
+    def tick(self):
+        """host.py calls this before each drain; by then Blender's own flag is current."""
+        self._dirty = None
+
     def describe(self):
         """The `document` object that welcome and scene.snapshot carry."""
         return {
@@ -75,6 +97,6 @@ class Document:
             "open_epoch": self.open_epoch,
             "name": bpy.path.basename(bpy.data.filepath) or None,
             "revision": self.revision,
-            "dirty": bpy.data.is_dirty,
+            "dirty": bpy.data.is_dirty if self._dirty is None else self._dirty,
             "units": units(_scene()),
         }

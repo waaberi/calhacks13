@@ -1,6 +1,6 @@
 """Install the add-on into a real Blender and check the Host role: lifecycle, ping, LAN port,
-Connecting and the live scene (snapshots and scene.update for direct edits, Undo/Redo, add,
-duplicate and delete, on both ports).
+Connecting, the live scene (snapshots and scene.update for direct edits, Undo/Redo, add,
+duplicate and delete, on both ports) and native commands.
 
 BLENDER_USER_RESOURCES must point at a throwaway directory, so your own Blender
 preferences and extensions are untouched:
@@ -19,12 +19,19 @@ if every check passed.
 The LAN port is checked on 127.0.0.1, so nothing is exposed on this PC's
 network, with clients both inside this Blender and in a separate process
 (ping_client.py run by this Blender's own Python, sys.executable).
+
+The command check edits a millimeter scene from a VR-role client, reads every
+result back from Blender's own data, checks Undo/Redo, deduplication and
+receipts, saves, and reopens the file in a fresh Blender process. Then the
+Client role edits once with "Let the Client role edit (test only)" on.
 """
 
 import json
+import math
 import os
 import socket
 import ssl
+import struct
 import subprocess
 import sys
 import tempfile
@@ -567,15 +574,297 @@ def watched_edits(prefs, sync):
     u = yield from scene_update(watchers, m, "the Bevel", changes("Cube", lambda o: "mesh" in o))
     assert len(by_name(u)["Cube"]["mesh"]["indices"]) > 36, u
     log("a modifier sends the evaluated mesh")
-
-    command = protocol.message("command", {})  # the Client role can't edit (P3A-W-3)
-    lee.send(command)
-    yield from wait(lambda: any(msg.get("re") == command["id"] for msg in watchers[1].messages),
-                    "the reply to Lee's command")
-    reply = next(msg for msg in watchers[1].messages if msg.get("re") == command["id"])
-    assert reply["type"] == "error", reply
     talia.close()
     lee.close()
+
+
+def f32(x):
+    """x as Blender stores it: a 32-bit float."""
+    return struct.unpack("f", struct.pack("f", x))[0]
+
+
+def ask(peer, msg):
+    """Send msg from a worker thread; yields until its reply. Returns (messages before, reply)."""
+
+    def run():
+        peer.send(msg)
+        before = []
+        while (reply := peer.recv()) is not None and reply.get("re") != msg["id"]:
+            before.append(reply)
+        return before, reply
+
+    return (yield from off_thread(run, f"the reply to {msg['payload'].get('op', msg['type'])}"))
+
+
+class Commander:
+    """Sends one joined client's commands, built as an up-to-date client would."""
+
+    def __init__(self, peer, welcome):
+        self.peer, self.welcome = peer, welcome
+
+    def command(self, op, target=None, args=None, generation=None):
+        """A command at the current revision, for the target's current generation."""
+        w = self.welcome
+        payload = {
+            "session_id": w["session_id"], "host_epoch": w["host_epoch"],
+            "document_id": w["document"]["id"], "open_epoch": w["document"]["open_epoch"],
+            "actor_id": w["actor_id"],
+            "base_revision": mod("host")._session.document()["revision"],  # after a flush
+            "source": "ui", "op": op, "args": args or {},
+        }
+        if target is not None:
+            current = mod("sync").generation(target)
+            payload["target"] = {"id": target,
+                                 "generation": current if generation is None else generation}
+        return protocol.message("command", payload)
+
+    def send(self, msg):
+        """Yields until msg's result. Returns (receipt, the scene.updates before it)."""
+        before, reply = yield from ask(self.peer, msg)
+        assert reply is not None and reply["type"] == "result", reply
+        assert all(m["type"] == "scene.update" for m in before), [m["type"] for m in before]
+        return reply["payload"], [m["payload"] for m in before]
+
+    def run(self, op, target=None, args=None, watcher=None):
+        """Send a command that must be applied. Returns (receipt, command, its scene.update).
+
+        Exactly one scene.update arrives before the result, with the receipt's revision.
+        The watcher (another client) must get it too, then the receipt as activity.
+        """
+        msg = self.command(op, target, args)
+        receipt, before = yield from self.send(msg)
+        assert receipt["outcome"] == "applied", receipt
+        assert len(before) == 1, f"{len(before)} scene.updates before the result of {op}: {before}"
+        (update,) = before
+        assert update["document"]["revision"] == receipt["revision"], (update, receipt)
+        if watcher is not None:
+            got = yield from off_thread(lambda: [watcher.recv(), watcher.recv()],
+                                        f"the watcher's update and activity for {op}")
+            assert [m["type"] for m in got] == ["scene.update", "activity"], got
+            assert got[0]["payload"] == update, "the watcher got another update"
+            assert got[1]["payload"] == receipt, (got[1], receipt)
+        return receipt, msg, update
+
+
+def by_id(object_id):
+    return next((o for o in bpy.data.objects if o.get(ID) == object_id), None)
+
+
+def selection():
+    layer = bpy.context.view_layer
+    active = layer.objects.active
+    return sorted(o.name for o in layer.objects if o.select_get()), active and active.name
+
+
+REOPEN = (
+    "import bpy, json\n"
+    "print('REOPENED ' + json.dumps({o.get('spatial_modeling_id') or o.name: {'name': o.name,"
+    " 'location': list(o.location), 'rotation': list(o.rotation_euler), 'scale': list(o.scale),"
+    " 'dimensions': list(o.dimensions)} for o in bpy.data.objects}), flush=True)\n"
+)
+
+
+def reopened(blend):
+    """Open blend in a fresh Blender process; yields until done. Returns its objects by ID."""
+    if bpy.app.binary_path:
+        cmd = [bpy.app.binary_path, "-b", "--factory-startup", str(blend), "--python-expr", REOPEN]
+    else:  # the bpy module: a fresh Python with bpy
+        opener = "import sys, bpy\nbpy.ops.wm.open_mainfile(filepath=sys.argv[1])\n"
+        cmd = [sys.executable, "-c", opener + REOPEN, str(blend)]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            stdin=subprocess.DEVNULL, text=True)
+    out = yield from off_thread(lambda: proc.communicate(timeout=120)[0],
+                                "the fresh Blender to open the file")
+    line = next((x for x in out.splitlines() if x.startswith("REOPENED ")), None)
+    assert proc.returncode == 0 and line, out
+    return json.loads(line.removeprefix("REOPENED "))
+
+
+def nobody_joined():
+    """Yields until earlier clients have left, so their session.updates can't arrive later."""
+    yield from wait(lambda: not mod("host").participants(), "the earlier clients to leave")
+
+
+def commands(prefs):
+    """Commands from the VR app and the Client role change Blender natively (P3A)."""
+    server = mod("server")
+    server.HEARTBEAT_TIMEOUT = 120.0  # these clients don't ping
+    try:
+        yield from native_commands(prefs)
+        yield from client_role_commands(prefs)
+    finally:
+        server.HEARTBEAT_TIMEOUT = 6.0
+
+
+def native_commands(prefs):
+    # The scene is in millimeters (connecting() set it): 1 Blender unit is 1 mm.
+    host = mod("host")
+    blend = Path(tempfile.mkdtemp()) / "assembly.blend"
+    bpy.ops.wm.save_as_mainfile(filepath=str(blend))  # Save As happens at the host desktop
+    cube = bpy.data.objects["Cube"]
+    cube_id = cube[ID]
+    cube.location, cube.rotation_euler, cube.scale = (5, 0, 0), (0, 0, 0), (1, 1, 1)
+    bpy.ops.ed.undo_push(message="Command check set-up")
+    kept = selection()
+
+    yield from nobody_joined()
+    talia, welcome, _ = yield from joined("Talia")
+    watcher, _, _ = yield from joined("Jihyeon")
+    yield from next_update(talia, "Talia's session.update for Jihyeon")
+    prefs.host_name = "  Waaberi at the desk "
+    for peer in (talia, watcher):
+        update = yield from next_update(peer, "session.update with the host's name")
+        assert update["payload"]["participants"][0] == {
+            **host._session.host, "name": "Waaberi at the desk", "role": "host"}, update
+    prefs.host_name = ""
+    for peer in (talia, watcher):
+        update = yield from next_update(peer, "session.update with the default name")
+        assert names(update)[0] == "Host Blender", update
+    log("'Your name' renames the host participant for everyone; blank means Host Blender")
+
+    vr = Commander(talia, welcome)
+    add, _, update = yield from vr.run("object.add", args={
+        "primitive": "cylinder", "location": [0, 0.03, 0.005], "dimensions": [0.02, 0.02, 0.04]},
+        watcher=watcher)
+    (new_id,) = add["created"]
+    new = by_id(new_id)
+    assert new is not None and new.name == "Cylinder" and new.type == "MESH", new
+    assert all(abs(a - b) < 1e-4 for a, b in zip(new.dimensions, (20, 20, 40), strict=True)), (
+        tuple(new.dimensions))
+    assert tuple(new.location) == (0, 30, 5), tuple(new.location)
+    sent = by_name(update)["Cylinder"]
+    assert sent["id"] == new_id and sent["generation"] == add["revision"] and sent["mesh"], sent
+    assert sent["transform"]["location"] == [0, 0.03, 0.005], sent["transform"]
+    log(f"object.add: {add['summary']}; {tuple(new.dimensions)} mm at {tuple(new.location)} mm; "
+        "its scene.update (with the mesh) came before the result")
+
+    move, move_msg, update = yield from vr.run("object.move", cube_id, {"by": [0.01, 0, 0]},
+                                               watcher=watcher)
+    assert move["summary"] == "Moved Cube 10 mm along X", move
+    assert tuple(cube.location) == (15, 0, 0), tuple(cube.location)
+    assert by_name(update)["Cube"]["transform"]["location"] == [0.015, 0, 0], update
+    rotate, _, update = yield from vr.run(
+        "object.rotate", cube_id, {"by": {"axis": "Z", "angle": math.pi / 2}}, watcher=watcher)
+    assert tuple(cube.rotation_euler) == (0, 0, f32(math.pi / 2)), tuple(cube.rotation_euler)
+    bpy.context.view_layer.update()
+    m = cube.matrix_world
+    exact = ((0, -1, 0, 15), (1, 0, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))
+    worst = max(abs(m[i][j] - exact[i][j]) for i in range(4) for j in range(4))
+    assert worst < 1e-7, m
+    assert by_name(update)["Cube"]["transform"]["rotation"] == [0.707107, 0, 0, 0.707107], update
+    scale, scale_msg, _ = yield from vr.run("object.scale", cube_id, {"by": [1, 1, 1.5]},
+                                            watcher=watcher)
+    assert tuple(cube.scale) == (1, 1, 1.5), tuple(cube.scale)
+    delete, _, update = yield from vr.run("object.delete", new_id, watcher=watcher)
+    assert by_id(new_id) is None and delete["summary"] == "Deleted Cylinder", delete
+    assert update["removed"] == [new_id], update
+    assert selection() == kept, "a command changed the host's selection"
+    log(f"{move['summary']}: location {tuple(cube.location)} mm; {rotate['summary']}: "
+        f"rotation_euler.z == float32(pi/2), world matrix within {worst:.1e} of the exact 90° turn;"
+        f" {scale['summary']}; {delete['summary']}; the host's selection stayed")
+
+    undo, _, update = yield from vr.run("history.undo", watcher=watcher)
+    assert undo["summary"] == "Undid: Deleted Cylinder", undo
+    cube = bpy.data.objects["Cube"]  # Undo reloads Blender's data
+    assert by_id(new_id) is not None and tuple(cube.scale) == (1, 1, 1.5), "Undo did more"
+    assert by_name(update)["Cylinder"]["id"] == new_id, update
+    undo, _, _ = yield from vr.run("history.undo", watcher=watcher)
+    assert undo["summary"] == "Undid: Scaled Cube by 1 x 1 x 1.5", undo
+    cube = bpy.data.objects["Cube"]
+    assert tuple(cube.scale) == (1, 1, 1), tuple(cube.scale)
+    assert tuple(cube.rotation_euler) == (0, 0, f32(math.pi / 2)), "Undo reverted the rotation too"
+    for summary in ("Redid: Scaled Cube by 1 x 1 x 1.5", "Redid: Deleted Cylinder"):
+        redo, _, _ = yield from vr.run("history.redo", watcher=watcher)
+        assert redo["summary"] == summary, redo
+    cube = bpy.data.objects["Cube"]
+    assert tuple(cube.scale) == (1, 1, 1.5) and by_id(new_id) is None
+    assert selection() == kept, "Undo or Redo changed the host's selection"
+    log("one Undo reverts exactly one command, Redo reapplies it; the host's selection stays")
+
+    again, before = yield from vr.send(scale_msg)  # the same request ID and payload
+    assert again == scale and before == [], (again, scale)
+    assert tuple(bpy.data.objects["Cube"].scale) == (1, 1, 1.5), "a repeat was applied again"
+    changed = json.loads(json.dumps(scale_msg))
+    changed["payload"]["args"]["by"] = [2, 2, 2]
+    duplicate, _ = yield from vr.send(changed)
+    assert duplicate["error"]["code"] == "duplicate_request", duplicate
+    stale, _ = yield from vr.send(vr.command("object.move", cube_id, {"by": [0.01, 0, 0]},
+                                             generation=move["revision"]))
+    assert stale["error"]["code"] == "stale_revision", stale
+    assert stale["error"]["details"] == {"generation": mod("sync").generation(cube_id)}, stale
+    assert tuple(bpy.data.objects["Cube"].location) == (15, 0, 0)
+    query = protocol.message("receipt.query", {"request_ids": [move_msg["id"], "0" * 32]})
+    _, receipts = yield from ask(talia, query)
+    assert receipts["payload"] == {"receipts": [move], "missing": ["0" * 32]}, receipts
+    log("a repeated request ID gets the stored result and isn't applied twice; a changed one is "
+        "duplicate_request; a stale generation is refused; receipt.query finds receipts")
+
+    assert bpy.data.is_dirty
+    saved_at = blend.stat().st_mtime_ns
+    save, _, update = yield from vr.run("document.save", watcher=watcher)
+    assert save["summary"] == "Saved assembly.blend", save
+    assert update["document"]["dirty"] is False and update["objects"] == [], update
+    assert blend.stat().st_mtime_ns > saved_at, "the file wasn't written"
+    if GUI:
+        yield from wait(lambda: not bpy.data.is_dirty, "Blender to clear is_dirty after Save")
+    else:  # background Blender never clears is_dirty after a save, and a tick later we say so
+        for peer in (talia, watcher):
+            msg = yield from next_update(peer, "the dirty flag of background Blender")
+            assert msg["type"] == "scene.update" and msg["payload"]["objects"] == [], msg
+            assert msg["payload"]["document"]["dirty"] is True, msg
+    _, _, update = yield from vr.run("object.move", cube_id, {"by": [0.01, 0, 0]},
+                                     watcher=watcher)
+    assert update["document"]["dirty"] is True, "the update after Save says nothing changed"
+    assert tuple(bpy.data.objects["Cube"].location) == (25, 0, 0)
+    log(f"document.save: {save['summary']}, dirty false; the next edit's update says dirty again")
+    talia.close()
+    watcher.close()
+
+    objects = yield from reopened(blend)
+    saved = objects[cube_id]
+    assert saved["location"] == [15, 0, 0], saved  # as saved, without the edit after Save
+    assert saved["rotation"] == [0, 0, f32(math.pi / 2)], saved
+    assert saved["scale"] == [1, 1, 1.5], saved
+    assert new_id not in objects, "the deleted cylinder came back"
+    log(f"a fresh Blender process reopens {blend.name} with the edits: Cube at "
+        f"{saved['location']} mm, rotation {saved['rotation']}, scale {saved['scale']}")
+
+
+def client_role_commands(prefs):
+    # The LAN port is on (lan_checks), with TLS, on 127.0.0.1.
+    cube_id = bpy.data.objects["Cube"][ID]
+    via_tls = {"port": LAN_PORT, "token": prefs.session_token}
+    assert prefs.client_edits is False, "the Client-role flag must be off by default"
+    yield from nobody_joined()
+    lee, welcome, _ = yield from joined("Lee", via=via_tls, role="blender-client")
+    assert welcome["can_edit"] is False, welcome
+    x = bpy.data.objects["Cube"].location.x
+    lee_commands = Commander(lee, welcome)
+    receipt, _ = yield from lee_commands.send(
+        lee_commands.command("object.move", cube_id, {"by": [0.001, 0, 0]}))
+    assert receipt["error"]["code"] == "permission_denied", receipt
+    assert bpy.data.objects["Cube"].location.x == x
+    lee.close()
+
+    prefs.client_edits = True  # restarts the server; everyone reconnects
+    try:
+        talia, _, _ = yield from joined("Talia")
+        lee, welcome, _ = yield from joined("Lee", via=via_tls, role="blender-client")
+        assert welcome["can_edit"] is True, welcome
+        yield from next_update(talia, "Talia's session.update for Lee")
+        receipt, _, _ = yield from Commander(lee, welcome).run(
+            "object.move", cube_id, {"by": [0.001, 0, 0]}, watcher=talia)
+        assert receipt["actor"]["role"] == "blender-client", receipt
+        assert bpy.data.objects["Cube"].location.x == f32(x + 1), "Lee's move didn't apply"
+        lee.close()
+        talia.close()
+    finally:
+        prefs.client_edits = False
+    lee, welcome, _ = yield from joined("Lee", via=via_tls, role="blender-client")
+    assert welcome["can_edit"] is False
+    lee.close()
+    log("Client role: read-only (permission_denied) with the flag off; with it on, can_edit "
+        "and its move applies in Blender and reaches VR as activity")
 
 
 def role_switch(prefs):
@@ -685,6 +974,7 @@ def checks():
     prefs = bpy.context.preferences.addons[MODULE].preferences
     yield from lan_checks(prefs)
     yield from live_scene(prefs)
+    yield from commands(prefs)
     yield from role_switch(prefs)
     yield from document_identity(prefs)
 

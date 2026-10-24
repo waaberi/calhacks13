@@ -115,6 +115,7 @@ class Connection:
         self.number = number  # unique within its server, for logs
         self.peer = peer  # the client's (address, port)
         self.joined = False  # welcomed; set by the hello handler on the main thread
+        self.can_edit = False  # may send commands; set with joined (session.py)
         self.closing = False  # close() was called; drain() ignores its remaining messages
 
     def send(self, *msgs):
