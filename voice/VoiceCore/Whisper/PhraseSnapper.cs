@@ -25,7 +25,9 @@ namespace SpatialModeling.VoiceCore.Whisper
 
         /// <summary>
         /// Every word of <see cref="Text"/> is one the recognizer wrote, in its order: at most some words were left
-        /// out ("rotate it ninety degrees quickly"). False when the snap replaced words ("devil" to "bevel"): a guess.
+        /// out ("rotate it ninety degrees quickly"), or a word the grammar doesn't know became the grammar's form of
+        /// it ("modify" to "modifier", see <see cref="PhraseSnapper.IsVariant"/>). False when the snap replaced words
+        /// ("devil" to "bevel"): a guess.
         /// </summary>
         public bool WordForWord { get; }
 
@@ -44,6 +46,13 @@ namespace SpatialModeling.VoiceCore.Whisper
     /// nothing are dropped and count against the similarity. This keeps VoiceCore's word grammar working:
     /// "rotate this object ninety degrees" is five grammar words, not one phrase.</item>
     /// </list>
+    /// A word the grammar knows (any word of any phrase, "smooth" in "shade smooth") is never turned into another
+    /// form of it: "make it smooth" can't become "make it smoother" (with "make it smooth" in the grammar it is exact;
+    /// without, it reads as the closest phrase that keeps "smooth"). A word the grammar doesn't know may become the
+    /// grammar's form of it, and that still counts as word for word: "add a mirror, modify," gives "add a mirror
+    /// modifier". Measured on whisper tiny.en's transcripts of the TTS corpus, the 48 chatter clips and the Unity
+    /// run against the host grammar of #147: see the PR. Kept out on purpose: letting any grammar word stand alone
+    /// in the phrase sequence fixed "make it smooth" too, but let three chatter clips run ("wait on a second").
     /// Measured on the 290-clip TTS corpus with whole phrases only (voice-asr-alternatives study): at the 0.65
     /// threshold whisper tiny.en got 190/250 commands top-1 and accepted 0 of 68 chatter clips; the best chatter
     /// similarity was 0.55. Text is compared with the parser's own tokenizer, so digits, "°", "%" and "mm" become the
@@ -59,6 +68,7 @@ namespace SpatialModeling.VoiceCore.Whisper
 
         readonly List<string> phrases = new List<string>();
         readonly HashSet<string> exact = new HashSet<string>(StringComparer.Ordinal);
+        readonly HashSet<string> vocabulary = new HashSet<string>(StringComparer.Ordinal);
         readonly int longestPhraseWords;
         int[] lcsRows = new int[64];
 
@@ -71,7 +81,9 @@ namespace SpatialModeling.VoiceCore.Whisper
                 if (normalized.Length == 0 || !exact.Add(normalized))
                     continue;
                 phrases.Add(normalized);
-                longestPhraseWords = Math.Max(longestPhraseWords, normalized.Split(' ').Length);
+                string[] words = normalized.Split(' ');
+                vocabulary.UnionWith(words);
+                longestPhraseWords = Math.Max(longestPhraseWords, words.Length);
             }
         }
 
@@ -95,11 +107,14 @@ namespace SpatialModeling.VoiceCore.Whisper
             bool useSequence = sequenceSimilarity > wholeSimilarity;
             string best = useSequence ? sequence : whole;
             float similarity = useSequence ? sequenceSimilarity : wholeSimilarity;
-            return new SnapResult(best, similarity, best.Length > 0 && similarity >= Threshold, IsSubsequence(best, text));
+            return new SnapResult(best, similarity, best.Length > 0 && similarity >= Threshold, WordForWord(best, text));
         }
 
-        /// <summary>The words of <paramref name="part"/> appear in <paramref name="text"/> in the same order.</summary>
-        static bool IsSubsequence(string part, string text)
+        /// <summary>
+        /// The words of <paramref name="part"/> appear in <paramref name="text"/> in the same order, each as it is or
+        /// as the grammar's form of a word the grammar doesn't know (<see cref="IsVariant"/>: "modify" for "modifier").
+        /// </summary>
+        bool WordForWord(string part, string text)
         {
             if (part.Length == 0)
                 return false;
@@ -107,12 +122,45 @@ namespace SpatialModeling.VoiceCore.Whisper
             int at = 0;
             foreach (string word in part.Split(' '))
             {
-                while (at < words.Length && words[at] != word)
+                while (at < words.Length && words[at] != word && (vocabulary.Contains(words[at]) || !IsVariant(words[at], word)))
                     at++;
                 if (at++ >= words.Length)
                     return false;
             }
             return true;
+        }
+
+        /// <summary>
+        /// Two forms of one word: they share a beginning of at least five letters that is at least three quarters of
+        /// the shorter word ("modify" and "modifier", "subdivide" and "subdivision", "smooth" and "smoother").
+        /// </summary>
+        public static bool IsVariant(string a, string b)
+        {
+            if (a == b)
+                return true;
+            int shared = 0, shorter = Math.Min(a.Length, b.Length);
+            while (shared < shorter && a[shared] == b[shared])
+                shared++;
+            return shared >= 5 && 4 * shared >= 3 * shorter;
+        }
+
+        /// <summary>
+        /// <paramref name="phrase"/> would turn a grammar word of <paramref name="text"/> into another form of it
+        /// ("smooth" into "smoother"): Whisper wrote a word the grammar knows, so that is not a mishearing to fix.
+        /// </summary>
+        bool ChangesAKnownWord(string text, string phrase)
+        {
+            string[] said = text.Split(' ');
+            string[] grammar = phrase.Split(' ');
+            foreach (string word in said)
+            {
+                if (!vocabulary.Contains(word) || Array.IndexOf(grammar, word) >= 0)
+                    continue;
+                foreach (string other in grammar)
+                    if (other != word && IsVariant(word, other))
+                        return true;
+            }
+            return false;
         }
 
         /// <summary>
@@ -162,7 +210,7 @@ namespace SpatialModeling.VoiceCore.Whisper
                 if (2f * Math.Min(text.Length, phrase.Length) / (text.Length + phrase.Length) <= bestSimilarity)
                     continue; // the length difference alone rules it out
                 float similarity = 2f * Lcs(text, phrase) / (text.Length + phrase.Length);
-                if (similarity > bestSimilarity)
+                if (similarity > bestSimilarity && !ChangesAKnownWord(text, phrase))
                 {
                     bestSimilarity = similarity;
                     best = phrase;

@@ -101,6 +101,54 @@ namespace SpatialModeling.VoiceCore.Tests
             Assert.False(new PhraseSnapper(null).Snap("add a cube").Accepted);
         }
 
+        /// <summary>Phrases of the host grammar (#147) that the Unity run's transcripts were snapped onto.</summary>
+        static readonly string[] HostPhrases =
+        {
+            "add", "a", "make", "it", "the", "object", "mirror", "add a mirror modifier", "mirror modifier", "apply modifiers",
+            "make it smoother", "smoother", "shade smooth", "shade it smooth", "smooth it out", "auto smooth", "smooth vertices",
+        };
+
+        [Fact]
+        public void AWordTheGrammarDoesntKnowBecomesItsGrammarFormWordForWord()
+        {
+            SnapResult snap = new PhraseSnapper(HostPhrases).Snap("add a mirror, modify,"); // the Unity run: asked 4 of 4
+            Assert.Equal("add a mirror modifier", snap.Text);
+            Assert.True(snap.Accepted);
+            Assert.True(snap.WordForWord); // so it runs at its similarity instead of being capped as a guess
+            Assert.InRange(snap.Similarity, 0.85f, 0.99f);
+        }
+
+        [Theory]
+        [InlineData("make it smooth.")]
+        [InlineData("Smooth the object.")]
+        public void AGrammarWordIsNeverTurnedIntoAnotherFormOfIt(string transcript)
+        {
+            SnapResult snap = new PhraseSnapper(HostPhrases).Snap(transcript); // "smooth" is a word of "shade smooth"
+            Assert.DoesNotContain("smoother", snap.Text);
+            Assert.False(snap.Accepted && snap.WordForWord); // at most a guess the host only asks about
+        }
+
+        [Fact]
+        public void WithThePhraseInTheGrammarSmoothIsExact()
+        {
+            var snapper = new PhraseSnapper(HostPhrases.Concat(new[] { "make it smooth", "smooth the object" }));
+            Assert.Equal(new SnapResult("make it smooth", 1f, true, true).ToString(), snapper.Snap("make it smooth.").ToString());
+            Assert.Equal("smooth the object", snapper.Snap("Smooth the object.").Text);
+        }
+
+        [Theory]
+        [InlineData("modify", "modifier", true)]
+        [InlineData("subdivide", "subdivision", true)]
+        [InlineData("smooth", "smoother", true)]
+        [InlineData("cube", "cubes", false)] // too short to tell a form from another word
+        [InlineData("devil", "bevel", false)]
+        [InlineData("delete", "deselect", false)]
+        public void VariantsShareALongBeginning(string a, string b, bool variant)
+        {
+            Assert.Equal(variant, PhraseSnapper.IsVariant(a, b));
+            Assert.Equal(variant, PhraseSnapper.IsVariant(b, a));
+        }
+
         [Fact]
         public void ThresholdIsConfigurable()
         {
