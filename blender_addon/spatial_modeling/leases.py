@@ -15,7 +15,7 @@ cover and answers the messages.
 - lease.release: no reply on success, then everyone gets session.update.
   not_found if no such lease is live, permission_denied if it is someone else's.
 - check(), step 6 of every command (commands.py), right before it is applied.
-- may_write(), for the host desktop's own edits (#77).
+- may_write() and desktop_reason(), for the host desktop's own edits (gate.py, #77).
 
 What a lease covers. Exclusive: the whole document. Shared: the listed objects
 and sketches plus their linked data, which the editor's linked(ids) works out
@@ -277,6 +277,21 @@ class Leases:
         """
         actor_id = self.session.host["actor_id"] if actor_id is None else actor_id
         return self.blocking(actor_id, targets=object_ids, whole=whole)
+
+    @staticmethod
+    def desktop_reason(lease, name=None, whole=False):
+        """What the host desktop shows when `lease` stops one of its edits.
+
+        name: the leased object the edit would change, if known. whole: the edit is
+        Undo or Redo.
+        """
+        owner = lease["owner"]["name"]
+        if lease["mode"] == "exclusive":
+            return f"{owner} is editing — wait for Apply"
+        what = f"editing {name}" if name else "editing"
+        if whole:
+            return f"{owner} is {what}, so Undo and Redo wait until they finish"
+        return f"{owner} is {what}"
 
     @staticmethod
     def _conflict(lease, whole, what):

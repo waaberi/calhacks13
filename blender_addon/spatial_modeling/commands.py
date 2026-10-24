@@ -453,6 +453,17 @@ class Commands:
                    "unknown": [] if sure else unseen}
         return protocol.message("receipts", payload, re=msg["id"])
 
+    def stop_writes(self, why):
+        """Refuse writes until the scene is re-read and everyone has a fresh snapshot.
+
+        For a change the host can't vouch for, as after an unknown outcome: gate.py
+        calls it when host Blender changed leased data by a route the gate doesn't
+        cover. The next poll() reconciles.
+        """
+        log.warning("edits stopped until the scene is re-read: %s", why)
+        self.frozen = True
+        self._retry_at = 0.0
+
     def poll(self):
         """While writes are stopped, retry reconciling now and then. host.py's timer calls it."""
         if self.frozen and time.monotonic() >= self._retry_at:
