@@ -190,9 +190,40 @@ public static class P2Checks
                 Near(native.GetComponent<MeshFilter>().sharedMesh.bounds.size,new Vector3(.02f,.02f,.02f),"real host snapshot renders the measured 20mm cube");
             }
             typeof(TablePlacement).GetMethod("CreatePanel",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(table,null);
-            Check(UnityEngine.Object.FindObjectsByType<TableAction>(FindObjectsInactive.Include,FindObjectsSortMode.None).Length==14,"all ray/trigger controls constructed");
+            Check(UnityEngine.Object.FindObjectsByType<TableAction>(FindObjectsInactive.Include,FindObjectsSortMode.None).Length==16,"table controls plus pin/dock menu actions constructed");
             table.SeedFromHead(new Vector3(0,1.6f,0),Vector3.forward);
             table.Place();
+            Check(table.MenuDocked && !table.Menu.gameObject.activeSelf,"menu starts docked and waits for actual left-hand tracking");
+            var leftGrip = new Pose(new Vector3(-.35f,1.15f,.35f),Quaternion.Euler(0,25,0));
+            table.UpdateLeftHandMenu(leftGrip,new Vector3(0,1.65f,0),true);
+            Check(table.Menu.gameObject.activeSelf,"tracked left grip reveals menu");
+            Check(Vector3.Distance(table.Menu.position,leftGrip.position)<.21f,"menu starts at left hand instead of a head-relative HUD offset");
+            Check(table.Menu.GetComponent<RectTransform>().rect.width*table.Menu.lossyScale.x<.36f,"initial menu width is below 36cm instead of old 62cm");
+            var stillTable = new Pose(scene.Placement.position,scene.Placement.rotation);
+            table.PinMenu();
+            var pinnedMenu = new Pose(table.Menu.position,table.Menu.rotation);
+            table.UpdateLeftHandMenu(new Pose(new Vector3(2,1,3),Quaternion.Euler(0,145,0)),new Vector3(1,1.7f,-1),true);
+            Near(table.Menu.position,pinnedMenu.position,"placed menu does not follow head or hand motion");
+            Check(Quaternion.Angle(table.Menu.rotation,pinnedMenu.rotation)<.001f,"placed menu does not rotate with head");
+            table.UpdateLeftHandMenu(default,Vector3.zero,false);
+            Check(table.Menu.gameObject.activeSelf,"world menu remains placed when left tracking is lost");
+            Near(scene.Placement.position,stillTable.position,"moving/docking menu never moves table");
+            Check(Quaternion.Angle(scene.Placement.rotation,stillTable.rotation)<.001f,"menu motion never changes table orientation");
+            table.DockMenu();
+            Check(table.MenuDocked && !table.Menu.gameObject.activeSelf,"return-to-hand waits for fresh tracking");
+            table.UpdateLeftHandMenu(leftGrip,new Vector3(0,1.65f,0),true);
+            var menuGrabPose = new Pose(table.Menu.position,table.Menu.rotation);
+            table.PinMenu();
+            var controllerStart = new Pose(new Vector3(.35f,1.2f,.3f),Quaternion.identity);
+            var relativeMenu = WorkspaceInteraction.RelativeRayPose(controllerStart,menuGrabPose);
+            var movedMenu = WorkspaceInteraction.FollowRay(new Pose(controllerStart.position,Quaternion.Euler(0,20,0)),relativeMenu,0);
+            Check(Vector3.Distance(movedMenu.position,menuGrabPose.position)>.04f,"menu can use accepted aim-driven placement mapping");
+            table.Menu.SetPositionAndRotation(movedMenu.position,movedMenu.rotation);
+            table.UpdateLeftHandMenu(leftGrip,new Vector3(0,1.65f,0),true);
+            Near(table.Menu.position,movedMenu.position,"released menu keeps the pose supplied by the shared grab path");
+            table.DockMenu();
+            table.UpdateLeftHandMenu(leftGrip,new Vector3(0,1.65f,0),true);
+            Debug.Log("P2_LEFT_HAND_MENU_CHECK PASS small docked start/fresh tracking/world pin/aim placement/table invariance");
             var moveButton=UnityEngine.Object.FindObjectsByType<TableAction>(FindObjectsInactive.Include,FindObjectsSortMode.None)
                 .Single(a=>a.name=="Move Table");
             Physics.SyncTransforms();
@@ -203,7 +234,7 @@ public static class P2Checks
                 "shared P1 trigger invokes table Move through actual collider dispatch");
             table.CancelMove();
             Check(table.IsPlaced,"shared dispatch preserves cancel state machine");
-            Debug.Log("P2_CHECKS PASS: background decode, meshes/colliders/IDs, explicit placement, two poses, native separation, reconnect, cancel, tracking reset, corrupt-scene refusal, 32-bit mesh, native host geometry, stale epoch, topology/collider updates, shared-ray dispatch, 14 controls");
+            Debug.Log("P2_CHECKS PASS: background decode, meshes/colliders/IDs, explicit placement, two poses, native separation, reconnect, cancel, tracking reset, corrupt-scene refusal, 32-bit mesh, native host geometry, stale epoch, topology/collider updates, shared-ray dispatch, 16 controls including placeable left-hand menu");
         }
         finally { UnityEngine.Object.DestroyImmediate(container); }
     }

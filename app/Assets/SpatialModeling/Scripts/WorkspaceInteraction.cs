@@ -136,6 +136,8 @@ namespace SpatialModeling
         {
             if (Camera.main == null || screen == null || scene == null) return;
             trackingOrigin = Camera.main.transform.parent;
+            bool leftTracked = TryReadHand(left, out var leftGrip, out _);
+            scene.Table?.UpdateLeftHandMenu(leftGrip, Camera.main.transform.position, leftTracked);
             screen.ClearControllerHover();
             Physics.SyncTransforms();
             Instruction = "Point at screen or build · grip: move · trigger: select";
@@ -192,7 +194,8 @@ namespace SpatialModeling
 
             if (h.target != null)
             {
-                if (!gripNow || (h.target == screen.Placement && !screen.Visible)) Release(h);
+                if (!gripNow || (h.target == screen.Placement && !screen.Visible)
+                    || (table != null && h.target == table.Menu && !table.Menu.gameObject.activeInHierarchy)) Release(h);
                 else
                 {
                     if (Mathf.Abs(axis.y) > 0.2f) h.depth = Mathf.Clamp(h.depth + axis.y * Time.unscaledDeltaTime, -0.5f, 2f);
@@ -200,14 +203,20 @@ namespace SpatialModeling
                         screen.Resize(Mathf.Exp(axis.x * Time.unscaledDeltaTime * 0.65f));
                     distance = Mathf.Clamp(Vector3.Distance(aim.position, h.target.position), 0.15f, 4f);
                     Instruction = h.part != null ? "Aim to move " + h.part.name + " · release grip: place"
+                        : table != null && h.target == table.Menu ? "Aim to move menu · stick: distance · release grip: place"
                         : h.target == screen.Placement ? "Aim to move screen · stick: distance / size · release grip: place"
                         : "Aim to move whole build · release grip: place";
                 }
             }
             else if (tableFirst)
             {
-                table.HoverController(ray, triggerPressed);
-                Instruction = "Trigger: table placement control · local inspection only";
+                table.HoverController(ray, triggerPressed && !gripNow);
+                Instruction = "Trigger: select menu button · grip menu, move, release to place";
+                if (gripPressed && !Conflicts(other?.target, table.Menu))
+                {
+                    table.PinMenu();
+                    Begin(h, table.Menu, null, aim, ray.GetPoint(distance));
+                }
             }
             else if (table != null && table.IsPointing)
             {
@@ -303,6 +312,8 @@ namespace SpatialModeling
         {
             if (renderedFrame == Time.frameCount || screen == null || scene == null || Camera.main == null) return;
             renderedFrame = Time.frameCount;
+            bool leftTracked = TryReadHand(left, out var leftGrip, out _);
+            scene.Table?.UpdateLeftHandMenu(leftGrip, Camera.main.transform.position, leftTracked);
             double now = Time.realtimeSinceStartupAsDouble;
             RenderHand(left, now);
             RenderHand(right, now);
