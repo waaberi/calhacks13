@@ -8,9 +8,9 @@ import threading
 import time
 import unittest
 from contextlib import closing
+from ctypes import wintypes as W
 from types import SimpleNamespace
 from unittest.mock import patch
-from ctypes import wintypes as W
 
 from capture_helper import LatestFrame, graphics_capture_loop, make_server
 from input_bridge import InputBridge, InputRejected, NativeInput, WindowsInput
@@ -333,6 +333,7 @@ class InputHttpTests(unittest.TestCase):
         self.assertEqual(json.loads(body)["capture_instance"], self.latest.capture_instance)
         self.assertEqual(json.loads(body)["frame"], self.latest.sequence)
         self.assertEqual(json.loads(body)["helper_pid"], os.getpid())
+        self.assertEqual(json.loads(body)["capture_geometry"], self.latest.capture_geometry)
         payload = self.event("key", key="ESC", action="press")
         code, body = self.request("POST", "/input", json.dumps(payload),
                                   {"Content-Type": "application/json"})

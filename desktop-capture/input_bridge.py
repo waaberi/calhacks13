@@ -231,6 +231,7 @@ class InputBridge:
             selected = dict(self.latest.selected) if self.latest.selected else None
             generation = self.latest.generation
             instance = self.latest.capture_instance
+            geometry_id = self.latest.capture_geometry
             geometry = self.latest.input_geometry
         reason, live = "", None
         if not self.enabled:
@@ -267,6 +268,7 @@ class InputBridge:
         return {"enabled": self.enabled, "ready": not reason, "reason": reason,
                 "session": self.session, "token": self.token if self.enabled else None,
                 "capture_generation": generation, "capture_instance": instance,
+                "capture_geometry": geometry_id,
                 "helper_pid": os.getpid(),
                 "frame": status["frame"],
                 "selection": selected, "image": {"width": status["width"], "height": status["height"]},

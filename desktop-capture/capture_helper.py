@@ -2,6 +2,7 @@
 
 import argparse
 import ctypes as C
+import hashlib
 import io
 import json
 import os
@@ -176,6 +177,7 @@ class LatestFrame:
         self.input_bridge = None  # P2.5 is explicit opt-in; capture behavior stays the default.
         self.input_geometry = None
         self.capture_instance = secrets.token_urlsafe(18)
+        self.capture_geometry = ""
         self.status = {
             "state": "no_window",
             "window": None,
@@ -194,6 +196,7 @@ class LatestFrame:
             self.captured_ms = 0
             self.last_success = 0
             self.input_geometry = None
+            self.capture_geometry = ""
             self.status = {
                 "state": "no_window",
                 "window": window["title"] if window else None,
@@ -212,6 +215,7 @@ class LatestFrame:
                 return
             self.jpeg = None
             self.input_geometry = None
+            self.capture_geometry = ""
             self.status.update(state=state, fps=0.0, message=message)
 
     def publish(self, generation, image, title, fps, captured_ms, input_geometry=None):
@@ -224,6 +228,8 @@ class LatestFrame:
 
     def publish_jpeg(self, generation, jpeg, width, height, title, fps, captured_ms,
                      input_geometry=None):
+        geometry_id = (hashlib.sha256(json.dumps(input_geometry, sort_keys=True,
+                       separators=(",", ":")).encode()).hexdigest() if input_geometry else "")
         with self.lock:
             if generation != self.generation or captured_ms <= self.captured_ms:
                 return False  # A slow old encoder must never roll the newest image back.
@@ -232,6 +238,7 @@ class LatestFrame:
             self.captured_ms = captured_ms
             self.last_success = time.monotonic()
             self.input_geometry = input_geometry
+            self.capture_geometry = geometry_id
             self.status = {
                 "state": "capturing",
                 "window": title,
@@ -244,9 +251,12 @@ class LatestFrame:
             return True
 
     def snapshot(self):
-        return self.snapshot_with_identity()[:3]
+        return self.snapshot_with_input_identity()[:3]
 
     def snapshot_with_identity(self):
+        return self.snapshot_with_input_identity()[:5]
+
+    def snapshot_with_input_identity(self):
         """Identity and pixels must share one lock, including a queued HTTP reply."""
         with self.lock:
             status = dict(self.status)
@@ -256,7 +266,8 @@ class LatestFrame:
                     state="error", fps=0.0, message="Capture stalled. Last frame is unavailable."
                 )
                 jpeg = None
-            return status, jpeg, self.captured_ms, self.generation, self.capture_instance
+            return (status, jpeg, self.captured_ms, self.generation, self.capture_instance,
+                    self.capture_geometry)
 
 
 def capture_refresh_due(last_callback, now):
@@ -512,7 +523,7 @@ def make_server(latest, port, input_bridge=None):
             if self.headers.get("Host", "").split(":")[0] not in ("127.0.0.1", "localhost"):
                 self.send_error(403)
                 return
-            status, jpeg, captured, generation, instance = latest.snapshot_with_identity()
+            status, jpeg, captured, generation, instance, geometry_id = latest.snapshot_with_input_identity()
             headers = {}
             if self.path == "/input/state":
                 if not self.input_request_allowed():
@@ -542,6 +553,7 @@ def make_server(latest, port, input_bridge=None):
                         "X-Capture-Alive": str(int(time.time() * 1000)),
                         "X-Selection-Generation": str(generation),
                         "X-Capture-Instance": instance,
+                        "X-Capture-Geometry": geometry_id,
                         "X-Window": (status["window"] or "")
                         .encode("ascii", "replace")
                         .decode()
