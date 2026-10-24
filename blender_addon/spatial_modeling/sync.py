@@ -47,11 +47,11 @@ replaces data-blocks. A flush looks every object up again, diffs its record
 with what clients have, and re-evaluates only meshes that may have changed,
 comparing them by digest. An update leaves out `mesh` when the mesh didn't
 change; one after a move to another collection only has a new generation,
-since the wire has no collections. poll() flushes at most
-every MIN_INTERVAL, and waits COST_FACTOR times as long as the last flush took,
-so a drag in Blender streams small updates and a heavy mesh can't stall
-Blender. It also diffs every RESCAN_INTERVAL as a safety net. A flush that
-finds nothing different sends nothing, so our own writes (the IDs) can't loop.
+since the wire has no collections. poll() flushes at most every MIN_INTERVAL,
+and waits COST_FACTOR times as long as the last flush took, so a drag in
+Blender streams small updates and a heavy mesh can't stall Blender. It also
+diffs every RESCAN_INTERVAL as a safety net. A flush that finds nothing
+different sends nothing, so our own writes (the IDs) can't loop.
 """
 
 import json

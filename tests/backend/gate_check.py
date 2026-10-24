@@ -12,9 +12,8 @@ supported route must then be refused with nothing changed and a reason, while
 an unrelated object stays editable; changes by routes the gate doesn't cover
 (the Python console's RNA path, an operator, Undo from a script, a drag to
 another collection in the Outliner) must be recorded as bypasses, with a fresh
-snapshot for Lee. Then the same with an
-exclusive lease, the automatic unlock on release and on disconnect, and
-disabling the add-on while the gate runs.
+snapshot for Lee. Then the same with an exclusive lease, the automatic unlock
+on release and on disconnect, and disabling the add-on while the gate runs.
 
 It needs a display with a pointer. On a headless Wayland display without one,
 Blender 5.2.2 crashes (in wl_proxy_get_version) as soon as it changes the cursor,
