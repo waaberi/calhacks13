@@ -218,9 +218,9 @@ namespace SpatialModeling
             foreach (var text in FindObjectsByType<Text>(FindObjectsSortMode.None))
             {
                 if (!text.isActiveAndEnabled || text.text != owner + " is editing") continue;
-                var mesh = new Mesh(); text.canvasRenderer.GetMesh(mesh);
+                var mesh = text.canvasRenderer.GetMesh();
                 var viewport = camera.WorldToViewportPoint(text.transform.position);
-                result["glyph_vertices"] = mesh.vertexCount; Destroy(mesh);
+                result["glyph_vertices"] = mesh != null ? mesh.vertexCount : 0;
                 result["text"] = text.text; result["rect_size"] = new JArray(text.rectTransform.rect.width, text.rectTransform.rect.height);
                 result["preferred_size"] = new JArray(text.preferredWidth, text.preferredHeight);
                 result["world_position"] = Vec(text.transform.position); result["viewport_center"] = Vec(viewport);
