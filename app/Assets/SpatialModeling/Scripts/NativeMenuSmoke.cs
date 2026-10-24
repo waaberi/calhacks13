@@ -81,9 +81,12 @@ namespace SpatialModeling
             menu.Home(); if (!Click("Save") || !Click("Apply")) yield break; yield return Receipt("save"); if (!Success()) yield break;
             report["object_ids"] = new JArray(ids); report["document"] = session.Document.DeepClone();
             report["objects"] = new JArray(session.Objects.Values); report["source"] = Application.buildGUID;
-            report["passed"] = true; Write();
+            session.Select(ids[0]);
             menu.Home();
-            ScreenCapture.CaptureScreenshot(Path.ChangeExtension(output, ".png"));
+            yield return null;
+            if (!NativeSmokeWorkspace.Capture(Path.ChangeExtension(output, ".png"))) { Fail("Actual placed-scene/menu camera capture failed"); yield break; }
+            report["screenshot_source"] = "Actual production camera rendered through URP to1920x1080/MSAA4; software evidence, not XR eye capture";
+            report["passed"] = true; Write();
             Debug.Log("P3_NATIVE_PLAYER_SMOKE PASS real menu/fields/leases/commands/native receipts/10mm/90deg/cancel/stale/history/save");
             yield return new WaitForSecondsRealtime(2); WorkspaceShutdown.Quit(0);
         }
