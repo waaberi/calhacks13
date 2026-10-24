@@ -386,10 +386,15 @@ HELLO_CHANGES = [
     {"payload.document": {"id": SHAFT}},
     {"payload.document": {"id": SHAFT, "open_epoch": "x"}},
     {"payload.colour": "red"},
+    {"payload.token": "abcd-efgh-jkmn-pqrs"},
+    {"payload.token": "too-short"},
+    {"payload.token": "x" * 257},
+    {"payload.token": 1234567890123456},
 ]
+HELLO_EXAMPLES = [p.name for p in sorted((CONTRACTS / "examples").glob("hello*.json"))]
 
 
-@pytest.mark.parametrize("name", ["hello.json", "hello.blender-client.json"])
+@pytest.mark.parametrize("name", HELLO_EXAMPLES)
 @pytest.mark.parametrize("changes", HELLO_CHANGES)
 def test_hello_checks_agree_with_the_schema(name, changes):
     msg = _changed(example(name), changes)

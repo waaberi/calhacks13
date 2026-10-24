@@ -313,7 +313,8 @@ def check_command(p):
 
 
 def check_hello(p):
-    # token: optional pre-shared session token, being added to the contract for the LAN port.
+    # token: the LAN port's session token. Checked like the schema, then ignored, as the host
+    # ignores it on its other ports.
     _fields(p, "hello payload", ("role", "name", "app"), ("document", "token"))
     if p["role"] not in ("vr", "blender-client"):
         raise Invalid("role must be vr or blender-client")
@@ -326,8 +327,10 @@ def check_hello(p):
         document = _fields(p["document"], "document", ("id", "open_epoch"))
         _uuid(document["id"], "document.id")
         _uuid(document["open_epoch"], "document.open_epoch")
-    if "token" in p and not isinstance(p["token"], str):
-        raise Invalid("token must be a string")
+    if "token" in p:
+        _text(p["token"], "token", 256)
+        if len(p["token"]) < 16:
+            raise Invalid("token must be at least 16 characters")
 
 
 def check_receipt_query(p):

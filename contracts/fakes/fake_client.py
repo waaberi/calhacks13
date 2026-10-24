@@ -13,8 +13,9 @@ does the handshake from contracts/README.md, pings every 2 s, prints a summary
 of the snapshot and of every update, activity, session and result message, and
 builds commands from short text or JSON.
 
-Plain TCP only. TLS for the LAN port 8767 (issue #19) comes later, so for now
-this reaches the host's localhost port 8765 or a fake host.
+Plain TCP only. It doesn't do the LAN port's TLS or token yet (port 8767, issue
+#19, see blender_addon/spatial_modeling/lan.py), so it reaches the host's
+localhost port 8765 or a fake host.
 
 Standard library only and Python 3.9 or newer. --check also validates every
 message against contracts/schemas and needs `pip install jsonschema`.
@@ -754,9 +755,9 @@ def parse_args(argv=None):
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description="Fake client for the host connection (contracts/README.md). TEST DATA ONLY: "
         "never acceptance evidence.\nConnects, does the handshake, pings every 2 s, prints the "
-        "snapshot and every update, and sends commands.\n\nPlain TCP only: TLS for the LAN port "
-        "8767 (issue #19) comes later, so this reaches\nthe host's localhost port 8765 or a fake "
-        "host for now.",
+        "snapshot and every update, and sends commands.\n\nPlain TCP only: the LAN port's TLS and "
+        "token (8767, issue #19) aren't in this client yet,\nso it reaches the host's localhost "
+        "port 8765 or a fake host.",
         epilog=SHORTCUTS,
     )
     parser.add_argument("commands", nargs="*", metavar="COMMAND",

@@ -304,6 +304,6 @@ python3 contracts/fakes/fake_client.py                                   # watch
 python3 contracts/fakes/fake_client.py "move Shaft 10mm 0 0" "undo" --exit
 ```
 
-Shortcuts include `move OBJ DX DY DZ`, `rotate OBJ Z 90deg`, `scale OBJ 1 1 1.5`, `add cube X Y Z DX DY DZ`, `delete OBJ`, `undo`, `redo`, `save` and `again` (resend the last command with the same ID). JSON gives any command or message. Bare numbers are meters and radians, as on the wire; `--help` lists everything. `--reconnect` reconnects every 2 s, `--role blender-client` acts like the Client role, and `--check` validates every message against [`schemas/`](schemas/) (needs `pip install jsonschema`). It speaks plain TCP only; TLS for the LAN port (#19) comes later.
+Shortcuts include `move OBJ DX DY DZ`, `rotate OBJ Z 90deg`, `scale OBJ 1 1 1.5`, `add cube X Y Z DX DY DZ`, `delete OBJ`, `undo`, `redo`, `save` and `again` (resend the last command with the same ID). JSON gives any command or message. Bare numbers are meters and radians, as on the wire; `--help` lists everything. `--reconnect` reconnects every 2 s, `--role blender-client` acts like the Client role, and `--check` validates every message against [`schemas/`](schemas/) (needs `pip install jsonschema`). It speaks plain TCP only: the [LAN port](#lan-port)'s TLS and token aren't in it yet, so it reaches the host's port 8765 or a fake host.
 
 **Check:** `pytest tests/backend/test_fakes.py` runs the two fakes against each other through a recording proxy and validates every message they send against the schemas.
