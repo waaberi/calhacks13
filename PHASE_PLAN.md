@@ -137,7 +137,7 @@ Preparation can overlap. Test remote network reachability in P0, a remote read-o
 
 ## Progress and the one headset
 
-Statuses are NOT STARTED, WORKING, READY TO TEST, PASSED and BLOCKED. Check a task only when its step works; mark a phase PASSED only after its real team test. Record evidence and blockers rather than estimating an arbitrary percentage. All product tests start pending in this fresh-build plan.
+Status is tracked on the project board with GitHub's standard columns: Backlog, Ready, In progress, In review and Done. The "Status:" lines in the checklists below are superseded by the board. Close a task only when its step works; close a phase's team-test issue only after its real team test. Record evidence and blockers rather than estimating an arbitrary percentage. All product tests start pending in this fresh-build plan.
 
 Keep the Quest on Talia's PC. Reserve an initial 45–60-minute wireless/app test, then focused 20–30-minute ready-to-test slots with a named behavior and exact build. Others continue independently. Prefer builds on Lee Jae-yeon's PC if capable; otherwise book Talia's machine separately so builds or automation do not interrupt a native/headset test.
 
