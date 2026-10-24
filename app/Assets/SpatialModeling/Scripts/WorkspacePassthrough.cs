@@ -22,52 +22,98 @@ namespace SpatialModeling
         bool originalPostProcessing;
         bool originalHdr;
         bool requested = true;
+        bool ownsManager, attemptLive, savedView;
+        readonly PassthroughReadinessGate readiness = new PassthroughReadinessGate();
+        readonly List<XRDisplaySubsystem> displays = new List<XRDisplaySubsystem>();
 
-        IEnumerator Start()
+        void OnEnable() => StartCoroutine(WaitForReady(readiness.Enable()));
+
+        bool DisplayReady(out string waiting)
         {
-            float until = Time.realtimeSinceStartup + 15;
-            while (OpenXRRuntime.version == "" && Time.realtimeSinceStartup < until) yield return null;
-            // Missing capability must leave a working opaque scene, not a fake black "passthrough".
-            Supported = OpenXRRuntime.IsExtensionEnabled("XR_FB_passthrough");
-            if (!Supported)
+            bool runtime = !string.IsNullOrEmpty(OpenXRRuntime.version);
+            bool capability = runtime && OpenXRRuntime.IsExtensionEnabled("XR_FB_passthrough");
+            displays.Clear(); SubsystemManager.GetSubsystems(displays);
+            bool running = false; foreach (var display in displays) running |= display.running;
+            int width = XRSettings.eyeTextureWidth, height = XRSettings.eyeTextureHeight;
+            bool camera = Camera.main != null;
+            waiting = !runtime ? "Room view waiting for XR runtime"
+                : !capability ? "Room view unavailable over this Link connection"
+                : !running || width <= 0 || height <= 0 ? "Room view waiting for an active headset display"
+                : "Room view waiting for a tracked camera";
+            return PassthroughReadinessGate.InputsReady(runtime, capability, running, width, height, camera);
+        }
+
+        void Waiting(string state)
+        {
+            if (State != state) Debug.Log("WORKSPACE_PASSTHROUGH " + state);
+            State = state;
+        }
+
+        IEnumerator WaitForReady(int ticket)
+        {
+            while (readiness.IsCurrent(ticket))
             {
-                State = "Room view unavailable over this Link connection";
-                Debug.Log("WORKSPACE_PASSTHROUGH unsupported: XR_FB_passthrough not enabled");
-                yield break;
+                bool ready = DisplayReady(out var waiting);
+                bool begin = readiness.TryBegin(ticket, ready);
+                if (!ready) { Suspend(); Waiting(waiting); }
+                else if (begin) yield return Initialize(ticket);
+                // A failed attempt is not repeated while the same display stays
+                // ready. A real readiness transition or re-enable permits retry.
+                yield return new WaitForSecondsRealtime(0.25f);
             }
+        }
+
+        IEnumerator Initialize(int ticket)
+        {
+            if (!readiness.IsCurrent(ticket)) yield break;
+            if (!DisplayReady(out var waiting))
+            { readiness.TryBegin(ticket, false); Suspend(); Waiting(waiting); yield break; }
             view = Camera.main;
-            if (view == null) { State = "Room view unavailable: no tracked camera"; Supported = false; yield break; }
             originalClear = view.clearFlags;
             originalBackground = view.backgroundColor;
             originalHdr = view.allowHDR;
             var data = view.GetUniversalAdditionalCameraData();
             originalPostProcessing = data.renderPostProcessing;
-            manager = FindAnyObjectByType<OVRManager>();
-            if (manager == null) manager = gameObject.AddComponent<OVRManager>();
+            savedView = attemptLive = true;
+            Waiting("Room view starting");
+            if (manager == null) manager = FindAnyObjectByType<OVRManager>();
+            if (manager == null) { ownsManager = true; manager = gameObject.AddComponent<OVRManager>(); }
+            else if (ownsManager) manager.enabled = true;
             manager.isInsightPassthroughEnabled = true;
-            var layerObject = new GameObject("Real room passthrough underlay");
-            layerObject.SetActive(false);
-            layerObject.transform.SetParent(transform, false);
-            layer = layerObject.AddComponent<OVRPassthroughLayer>();
-            layer.textureOpacity = 1f;
-            layer.passthroughLayerResumed.AddListener(_ => Debug.Log("WORKSPACE_PASSTHROUGH layer_presented=True"));
-            layerObject.SetActive(true);
-            until = Time.realtimeSinceStartup + 10;
-            while (!OVRManager.IsInsightPassthroughInitialized() && Time.realtimeSinceStartup < until) yield return null;
+            if (layer == null)
+            {
+                var layerObject = new GameObject("Real room passthrough underlay");
+                layerObject.SetActive(false);
+                layerObject.transform.SetParent(transform, false);
+                layer = layerObject.AddComponent<OVRPassthroughLayer>();
+                layer.textureOpacity = 1f;
+                layer.passthroughLayerResumed.AddListener(_ => Debug.Log("WORKSPACE_PASSTHROUGH layer_presented=True"));
+            }
+            layer.hidden = !requested;
+            layer.gameObject.SetActive(true);
+            float until = Time.realtimeSinceStartup + 10;
+            while (readiness.IsCurrent(ticket) && DisplayReady(out _)
+                && !OVRManager.IsInsightPassthroughInitialized() && Time.realtimeSinceStartup < until) yield return null;
+            if (!readiness.IsCurrent(ticket)) yield break;
+            if (!DisplayReady(out waiting))
+            { readiness.TryBegin(ticket, false); Suspend(); Waiting(waiting); yield break; }
             if (!OVRManager.IsInsightPassthroughInitialized())
             {
-                manager.isInsightPassthroughEnabled = false;
-                layer.hidden = true;
-                Supported = false;
+                Suspend();
                 State = "Room view could not start over Link";
                 Debug.LogWarning("WORKSPACE_PASSTHROUGH initialization failed; opaque view preserved");
                 yield break;
             }
+            Supported = true;
             Apply();
             yield return new WaitForEndOfFrame();
-            var displays = new List<XRDisplaySubsystem>();
+            if (!readiness.IsCurrent(ticket)) yield break;
+            if (!DisplayReady(out waiting))
+            { readiness.TryBegin(ticket, false); Suspend(); Waiting(waiting); yield break; }
+            displays.Clear();
             SubsystemManager.GetSubsystems(displays);
             foreach (var display in displays)
+                if (display.running)
                 for (int i = 0; i < display.GetRenderPassCount(); i++)
                 {
                     display.GetRenderPass(i, out var pass);
@@ -96,17 +142,58 @@ namespace SpatialModeling
 
         void OnDisable()
         {
+            readiness.Disable();
             StopAllCoroutines();
-            if (layer != null) layer.hidden = true;
-            if (manager != null) manager.isInsightPassthroughEnabled = false;
-            if (view != null)
+            Suspend();
+        }
+
+        void Suspend()
+        {
+            Supported = Active = false;
+            if (!attemptLive && !savedView) return;
+            if (layer != null) { layer.hidden = true; layer.gameObject.SetActive(false); }
+            if (manager != null)
+            {
+                manager.isInsightPassthroughEnabled = false;
+                if (ownsManager) manager.enabled = false;
+            }
+            if (savedView && view != null)
             {
                 view.clearFlags = originalClear;
                 view.backgroundColor = originalBackground;
                 view.allowHDR = originalHdr;
                 view.GetUniversalAdditionalCameraData().renderPostProcessing = originalPostProcessing;
             }
-            Active = false;
+            attemptLive = savedView = false;
+            view = null;
+        }
+
+        void OnDestroy()
+        {
+            if (layer != null) Destroy(layer.gameObject);
+            if (ownsManager && manager != null) Destroy(manager);
+        }
+    }
+
+    // Pure admission state: capability alone cannot start Meta without an eye
+    // target. Only a new real readiness epoch or component enable retries once.
+    public sealed class PassthroughReadinessGate
+    {
+        int epoch;
+        bool enabled, attempted;
+        public static bool InputsReady(bool runtime, bool capability, bool displayRunning,
+            int eyeWidth, int eyeHeight, bool camera) =>
+            runtime && capability && displayRunning && eyeWidth > 0 && eyeHeight > 0 && camera;
+        public int Enable() { enabled = true; attempted = false; return ++epoch; }
+        public void Disable() { enabled = attempted = false; epoch++; }
+        public bool IsCurrent(int ticket) => enabled && ticket == epoch;
+        public bool TryBegin(int ticket, bool ready)
+        {
+            if (!IsCurrent(ticket)) return false;
+            if (!ready) { attempted = false; return false; }
+            if (attempted) return false;
+            attempted = true;
+            return true;
         }
     }
 }

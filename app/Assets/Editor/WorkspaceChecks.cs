@@ -85,6 +85,7 @@ public static class WorkspaceChecks
             trackedSample.isTracked = true;
             trackedSample.trackingState = InputTrackingState.Rotation;
             Check(!WorkspaceInteraction.TryGetTrackedPose(trackedSample, out _), "Rotation-only tracking must not teleport the held item");
+            CheckPassthroughReadiness();
             Debug.Log("WORKSPACE_CHECKS PASS: no-snap grab, pose/depth/origin mapping, rigid assembly, native/view separation, live update, reset");
         }
         finally { UnityEngine.Object.DestroyImmediate(root); }
@@ -255,6 +256,33 @@ public static class WorkspaceChecks
             Check(angularLag < 6f, "Deliberate rotation must stay responsive across the180degree boundary");
             Debug.Log($"GRAB_SMOOTHING_CHECK rate={rate} position_jitter_ratio={positionRatio:F3} rotation_jitter_ratio={rotationRatio:F3} max_lag_m={maximumLag:F4}");
         }
+    }
+
+    static void CheckPassthroughReadiness()
+    {
+        Check(!PassthroughReadinessGate.InputsReady(false, true, true, 100, 100, true), "Passthrough must wait for the XR runtime");
+        Check(!PassthroughReadinessGate.InputsReady(true, false, true, 100, 100, true), "Passthrough must require its actual extension");
+        Check(!PassthroughReadinessGate.InputsReady(true, true, false, 100, 100, true), "Eye dimensions alone cannot replace a running display");
+        Check(!PassthroughReadinessGate.InputsReady(true, true, true, 0, 0, true), "Capability must not create Meta with zero eyes");
+        Check(!PassthroughReadinessGate.InputsReady(true, true, true, 100, 0, true), "Both eye dimensions must be valid");
+        Check(!PassthroughReadinessGate.InputsReady(true, true, true, -1, 100, true), "Invalid eye width cannot start passthrough");
+        Check(!PassthroughReadinessGate.InputsReady(true, true, true, 100, 100, false), "Passthrough must wait for its camera");
+        Check(PassthroughReadinessGate.InputsReady(true, true, true, 100, 100, true), "A real ready display/camera may start passthrough");
+        var gate = new PassthroughReadinessGate();
+        int first = gate.Enable();
+        Check(!gate.TryBegin(first, false), "Inactive XR must not consume the later initialization opportunity");
+        Check(gate.TryBegin(first, true), "Delayed readiness must permit initialization without app restart");
+        Check(!gate.TryBegin(first, true), "A pending/failed attempt must not loop while readiness stays true");
+        Check(!gate.TryBegin(first, false) && gate.TryBegin(first, true), "Loss and return of readiness must permit retry");
+        gate.Disable();
+        Check(!gate.IsCurrent(first) && !gate.TryBegin(first, true), "Disable must invalidate pending initialization");
+        int second = gate.Enable();
+        Check(second != first && gate.TryBegin(second, true), "Re-enable must allow one fresh attempt");
+        gate.TryBegin(first, false);
+        Check(!gate.TryBegin(second, true), "An old coroutine cannot rearm the new attempt");
+        gate.Disable();
+        Check(!gate.TryBegin(second, false), "Late disabled callbacks cannot change admission state");
+        Debug.Log("PASSTHROUGH_READINESS_CHECK PASS actual-input gating, delayed readiness, retry and disable epochs");
     }
 
     // Quaternion.Angle rounds very small differences to zero. RMS jitter measurements
