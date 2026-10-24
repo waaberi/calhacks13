@@ -16,7 +16,12 @@ through bpy.app.timers. Never execute received data as Python.
 
 import bpy
 
-from . import gate, host, lan
+from . import gate, host, lan, remote_client
+
+
+def _sync_roles(self, context):
+    remote_client.disconnect()
+    host.sync()
 
 
 def _restart(self, context):
@@ -33,7 +38,7 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
             ("CLIENT", "Client", "Join a host on another computer"),
         ],
         default="HOST",
-        update=lambda self, context: host.sync(),
+        update=_sync_roles,
     )
     lan_enabled: bpy.props.BoolProperty(
         name="Let a Client-role Blender join over the LAN",
@@ -94,11 +99,25 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
         update=_restart,
     )
 
+    client_address: bpy.props.StringProperty(name="Host address", default="127.0.0.1")
+    client_port: bpy.props.IntProperty(name="Host port", default=lan.PORT, min=1, max=65535)
+    client_token: bpy.props.StringProperty(name="Session token", subtype="PASSWORD")
+    client_tls: bpy.props.BoolProperty(name="Use TLS with the token", default=True)
+
     def draw(self, context):
         layout = self.layout
         layout.prop(self, "role", expand=True)
         if self.role != "HOST":
-            layout.label(text=host.status)
+            layout.label(text="Read-only mirror — use a separate empty, unsaved session")
+            layout.prop(self, "client_address")
+            layout.prop(self, "client_port")
+            layout.prop(self, "client_token")
+            layout.prop(self, "client_tls")
+            row = layout.row(align=True)
+            row.operator(ConnectReadOnly.bl_idname)
+            row.operator(DisconnectReadOnly.bl_idname)
+            layout.label(text=remote_client.state.status,
+                         icon="CHECKMARK" if remote_client.state.current else "ERROR")
             return
         layout.prop(self, "host_name")
         layout.label(text=f"VR app: {host.status}")
@@ -144,7 +163,40 @@ class NewSessionToken(bpy.types.Operator):
         return {"FINISHED"}
 
 
-CLASSES = (SpatialModelingPreferences, CopySessionToken, NewSessionToken)
+class ConnectReadOnly(bpy.types.Operator):
+    """Join without sending edits. Never loads into a personal file"""
+
+    bl_idname = "spatial_modeling.connect_readonly"
+    bl_label = "Connect read-only"
+
+    def execute(self, context):
+        from .session import APP
+        prefs = context.preferences.addons[__package__].preferences
+        if prefs.role != "CLIENT":
+            return {"CANCELLED"}
+        try:
+            remote_client.connect(prefs.client_address, prefs.client_token, APP["version"],
+                                  prefs.host_name or "Blender viewer", prefs.client_port,
+                                  prefs.client_tls)
+        except (ValueError, OSError) as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class DisconnectReadOnly(bpy.types.Operator):
+    """Stop the connection and remove only this mirror's owned data"""
+
+    bl_idname = "spatial_modeling.disconnect_readonly"
+    bl_label = "Disconnect"
+
+    def execute(self, context):
+        remote_client.disconnect()
+        return {"FINISHED"}
+
+
+CLASSES = (SpatialModelingPreferences, CopySessionToken, NewSessionToken,
+           ConnectReadOnly, DisconnectReadOnly)
 
 
 def register():
@@ -152,9 +204,11 @@ def register():
         bpy.utils.register_class(cls)
     host.register()
     gate.register()
+    remote_client.register()
 
 
 def unregister():
+    remote_client.unregister()
     gate.unregister()
     host.unregister()
     for cls in reversed(CLASSES):

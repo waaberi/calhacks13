@@ -1,5 +1,111 @@
-"""Client role: join a host Blender over the LAN, mirror its scene, send edits as requests.
+"""P2 read-only Client role. Connect explicitly from a separate empty Blender."""
 
-Owner: Lee Jae-yeon. Applies host snapshots as replication, never echoing them
-back as new edits. See contracts/README.md for the wire format.
-"""
+import queue
+
+from .state import SceneState
+
+state = SceneState()
+_link = _mirror = None
+_draw_handle = None
+
+
+def connect(address, token, version, name="Blender viewer", port=8767, tls=True):
+    global _link, _mirror, state
+    from .mirror import Mirror
+    from .transport import ReadOnlyLink
+    disconnect()
+    _mirror = Mirror()
+    state = SceneState()
+    try:
+        _link = ReadOnlyLink(address, token, version, name, port, tls)
+    except Exception:
+        _mirror.clear()
+        _mirror = None
+        raise
+    import bpy
+    if not bpy.app.timers.is_registered(poll):
+        bpy.app.timers.register(poll, first_interval=0.02)
+
+
+def poll():
+    import bpy
+    if _link is None:
+        return None
+    if not _link.thread.is_alive():
+        state.stale("Connection stopped — reconnect explicitly; last scene is stale")
+    try:
+        for _ in range(32):
+            try:
+                kind, payload = _link.events.get_nowait()
+            except queue.Empty:
+                break
+            if kind in ("scene.snapshot", "scene.update"):
+                state.receive(payload, kind == "scene.snapshot")
+                _mirror.apply(state)
+            elif kind == "welcome":
+                state.stale("Receiving a fresh host snapshot — read-only")
+            elif kind == "error":
+                state.stale(f"Connection refused ({payload}) — reconnect explicitly")
+            else:
+                state.stale(payload or "Connecting — last scene is stale")
+    except (ValueError, KeyError, TypeError, RuntimeError):
+        state.stale("Scene could not be verified/applied — reconnect for a fresh snapshot")
+        _link.stop()
+    if state.current and not _link.healthy:
+        state.stale("Host is not responding — last scene is stale")
+    for window in bpy.context.window_manager.windows:
+        for area in window.screen.areas:
+            if area.type in ("PREFERENCES", "VIEW_3D"):
+                area.tag_redraw()
+    return 0.02
+
+
+def disconnect():
+    global _link, _mirror
+    import bpy
+    if _link is not None:
+        _link.stop()
+    _link = None
+    if bpy.app.timers.is_registered(poll):
+        bpy.app.timers.unregister(poll)
+    state.stale("Disconnected — read-only mirror stopped")
+    if _mirror is not None:
+        _mirror.clear()
+        _mirror = None
+
+
+def _draw_status():
+    import blf
+    import bpy
+    prefs = bpy.context.preferences.addons.get(__package__.rsplit(".", 1)[0])
+    if prefs is None or prefs.preferences.role != "CLIENT":
+        return
+    blf.position(0, 20, 45, 0)
+    blf.size(0, 18)
+    blf.color(0, *((0.7, 1, 0.7, 1) if state.current else (1, 0.5, 0.15, 1)))
+    blf.draw(0, state.status)
+
+
+def register():
+    global _draw_handle
+    import bpy
+    bpy.app.handlers.persistent(_before_load)
+    if _draw_handle is None:
+        _draw_handle = bpy.types.SpaceView3D.draw_handler_add(_draw_status, (), "WINDOW", "POST_PIXEL")
+    if _before_load not in bpy.app.handlers.load_pre:
+        bpy.app.handlers.load_pre.append(_before_load)
+
+
+def _before_load(*_):
+    disconnect()
+
+
+def unregister():
+    global _draw_handle
+    import bpy
+    disconnect()
+    if _draw_handle is not None:
+        bpy.types.SpaceView3D.draw_handler_remove(_draw_handle, "WINDOW")
+        _draw_handle = None
+    if _before_load in bpy.app.handlers.load_pre:
+        bpy.app.handlers.load_pre.remove(_before_load)

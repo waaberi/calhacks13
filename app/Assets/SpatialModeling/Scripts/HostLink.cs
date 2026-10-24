@@ -48,6 +48,8 @@ namespace SpatialModeling
         public bool SocketOpen => stream != null;
         public long SilenceMs => clock.ElapsedMilliseconds - Interlocked.Read(ref lastReceiveMs);
 
+        public void Reconnect() { try { client?.Close(); } catch (SocketException) { } }
+
         // Ends this link for good: its thread exits and it never posts another event.
         public void Stop()
         {
@@ -153,7 +155,12 @@ namespace SpatialModeling
                         break;
                 }
             }
-            catch (Exception e) { Warn($"Ignored a {type} message: {e.Message}"); }
+            catch (Exception e)
+            {
+                Warn($"Ignored a {type} message: {e.Message}");
+                if (type == "scene.snapshot" || type == "scene.update")
+                    Post(new HostEvent(HostEventKind.InvalidScene));
+            }
         }
 
         static JObject Parse(byte[] bytes, int length)
@@ -166,22 +173,32 @@ namespace SpatialModeling
             }
         }
 
-        HostEvent DecodeScene(JObject p, bool snapshot)
+        internal static HostEvent DecodeScene(JObject p, bool snapshot)
         {
             if (p == null) throw new FormatException("no payload");
             var e = new HostEvent(HostEventKind.Scene) { Snapshot = snapshot };
-            if (p["document"] is JObject d && d["revision"] != null) e.Revision = (long)d["revision"];
+            if (p["document"] is JObject d && d["revision"] != null)
+            {
+                e.Revision = (long)d["revision"];
+                e.DocumentId = (string)d["id"] ?? "";
+                e.OpenEpoch = (string)d["open_epoch"] ?? "";
+            }
+            if (e.DocumentId.Length != 32 || e.OpenEpoch.Length != 32 || !e.Revision.HasValue || e.Revision < 0)
+                throw new FormatException("invalid document identity/revision");
             if (p["removed"] is JArray removed)
                 foreach (var r in removed) e.Removed.Add((string)r);
             if (p["objects"] is JArray objects)
             {
                 foreach (var o in objects)
                 {
-                    // One bad object is skipped; it doesn't cost the rest of the scene.
-                    try { e.Objects.Add(DecodeObject(o as JObject ?? throw new FormatException("not an object"))); }
-                    catch (Exception ex) { Warn($"Skipped object {(o as JObject)?["id"]}: {ex.Message}"); }
+                    // Never label an incomplete snapshot current or lose one delta.
+                    e.Objects.Add(DecodeObject(o as JObject ?? throw new FormatException("not an object")));
                 }
             }
+            else throw new FormatException("objects array is missing");
+            var ids = new HashSet<string>();
+            foreach (var obj in e.Objects)
+                if (!ids.Add(obj.Id)) throw new FormatException("duplicate object ID");
             return e;
         }
 
@@ -190,6 +207,8 @@ namespace SpatialModeling
             var r = new ObjectRecord { Id = (string)o["id"] };
             if (string.IsNullOrEmpty(r.Id)) throw new FormatException("no id");
             r.Name = (string)o["name"] ?? r.Id;
+            r.ParentId = (string)o["parent"];
+            r.Generation = (long?)o["generation"] ?? 0;
             r.Visible = (bool?)o["visible"] ?? true;
 
             if (o["transform"] is JObject t)
@@ -284,13 +303,14 @@ namespace SpatialModeling
         }
     }
 
-    enum HostEventKind { Opened, Closed, Welcome, Scene, Error, Warning }
+    enum HostEventKind { Opened, Closed, Welcome, Scene, Error, Warning, InvalidScene }
 
     sealed class HostEvent
     {
         public readonly HostEventKind Kind;
         public string Text = "";   // Closed: why. Welcome: document name. Error: the host's message. Warning.
         public string Code = "";   // Error
+        public string DocumentId = "", OpenEpoch = "";
         public bool Snapshot;      // Scene
         public long? Revision;
         public readonly List<string> Removed = new List<string>();
@@ -302,7 +322,8 @@ namespace SpatialModeling
     // One wire object, already in Unity's frame.
     sealed class ObjectRecord
     {
-        public string Id, Name;
+        public string Id, Name, ParentId;
+        public long Generation;
         public bool Visible;
         public bool HasTransform;
         public Vector3 Position, Scale;

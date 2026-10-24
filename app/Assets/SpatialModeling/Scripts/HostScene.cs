@@ -7,6 +7,7 @@ namespace SpatialModeling
 {
     // P0 (#11): connects to the host add-on (or the fake host), draws the scene it sends,
     // and shows the connection state from the contract's table (contracts/README.md, Connecting).
+    [RequireComponent(typeof(TablePlacement))]
     public class HostScene : MonoBehaviour
     {
         [Header("Host connection (localhost only)")]
@@ -27,6 +28,14 @@ namespace SpatialModeling
         static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
 
         readonly Dictionary<string, GameObject> objects = new Dictionary<string, GameObject>();
+        public Transform Placement => root;
+        public int ObjectCount => objects.Count;
+        public bool IsCurrent => status == Status.Connected;
+        public string ConnectionText => status == Status.Connected
+            ? $"Connected to {documentName} — revision {revision}"
+            : $"{status} — last scene is stale; native edits disabled";
+        string documentId = "", openEpoch = "";
+        TablePlacement table;
         HostLink link;
         Transform root;
         MaterialPropertyBlock block;
@@ -40,12 +49,21 @@ namespace SpatialModeling
         long revision;
         Status status = Status.Connecting;
 
+        static void ReleaseObject(UnityEngine.Object value)
+        {
+            if (value == null) return;
+            if (Application.isPlaying) Destroy(value);
+            else DestroyImmediate(value);
+        }
+
         void Awake()
         {
             root = new GameObject("HostSceneRoot").transform;
             root.position = rootPosition;
             root.localScale = Vector3.one * displayScale;
             block = new MaterialPropertyBlock();
+            table = GetComponent<TablePlacement>() ?? gameObject.AddComponent<TablePlacement>();
+            table.Initialize(root);
         }
 
         void OnEnable()
@@ -69,7 +87,8 @@ namespace SpatialModeling
         void OnDestroy()
         {
             ClearScene();
-            if (fallbackMaterial != null) Destroy(fallbackMaterial);
+            if (root != null) ReleaseObject(root.gameObject);
+            if (fallbackMaterial != null) ReleaseObject(fallbackMaterial);
         }
 
         void Update()
@@ -101,21 +120,51 @@ namespace SpatialModeling
             GUI.Label(new Rect(20, 20, 1400, 200), text, style);
         }
 
-        void Handle(HostEvent e)
+        internal void Handle(HostEvent e)
         {
             switch (e.Kind)
             {
                 case HostEventKind.Opened: opened = true; socketError = ""; break;
                 case HostEventKind.Closed: connected = false; socketError = e.Text; break;
-                case HostEventKind.Welcome: hostError = hostErrorCode = ""; documentName = e.Text; break;
+                case HostEventKind.Welcome:
+                    hostError = hostErrorCode = "";
+                    documentName = e.Text;
+                    break;
                 case HostEventKind.Error:
                     hostErrorCode = e.Code;
                     hostError = $"{e.Text} ({e.Code})";
                     Debug.LogWarning("Host error: " + hostError);
                     break;
                 case HostEventKind.Warning: Debug.LogWarning("HostScene: " + e.Text); break;
+                case HostEventKind.InvalidScene:
+                    connected = false;
+                    link?.Reconnect();
+                    break;
                 case HostEventKind.Scene:
-                    if (e.Snapshot) ClearScene();
+                    if (!e.Snapshot && (!connected || e.DocumentId != documentId || e.OpenEpoch != openEpoch ||
+                        !e.Revision.HasValue || e.Revision < revision || e.Revision > revision + 1))
+                    {
+                        Debug.LogWarning("HostScene: ignored an update without a matching fresh snapshot");
+                        connected = false;
+                        link?.Reconnect();
+                        break;
+                    }
+                    if (e.Snapshot)
+                    {
+                        // Reuse existing IDs and per-part view offsets on reconnect.
+                        // A different native document requires placement confirmation.
+                        if (documentId != e.DocumentId)
+                        {
+                            ClearScene();
+                            table.RequirePlacement();
+                        }
+                        documentId = e.DocumentId;
+                        openEpoch = e.OpenEpoch;
+                        var incoming = new HashSet<string>();
+                        foreach (var record in e.Objects) incoming.Add(record.Id);
+                        foreach (var id in new List<string>(objects.Keys))
+                            if (!incoming.Contains(id)) Remove(id);
+                    }
                     if (e.Revision.HasValue) revision = e.Revision.Value;
                     foreach (var id in e.Removed) Remove(id);
                     foreach (var r in e.Objects)
@@ -149,28 +198,33 @@ namespace SpatialModeling
         {
             if (!objects.TryGetValue(r.Id, out var go))
             {
-                go = new GameObject(r.Id, typeof(MeshFilter), typeof(MeshRenderer));   // selection colliders come in P2
+                go = new GameObject(r.Id, typeof(MeshFilter), typeof(MeshRenderer), typeof(MeshCollider), typeof(WorkspaceObjectView));
                 go.transform.SetParent(root, false);
                 go.GetComponent<MeshRenderer>().sharedMaterial = ObjectMaterial;
                 objects[r.Id] = go;
             }
             go.name = r.Name;
+            var view = go.GetComponent<WorkspaceObjectView>();
+            view.ObjectId = r.Id;
+            view.NativeParentId = r.ParentId;
+            view.Generation = r.Generation;
             go.SetActive(r.Visible);
 
             // Wire transforms are world space, so objects stay flat under the display root.
             if (r.HasTransform)
             {
-                go.transform.localPosition = r.Position;
-                go.transform.localRotation = r.Rotation;
-                go.transform.localScale = r.Scale;
+                view.SetNativePose(r.Position, r.Rotation, r.Scale);
             }
 
             var mf = go.GetComponent<MeshFilter>();
             var mr = go.GetComponent<MeshRenderer>();
             if (r.HasMesh)
             {
-                if (mf.sharedMesh != null) Destroy(mf.sharedMesh);
+                var collider = go.GetComponent<MeshCollider>();
+                collider.sharedMesh = null;
+                if (mf.sharedMesh != null) ReleaseObject(mf.sharedMesh);
                 mf.sharedMesh = r.Mesh != null ? BuildMesh(r.Mesh, r.Name) : null;
+                collider.sharedMesh = mf.sharedMesh;
                 mr.enabled = r.Mesh != null;
             }
 
@@ -202,8 +256,10 @@ namespace SpatialModeling
         {
             if (!objects.TryGetValue(id, out var go)) return;
             var mf = go.GetComponent<MeshFilter>();
-            if (mf != null && mf.sharedMesh != null) Destroy(mf.sharedMesh);
-            Destroy(go);
+            var collider = go.GetComponent<MeshCollider>();
+            if (collider != null) collider.sharedMesh = null;
+            if (mf != null && mf.sharedMesh != null) ReleaseObject(mf.sharedMesh);
+            ReleaseObject(go);
             objects.Remove(id);
         }
 
