@@ -14,6 +14,40 @@ The preview provides native navigation to workspace tabs, editors, expanding pan
 
 ## Coverage and failures
 
+**Model tools** opens a separate object-action overlay. It first finishes owned
+preview input cleanup and waits for the native UI reservation to end. Previous
+object / Next object explicitly chooses a synchronized native object; the panel
+shows its name as the model target. This target is separate from spatial sketch
+selection. A missing or removed target never redirects an action to another
+object. Add selects its own confirmed created UUID, waiting for the exact scene
+record if the receipt arrives first.
+
+The overlay adds 18 native modeling actions:
+
+| Buttons | Native result |
+| --- | --- |
+| Add cube / sphere / cylinder | Create at Blender world origin, with 20/50/100 mm bounding dimensions; cylinder diameter and depth are equal |
+| Move X/Y/Z, positive and negative | Move the chosen native object by 1/10/100 mm along Blender world axes |
+| Turn X/Y/Z, positive and negative | Rotate about the chosen object's origin by 15/45/90 degrees around Blender world axes |
+| Scale down / up | Uniform factors 1/1.1 and 1.1, so the two operations are inverses |
+| Delete target | Delete only the explicit native object; native Undo restores it |
+
+Move step, Turn step and Primitive size cycle the displayed values. Defaults are
+10 mm, 45 degrees and 50 mm. Native unit scale and viewer magnification do not
+change these distances. The overlay includes native Undo, Redo, Save and Cancel
+pending. Cancel can stop a pending permission request; after a command is
+executing, wait for its receipt and use Undo. Saving an unsaved document reports
+the native refusal rather than inventing a path.
+
+These buttons use existing typed commands, permissions, receipts and history.
+They require current editable native state in Object Mode, no running modal tool,
+and completed preview-input cleanup. They work without CAD Sketcher; direct
+spatial sketch drawing still requires it. If context changes while permission is
+pending, the late grant is released without sending the edit. Overlay gaps absorb
+input and cannot trigger Blender or spatial drawing behind the controls. The
+[native command evidence](P2_5_OBJECT_ACTIONS_NATIVE.md) covers actual Blender
+outcomes; headless callback checks and later physical acceptance remain separate.
+
 A newly created sketch becomes the explicitly named spatial drawing target once Blender confirms it. The native preview can retain its previous selection; the status identifies both. Drawing waits for that new sketch's native scene record. Removing it refuses further clicks rather than redirecting them to an older sketch. Changing native sketch/tool context or leaving spatial mode clears this explicit choice.
 
 The following are implemented routes, not a claim of completed native UI or headset acceptance. Real button coverage must be verified on the exact integrated runtime.

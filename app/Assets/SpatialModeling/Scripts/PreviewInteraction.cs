@@ -26,8 +26,9 @@ namespace SpatialModeling
         public PreviewSpatialDrawing Drawing { get; private set; }
         BlenderScreen screen;
         HostScene scene;
-        RectTransform panel, keyboard;
-        Text feedback;
+        RectTransform panel, keyboard, modelToolsPanel;
+        Text feedback, objectTargetText;
+        Button moveStepButton, turnStepButton, primitiveSizeButton;
         readonly List<Button> buttons = new List<Button>();
         readonly Queue<JObject> events = new Queue<JObject>();
         JObject state;
@@ -36,7 +37,7 @@ namespace SpatialModeling
         readonly PreviewInputTransportState transport = new PreviewInputTransportState();
         bool readingState, sendingEvent;
         bool inputEnabled, triggerWasDown, mouseHeld, keyboardShown, shiftText;
-        bool focusRequested, endAfterRelease, releaseQueued, spatialRequested;
+        bool focusRequested, endAfterRelease, releaseQueued, spatialRequested, objectsRequested, modelToolsShown;
         readonly HashSet<string> modifiers = new HashSet<string>();
         float nextPointer, nextScroll, nextHeartbeat;
         Vector2 lastPoint;
@@ -93,6 +94,7 @@ namespace SpatialModeling
             if (Current == this) Current = null;
             if (panel != null) Destroy(panel.gameObject);
             if (keyboard != null) Destroy(keyboard.gameObject);
+            if (modelToolsPanel != null) Destroy(modelToolsPanel.gameObject);
         }
 
         void Update()
@@ -102,6 +104,7 @@ namespace SpatialModeling
             bool shown = screen != null && screen.Visible && screen.HasImage && screen.Placement.gameObject.activeInHierarchy;
             if (panel != null) panel.gameObject.SetActive(shown);
             if (keyboard != null) keyboard.gameObject.SetActive(shown && keyboardShown);
+            if (modelToolsPanel != null) modelToolsPanel.gameObject.SetActive(shown && modelToolsShown);
             if (!shown || scene == null || !scene.IsCurrent) Suspend();
             if (focusRequested && !endAfterRelease && Drawing != null && Drawing.IsNativeUiOwned)
             {
@@ -118,8 +121,13 @@ namespace SpatialModeling
                 }
                 else Notice = "Capture must select a window from the connected Blender host";
             }
-            if (spatialRequested && !endAfterRelease && Drawing != null && !Drawing.IsNativeUiOwned)
-            { spatialRequested = false; Drawing.SetEnabled(true); }
+            if (spatialRequested && !endAfterRelease && Drawing != null && !Drawing.IsNativeUiOwned && !Drawing.NativeUiTransitionPending)
+            { spatialRequested = false; modelToolsShown = false; Drawing.SetEnabled(true); }
+            if (objectsRequested && !endAfterRelease && Drawing != null && !Drawing.IsNativeUiOwned && !Drawing.NativeUiTransitionPending)
+            {
+                if (Drawing.SetObjectToolsEnabled(true))
+                { objectsRequested = false; modelToolsShown = true; keyboardShown = false; }
+            }
             if (endAfterRelease && !releaseQueued && session.Length != 0 && token.Length != 0)
             { Enqueue(new JObject { ["type"] = "release" }); releaseQueued = true; }
             if (inputEnabled && Time.unscaledTime >= nextHeartbeat)
@@ -128,6 +136,7 @@ namespace SpatialModeling
                 feedback.text = "P2.5 · " + (inputEnabled ? "Native UI" : "Native UI off") + " · Mouse: " + mouseButton
                     + " · " + (PrimaryHand == XRNode.RightHand ? "Right" : "Left") + " pointer\n" + Notice
                     + "\n" + (Drawing != null ? Drawing.StatusText : "Waiting for spatial bridge");
+            if (modelToolsShown) RefreshObjectLabels();
         }
 
         public void TrackingLost(XRNode hand)
@@ -139,8 +148,9 @@ namespace SpatialModeling
             if (inputEnabled || focusRequested || (Drawing != null && Drawing.IsNativeUiOwned)) RequestEndNativeUi();
             inputEnabled = false;
             focusRequested = false;
+            objectsRequested = spatialRequested = modelToolsShown = false;
             CapturesScroll = false;
-            if (Drawing != null) { Drawing.Cancel(); Drawing.SetEnabled(false); }
+            if (Drawing != null) { Drawing.Cancel(); Drawing.SetEnabled(false); Drawing.SetObjectToolsEnabled(false); }
         }
 
         public bool RouteHand(XRNode hand, Ray ray, bool trigger, bool grip, Vector2 axis, float nearest, out float distance)
@@ -163,12 +173,17 @@ namespace SpatialModeling
             if (hit != null)
             {
                 ReleasePointer(); distance = uiDistance;
-                if (pressed) hit.onClick.Invoke();
+                if (pressed && hit.IsInteractable()) hit.onClick.Invoke();
                 return true;
             }
             if (keyboard != null && keyboard.gameObject.activeInHierarchy && Hit(keyboard, ray, out var keyboardDistance)
                 && keyboardDistance <= nearest)
             { ReleasePointer(); distance = keyboardDistance; return true; }
+            if (modelToolsPanel != null && modelToolsPanel.gameObject.activeInHierarchy && Hit(modelToolsPanel, ray, out var modelDistance)
+                && modelDistance <= nearest)
+            { ReleasePointer(); distance = modelDistance; return true; }
+            if (panel != null && panel.gameObject.activeInHierarchy && Hit(panel, ray, out var panelDistance) && panelDistance <= nearest)
+            { ReleasePointer(); distance = panelDistance; return true; }
             if (screen != null && screen.TryPreviewPoint(ray, out var point, out var imageDistance) && imageDistance <= nearest)
             {
                 distance = imageDistance;
@@ -227,7 +242,8 @@ namespace SpatialModeling
             if (endAfterRelease) { Notice = "Waiting for native input cleanup before focusing again"; return; }
             if (state == null || (bool?)state["enabled"] != true || session.Length == 0)
             { Notice = "Start the P2.5 helper with input enabled and select the connected Blender window"; return; }
-            Drawing.Cancel(); Drawing.SetEnabled(false);
+            objectsRequested = modelToolsShown = false;
+            Drawing.Cancel(); Drawing.SetEnabled(false); Drawing.SetObjectToolsEnabled(false);
             focusRequested = true; spatialRequested = false;
             Drawing.BeginNativeUi();
             Notice = "Waiting for native UI editing permission";
@@ -245,9 +261,23 @@ namespace SpatialModeling
         {
             if (Drawing.NativeModalActive)
             { Notice = "Finish the native operation with Enter or Escape before switching to VR drawing"; return; }
-            inputEnabled = focusRequested = false;
-            if (Drawing.IsNativeUiOwned) RequestEndNativeUi();
+            objectsRequested = modelToolsShown = false;
+            Drawing.SetObjectToolsEnabled(false);
+            bool needsRelease = inputEnabled || focusRequested || Drawing.IsNativeUiOwned || Drawing.NativeUiTransitionPending;
+            ReleaseNative(); inputEnabled = focusRequested = false;
+            if (needsRelease) RequestEndNativeUi();
             spatialRequested = true;
+        }
+        void BeginObjects()
+        {
+            if (Drawing == null) return;
+            if (Drawing.NativeModalActive) { Notice = "Finish or cancel the running Blender operation before Model tools"; return; }
+            bool needsRelease = inputEnabled || focusRequested || Drawing.IsNativeUiOwned || Drawing.NativeUiTransitionPending;
+            ReleaseNative(); inputEnabled = focusRequested = false;
+            Drawing.SetEnabled(false); spatialRequested = false; keyboardShown = false;
+            if (needsRelease) RequestEndNativeUi();
+            objectsRequested = true;
+            Notice = "Opening Model tools after native input cleanup";
         }
         static JObject At(string type, Vector2 p) => new JObject { ["type"] = type, ["x"] = p.x, ["y"] = p.y };
         void FlushPointer() { if (pendingPointer != null) { Enqueue(pendingPointer); pendingPointer = null; } }
@@ -446,16 +476,16 @@ namespace SpatialModeling
             panel = MakePanel("P2.5 controls", new Vector2(0, -1120), new Vector2(1840, 540));
             AddButton(panel, "Focus Blender", 0, 0, FocusNativeUi);
             AddButton(panel, "Disable input", 1, 0, Suspend);
-            AddButton(panel, "Keyboard", 2, 0, () => keyboardShown = !keyboardShown);
+            AddButton(panel, "Keyboard", 2, 0, () => { modelToolsShown = objectsRequested = false; Drawing.SetObjectToolsEnabled(false); keyboardShown = !keyboardShown; });
             AddButton(panel, "Mouse left", 3, 0, () => { ReleaseNative(); mouseButton = "left"; });
             AddButton(panel, "Mouse right", 4, 0, () => { ReleaseNative(); mouseButton = "right"; });
             AddButton(panel, "Mouse middle", 5, 0, () => { ReleaseNative(); mouseButton = "middle"; });
             AddButton(panel, "Other hand", 6, 0, () => { Suspend(); PrimaryHand = PrimaryHand == XRNode.RightHand ? XRNode.LeftHand : XRNode.RightHand; triggerWasDown = true; });
             AddButton(panel, "Escape / cancel", 0, 1, () => { Drawing.Cancel(); Key("ESC"); });
             AddButton(panel, "Enter", 1, 1, () => Key("ENTER"));
-            AddButton(panel, "Undo", 2, 1, () => { if (Drawing.EnabledForInput) Drawing.Undo(); else Shortcut("Z"); });
-            AddButton(panel, "Redo", 3, 1, () => { if (Drawing.EnabledForInput) Drawing.Redo(); else Shortcut("Z", true); });
-            AddButton(panel, "Save", 4, 1, () => { if (Drawing.EnabledForInput) Drawing.Save(); else Shortcut("S"); });
+            AddButton(panel, "Undo", 2, 1, () => { if (Drawing.EnabledForInput || Drawing.ObjectToolsEnabled) Drawing.Undo(); else Shortcut("Z"); });
+            AddButton(panel, "Redo", 3, 1, () => { if (Drawing.EnabledForInput || Drawing.ObjectToolsEnabled) Drawing.Redo(); else Shortcut("Z", true); });
+            AddButton(panel, "Save", 4, 1, () => { if (Drawing.EnabledForInput || Drawing.ObjectToolsEnabled) Drawing.Save(); else Shortcut("S"); });
             AddButton(panel, "Search F3", 5, 1, () => Key("F3"));
             AddButton(panel, "Next window", 6, 1, NextWindow);
             AddButton(panel, "Draw in VR", 0, 2, BeginSpatial);
@@ -465,6 +495,7 @@ namespace SpatialModeling
             AddButton(panel, "New XY sketch", 4, 2, () => Drawing.CreateSketch("XY"));
             AddButton(panel, "New XZ sketch", 5, 2, () => Drawing.CreateSketch("XZ"));
             AddButton(panel, "New YZ sketch", 6, 2, () => Drawing.CreateSketch("YZ"));
+            AddButton(panel, "Model tools", 0, 3, BeginObjects);
             feedback = MakeText(panel, new Vector2(0, -155), new Vector2(1780, 160), "", 25);
             // A temporary keyboard overlays the lower preview while typing. It
             // must not be placed metres below the screen (possibly below floor).
@@ -495,6 +526,50 @@ namespace SpatialModeling
             for (int i = 0; i < extraKeys.Length; i++)
             { string key = extraKeys[i]; AddButton(keyboard, key, i + 5, 5, () => Key(key), 145, 12); }
             keyboard.gameObject.SetActive(false);
+            BuildModelTools();
+        }
+
+        void BuildModelTools()
+        {
+            modelToolsPanel = MakePanel("P2.5 model tools", new Vector2(0, -200), new Vector2(1840, 560));
+            modelToolsPanel.localPosition += Vector3.back * 8f;
+            AddButton(modelToolsPanel, "Previous object", 0, 0, () => Drawing.ObjectTools.SelectRelative(-1));
+            AddButton(modelToolsPanel, "Next object", 1, 0, () => Drawing.ObjectTools.SelectRelative(1));
+            moveStepButton = AddButton(modelToolsPanel, "Move step", 2, 0, () => { if (!Drawing.Session.Busy) Drawing.ObjectTools.CycleMoveStep(); RefreshObjectLabels(); });
+            turnStepButton = AddButton(modelToolsPanel, "Turn step", 3, 0, () => { if (!Drawing.Session.Busy) Drawing.ObjectTools.CycleTurnDegrees(); RefreshObjectLabels(); });
+            primitiveSizeButton = AddButton(modelToolsPanel, "Primitive size", 4, 0, () => { if (!Drawing.Session.Busy) Drawing.ObjectTools.CyclePrimitiveSize(); RefreshObjectLabels(); });
+            AddButton(modelToolsPanel, "Close model tools", 6, 0, () => { modelToolsShown = objectsRequested = false; Drawing.SetObjectToolsEnabled(false); });
+            ObjectButton("Add cube", "add.cube", 0, 1);
+            ObjectButton("Add sphere", "add.sphere", 1, 1);
+            ObjectButton("Add cylinder", "add.cylinder", 2, 1);
+            for (int axis = 0; axis < 3; axis++)
+            {
+                string name = "XYZ"[axis].ToString(), id = name.ToLowerInvariant();
+                ObjectButton("Move " + name + " -", "move." + id + "-", axis * 2, 2);
+                ObjectButton("Move " + name + " +", "move." + id + "+", axis * 2 + 1, 2);
+                ObjectButton("Turn " + name + " -", "turn." + id + "-", axis * 2, 3);
+                ObjectButton("Turn " + name + " +", "turn." + id + "+", axis * 2 + 1, 3);
+            }
+            ObjectButton("Scale down", "scale.down", 0, 4);
+            ObjectButton("Scale up", "scale.up", 1, 4);
+            ObjectButton("Delete target", "delete", 2, 4);
+            AddButton(modelToolsPanel, "Model Undo", 3, 4, () => Drawing.Undo());
+            AddButton(modelToolsPanel, "Model Redo", 4, 4, () => Drawing.Redo());
+            AddButton(modelToolsPanel, "Model Save", 5, 4, () => Drawing.Save());
+            AddButton(modelToolsPanel, "Cancel pending", 6, 4, () => Drawing.Cancel());
+            objectTargetText = MakeText(modelToolsPanel, new Vector2(0, -202), new Vector2(1780, 100), "", 25);
+            RefreshObjectLabels(); modelToolsPanel.gameObject.SetActive(false);
+        }
+        void ObjectButton(string label, string action, int col, int row) =>
+            AddButton(modelToolsPanel, label, col, row, () => Drawing.ApplyObjectAction(action));
+        void RefreshObjectLabels()
+        {
+            if (Drawing == null) return;
+            var tools = Drawing.ObjectTools;
+            if (moveStepButton != null) moveStepButton.GetComponentInChildren<Text>().text = "Move: " + (tools.MoveStepMeters * 1000).ToString("0") + " mm";
+            if (turnStepButton != null) turnStepButton.GetComponentInChildren<Text>().text = "Turn: " + tools.TurnDegrees + " deg";
+            if (primitiveSizeButton != null) primitiveSizeButton.GetComponentInChildren<Text>().text = "Size: " + (tools.PrimitiveSizeMeters * 1000).ToString("0") + " mm";
+            if (objectTargetText != null) objectTargetText.text = "Model target: " + tools.TargetLabel + "\nBlender world XYZ · primitives at world origin · Undo restores edits";
         }
 
         void NextWindow()
@@ -516,7 +591,7 @@ namespace SpatialModeling
             go.GetComponent<Image>().color = new Color(.015f, .035f, .06f, .98f);
             return rect;
         }
-        void AddButton(RectTransform parent, string label, int col, int row, Action action, float width = 250, int columns = 7)
+        Button AddButton(RectTransform parent, string label, int col, int row, Action action, float width = 250, int columns = 7)
         {
             var go = new GameObject(label, typeof(RectTransform), typeof(Image), typeof(Button));
             var rect = go.GetComponent<RectTransform>(); rect.SetParent(parent, false);
@@ -525,6 +600,7 @@ namespace SpatialModeling
             go.GetComponent<Image>().color = new Color(.08f, .24f, .34f, 1);
             var button = go.GetComponent<Button>(); button.onClick.AddListener(() => action()); buttons.Add(button);
             MakeText(rect, Vector2.zero, rect.sizeDelta, label, columns == 12 ? 22 : 25);
+            return button;
         }
         static Text MakeText(Transform parent, Vector2 position, Vector2 size, string value, int fontSize)
         {

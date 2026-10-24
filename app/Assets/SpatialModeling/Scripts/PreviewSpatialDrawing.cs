@@ -11,13 +11,17 @@ namespace SpatialModeling
     {
         public NativeEditSession Session { get; } = new NativeEditSession();
         public bool EnabledForInput { get; private set; }
+        public bool ObjectToolsEnabled { get; private set; }
+        NativeObjectTools objectTools;
+        public NativeObjectTools ObjectTools => objectTools ?? (objectTools = new NativeObjectTools(Session));
+        public bool NativeUiTransitionPending => beginId != null || endId != null || wantNativeUi;
         public JObject NativeState { get; private set; } = new JObject();
         public bool IsNativeUiOwned => NativeStateCurrent && (bool?)NativeState["input_allowed"] == true
             && (string)NativeState["ui_session_id"] != null && !string.IsNullOrEmpty((string)NativeState["ui_session_id"]);
         public int NativeProcessId => NativeStateCurrent ? (int?)NativeState["process_id"] ?? 0 : 0;
         public bool NativeModalActive => (bool?)NativeState["modal_active"] ?? false;
         public string Tool => manualTool.Length > 0 ? manualTool : (string)NativeState["tool"] ?? "";
-        public string StatusText => TargetStatus + status + "\n" + Session.Notice;
+        public string StatusText => (ObjectToolsEnabled ? ObjectTools.TargetLabel + "\n" : TargetStatus) + status + "\n" + Session.Notice;
         public bool HasDraft => first.HasValue;
         public bool NativeStateCurrent => scene != null && scene.IsCurrent && Session.Ready && Session.SceneCurrent
             && Time.unscaledTime - stateAt < 2f;
@@ -31,7 +35,7 @@ namespace SpatialModeling
         long draftGeneration;
         Vector2? first;
         Ray lastRay;
-        bool haveRay, wantNativeUi;
+        bool haveRay, wantNativeUi, objectRequestPending;
         readonly SpatialSketchTarget target = new SpatialSketchTarget();
         string TargetStatus
         {
@@ -74,6 +78,7 @@ namespace SpatialModeling
         }
         void OnDestroy()
         {
+            objectTools?.Dispose();
             if (scene != null) scene.HostEventReceived -= Receive;
             ClearSolved();
             if (solvedMaterial != null) Destroy(solvedMaterial);
@@ -85,6 +90,7 @@ namespace SpatialModeling
 
         public void SetEnabled(bool value)
         {
+            if (value) ObjectToolsEnabled = false;
             EnabledForInput = value;
             Cancel();
             if (!value) target.Reset();
@@ -94,6 +100,7 @@ namespace SpatialModeling
 
         public void BeginNativeUi()
         {
+            ObjectToolsEnabled = false;
             Cancel(); EnabledForInput = false; wantNativeUi = true; nextQuery = 0;
             if (!Session.Ready || !Session.SceneCurrent || Session.Busy || Session.RequestIdentity == null)
             { status = "Wait for a current native scene and completed spatial receipt"; return; }
@@ -123,9 +130,10 @@ namespace SpatialModeling
             if (scene == null) return;
             Session.SceneCurrent = scene.IsCurrent;
             if (!scene.IsCurrent || !scene.DisplayPlacementReady) CancelLocal();
-            if ((EnabledForInput || wantNativeUi || beginId != null || endId != null || !string.IsNullOrEmpty((string)NativeState["ui_session_id"]))
+            if ((EnabledForInput || ObjectToolsEnabled || Session.Busy || wantNativeUi || beginId != null || endId != null || !string.IsNullOrEmpty((string)NativeState["ui_session_id"]))
                 && Session.Ready && Time.unscaledTime >= nextQuery)
             { scene.Link?.Send("preview.state.query", new JObject()); nextQuery = Time.unscaledTime + 0.4f; }
+            if (objectRequestPending && !ObjectContextCurrent()) Session.Cancel();
             if (Session.Busy && Time.unscaledTime - pendingAt > 10f) Session.Timeout();
             if ((beginId != null || endId != null) && Time.unscaledTime - pendingAt > 5f)
             {
@@ -144,13 +152,21 @@ namespace SpatialModeling
             if (e.Kind == HostEventKind.Closed || e.Kind == HostEventKind.InvalidScene)
             {
                 Session.Disconnect(e.Text ?? "Native scene unavailable");
+                objectTools?.Reset(); ObjectToolsEnabled = objectRequestPending = false;
                 NativeState = new JObject(); stateAt = float.NegativeInfinity;
                 target.Reset();
                 beginId = endId = null; wantNativeUi = false; CancelLocal(); return;
             }
             if (e.Kind != HostEventKind.Message || e.RawMessage == null) return;
             var msg = e.RawMessage; var p = msg["payload"] as JObject;
+            // A grant may arrive after native mode/focus/context changed. Cancel
+            // while acquisition is still pending, before Receive can emit it.
+            if (objectRequestPending && !ObjectContextCurrent()) Session.Cancel();
+            bool hadObjectRequest = objectRequestPending;
             Session.Receive(msg);
+            ObjectTools.Observe(msg);
+            if (hadObjectRequest && !Session.Busy)
+            { objectRequestPending = false; status = Session.Notice; }
             string type = (string)msg["type"];
             // A welcome starts a new admission/scene handshake. Never carry
             // the preceding connection's UI reservation through its snapshot.
@@ -188,6 +204,7 @@ namespace SpatialModeling
             foreach (string name in new[] { "session_id", "host_epoch", "document_id", "open_epoch" })
                 if ((string)p[name] != (string)identity[name])
                 {
+                    if (objectRequestPending) Session.Cancel();
                     NativeState = new JObject(); stateAt = float.NegativeInfinity;
                     target.Reset();
                     CancelLocal(); status = "Native tool state belongs to another session/document; preview input disabled"; return;
@@ -197,6 +214,35 @@ namespace SpatialModeling
             target.ObserveContext(NativeState);
             string after = (string)p["sketch_id"] + "/" + (string)p["native_tool"];
             if (before != after) { CancelLocal(); manualTool = ""; }
+            if (objectRequestPending && !ObjectContextCurrent()) Session.Cancel();
+        }
+
+        bool ObjectContextCurrent() => scene != null && scene.IsCurrent && scene.DisplayPlacementReady
+            && NativeStateCurrent && (string)NativeState["mode"] == "OBJECT" && !NativeModalActive
+            && !NativeUiTransitionPending && !(NativeState["ui_owner"] is JObject)
+            && (bool?)NativeState["ui_ending"] != true && string.IsNullOrEmpty((string)NativeState["ui_session_id"]);
+
+        public bool SetObjectToolsEnabled(bool value)
+        {
+            if (!value)
+            { if (ObjectToolsEnabled) Cancel(); ObjectToolsEnabled = false; return true; }
+            if (Session.Busy || NativeUiTransitionPending || NativeState["ui_owner"] is JObject
+                || (bool?)NativeState["ui_ending"] == true || !string.IsNullOrEmpty((string)NativeState["ui_session_id"]))
+            { status = "Wait for native input cleanup and the previous edit receipt"; return false; }
+            SetEnabled(false); ObjectToolsEnabled = true; nextQuery = 0;
+            status = "Choose a model target; steps change real Blender geometry. Undo is available.";
+            return true;
+        }
+
+        public bool ApplyObjectAction(string action)
+        {
+            if (!ObjectToolsEnabled || !ObjectContextCurrent() || !Session.CanEdit || Session.Busy || Session.OutcomeUnknown)
+            { status = "Model tools need a fresh editable native scene in Object Mode, with preview input ended"; return false; }
+            CancelLocal();
+            if (!ObjectTools.Stage(action) || !Session.Apply()) return false;
+            objectRequestPending = true; pendingAt = Time.unscaledTime;
+            status = "Waiting for Blender to confirm the model edit";
+            return true;
         }
 
         JObject ActiveSketch
@@ -300,8 +346,10 @@ namespace SpatialModeling
         void History(string op)
         {
             Cancel();
+            if (ObjectToolsEnabled && !ObjectContextCurrent()) { status = "Wait for current native Object Mode and completed preview cleanup"; return; }
             if (NativeState["ui_owner"] is JObject) { status = "Use native preview Undo/Redo while its editing session is active"; return; }
-            if (Session.BeginDraft(op, new JObject(), false) && Session.Apply()) pendingAt = Time.unscaledTime;
+            if (Session.BeginDraft(op, new JObject(), false) && Session.Apply())
+            { pendingAt = Time.unscaledTime; objectRequestPending = ObjectToolsEnabled; }
         }
         public void Cancel() { CancelLocal(); Session.Cancel(); }
         void CancelLocal() { first = null; haveRay = false; if (draft != null) Destroy(draft); draft = null; }
