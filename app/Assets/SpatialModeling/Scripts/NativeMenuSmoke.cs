@@ -38,8 +38,9 @@ namespace SpatialModeling
             while ((!session.Ready || !session.SceneCurrent) && Time.realtimeSinceStartupAsDouble < deadline) yield return null;
             if (!session.Ready || !session.SceneCurrent || !session.CanEdit) { Fail("No current editable isolated host scene"); yield break; }
             var scene = FindAnyObjectByType<HostScene>();
-            // Place through the real local table gate for screenshots; no native command.
-            scene.Table.SeedFromHead(new Vector3(0, 1.65f, 0), Vector3.forward); scene.Table.Place();
+            if (!NativeSmokeWorkspace.Place(scene) || NativeSmokeWorkspace.ActiveModelRenderers(scene) == 0)
+            { Fail("Software pose / real Place Table action did not reveal active native renderers"); yield break; }
+            report["placement"] = "Bounded software test pose; actual Place Table callback and active model renderers; physical placement not tested";
             string[] shapes = { "Cube", "Sphere", "Cylinder" }; var ids = new string[3];
             for (int i = 0; i < shapes.Length; i++)
             {
