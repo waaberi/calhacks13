@@ -175,6 +175,16 @@ public static class ArrangementChecks
                 typeof(WorkspaceArrangement).GetProperty("RotationAxis").SetValue(arrangement,Vector3.right);
                 arrangement.Apply(adjustedLevel,spawned.Pose,spawned.Pose,false,false);
                 Near(arrangement.RotationAxis,Vector3.up,"level rotation cannot inherit a previous wall normal");
+                provider.ClearLevels();
+                typeof(HostScene).GetField("placed",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(facingHost,false);
+                provider.BeginLevel("desk");
+                provider.ToggleAutomatic();
+                detectedSurfaces.Add(desk); // Real room results arriving while startup was settling.
+                typeof(HostScene).GetField("placed",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(facingHost,true);
+                typeof(WorkspaceSurfaces).GetMethod("LateUpdate",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(provider,null);
+                Near(provider.Surfaces.Single().Pose.position,desk.Pose.position,"queued setup prefers real surface data that arrived during startup");
+                Check(typeof(WorkspaceSurfaces).GetField("pendingLevel",BindingFlags.Instance|BindingFlags.NonPublic).GetValue(provider)==null,
+                    "consumed setup cannot cancel the user's later grabs every frame");
             }
             finally
             {

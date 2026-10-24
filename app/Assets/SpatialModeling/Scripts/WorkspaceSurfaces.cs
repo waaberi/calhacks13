@@ -301,6 +301,7 @@ namespace SpatialModeling
         }
         public void BeginLevel(string kind)
         {
+            pendingLevel=null; // Consume queued setup even if detection won the race or a level already exists.
             FindFirstObjectByType<WorkspaceInteraction>()?.CancelGrabs();
             var camera = Camera.main; if (camera == null) return;
             // Selecting again must not throw an already adjusted surface back at the wearer.
@@ -312,7 +313,6 @@ namespace SpatialModeling
             // frame. Queue it until the same tracked workspace pose is available.
             if(host!=null && !host.DisplayPlacementReady)
             { pendingLevel=kind; message="Look ahead · waiting for workspace position"; return; }
-            pendingLevel=null;
             var facing=host!=null ? host.PlacementHeadPose.rotation : camera.transform.rotation;
             CreateLevel(kind,InitialLevelPose(kind,camera.transform.position,facing));
         }
