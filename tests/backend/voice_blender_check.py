@@ -5,8 +5,10 @@ while the host desktop has the Camera selected and active. A VR client sends voi
 then the command voice.run. The check reads the result back from Blender, checks the message
 order (scene.update, then result; another client gets scene.update and activity), that the host
 desktop's selection and active object didn't change, and that one Undo (a history.undo
-command) restores the scene. Then results too heavy to sync are refused with nothing changed,
-and an object that was heavy already may still get lighter.
+command) restores the scene. In Talia's P0 reference scene a voice add lands on top of the
+selection, in the user's view; "add a modifier" asks Array, Mirror or Bevel and never Convert to
+mesh; "hello" is rejected with nothing to say. Then results too heavy to sync are refused with
+nothing changed, and an object that was heavy already may still get lighter.
 
   BLENDER_USER_RESOURCES=$(mktemp -d) ~/.local/bin/headless-run blender --factory-startup \\
       --python tests/backend/voice_blender_check.py
@@ -264,7 +266,7 @@ def one_operation(talia, other, commander, test):
     suzanne = bc.by_id(target["id"])
     if operator.startswith("mesh.primitive") or operator.endswith("_add") and operator != MOD:
         assert len(receipt["created"]) == 1 and bc.by_id(receipt["created"][0]) is not None
-        placed_beside(bc.by_id(receipt["created"][0]), suzanne, text)
+        placed_above(bc.by_id(receipt["created"][0]), suzanne, text)
     if operator == MOD:
         found = [m for m in suzanne.modifiers if m.type == props["type"]]
         assert len(found) == 1, (text, [m.type for m in suzanne.modifiers])  # reused, not stacked
@@ -285,18 +287,112 @@ def one_operation(talia, other, commander, test):
     return took, triangles
 
 
-def placed_beside(new, target, text):
-    """A voice add is the target's size, within ADD_SIZE_RANGE, and overlaps nothing."""
+def placed_above(new, target, text, size=None):
+    """A voice add is the target's size, within ADD_SIZE_RANGE, centred over it on +Z, and
+    overlaps nothing."""
     vo = bc.mod("voice_ops")
     bpy.context.view_layer.update()
     box, near = vo._world_box(new), vo._world_box(target)
+    middle = [(near[0][i] + near[1][i]) / 2 for i in range(2)]
+    assert all(math.isclose(new.location[i], middle[i], abs_tol=1e-6) for i in range(2)), \
+        (text, tuple(new.location), middle)  # centred over it
     if box is None:  # a camera, light or empty: only its place
-        assert new.location.x > near[1][0], (text, tuple(new.location))
+        assert new.location.z > near[1][2], (text, tuple(new.location))
         return
     longest = max(vo._sides(box))
-    assert math.isclose(longest, vo.ADD_SIZE_RANGE[1], rel_tol=0.02), (text, longest)
-    assert box[0][0] > near[1][0], (text, box, near)  # beside it on +X, not inside
+    size = vo.ADD_SIZE_RANGE[1] if size is None else size
+    assert math.isclose(longest, size, rel_tol=0.02), (text, longest)
+    assert box[0][2] > near[1][2], (text, box, near)  # above it, not inside
+    others = [vo._world_box(o) for o in bpy.context.view_layer.objects if o != new]
+    assert not any(overlap(box, b) for b in others if b), (text, box)
     assert tuple(new.scale) == (1.0, 1.0, 1.0), (text, tuple(new.scale))
+
+
+def overlap(a, b):
+    return all(a[0][i] < b[1][i] and b[0][i] < a[1][i] for i in range(3))
+
+
+# HostScene.cs shows Blender at displayScale 5 with its origin viewingDistance 1 m in front of the
+# eyes and belowEyeHeight 0.35 m below them, so the eyes are here in Blender, looking along +Y.
+EYE = (0.0, -1.0 / 5, 0.35 / 5)
+
+
+def degrees_off_view(point):
+    d = [p - e for p, e in zip(point, EYE, strict=True)]
+    return math.degrees(math.atan2(math.hypot(d[0], d[2]), d[1]))
+
+
+def p0_reference():
+    """Talia's P0 reference (samples/mechanical/create_reference.py), the demo's: a 20 mm cube
+    and a 10 x 30 mm cylinder on the ground, 40 mm apart. The desktop has the Camera selected."""
+    for obj in list(bpy.data.objects):
+        if obj.name not in ("Camera", "Light"):
+            bpy.data.objects.remove(obj)
+    with bpy.context.temp_override(**view3d()):
+        bpy.ops.mesh.primitive_cube_add(size=0.02, location=(-0.02, 0, 0.01))
+        cube = bpy.context.view_layer.objects.active
+        bpy.ops.mesh.primitive_cylinder_add(vertices=64, radius=0.005, depth=0.03,
+                                            location=(0.02, 0, 0.015))
+        cylinder = bpy.context.view_layer.objects.active
+    cube.name, cylinder.name = "Cube_20mm", "Cylinder_D10_H30mm"
+    select_only(bpy.data.objects["Camera"])
+    bpy.ops.ed.undo_push(message="Voice check: P0 reference")
+    return cube, cylinder
+
+
+def adds_in_view(talia, other, commander):
+    """In the demo scene an add lands on top of what is selected, in the user's view; a second
+    one stacks on the first. Blender's own 2 m cube is 10 m around the user at 5x: no use."""
+    cube, cylinder = p0_reference()
+    made = []
+    for text, anchor, size in (("add a monkey", cube, 0.02), ("add a cone", cylinder, 0.03),
+                               ("add a monkey", cube, 0.02)):
+        target = target_of(anchor)
+        yield from drained(talia, other)
+        answer = yield from resolve(talia, text, target)
+        assert answer["decision"] == "run" and not answer["candidates"][0]["needs_target"], answer
+        receipt, _ = yield from commander.send(voice_run(commander, answer, target))
+        assert receipt["outcome"] == "applied", receipt
+        yield from watched(other, f"{text!r} on {anchor.name}")
+        new = bc.by_id(receipt["created"][0])
+        placed_above(new, anchor, text, size)
+        angle = degrees_off_view(tuple(new.location))
+        assert angle < 20, (text, tuple(new.location), angle)
+        made.append(new)
+        bc.log(f"ok {text!r} over {anchor.name}: {new.name} at "
+               f"{tuple(round(v, 4) for v in new.location)}, {angle:.1f} degrees off the view")
+    assert made[2].location.z > made[0].location.z  # stacked on the first, not inside it
+
+
+def the_demo_question(talia, other, commander):
+    """"Add a modifier" asks Array, Mirror or Bevel, and each choice adds that modifier; no
+    question offers Convert to mesh unasked."""
+    vo = bc.mod("voice_ops")
+    for choice, kind in ((1, "ARRAY"), (2, "MIRROR"), (3, "BEVEL")):
+        suzanne = fresh()
+        target = target_of(suzanne)
+        yield from drained(talia, other)
+        answer = yield from resolve(talia, "add a modifier", target)
+        assert answer["decision"] == "ask", answer
+        assert [c["say"] for c in answer["candidates"]] == ["Array", "Mirror on X", "Bevel"]
+        receipt, _ = yield from commander.send(voice_run(commander, answer, target, choice))
+        assert receipt["outcome"] == "applied", receipt
+        yield from watched(other, f"choice {choice} of 'add a modifier'")
+        assert [m.type for m in bc.by_id(target["id"]).modifiers] == [kind]
+        bc.log(f"ok 'add a modifier', choice {choice}: {receipt['summary']}")
+    for text in ("add a mirror modifier", "add array modifier", "modifier"):
+        msg = protocol.message("voice.resolve", {"text": text, "confidence": 0.49,
+                                                 "target": target_of(suzanne)})
+        _, reply = yield from bc.ask(talia, msg)
+        ops = [c["operator"] for c in reply["payload"]["candidates"]]
+        assert "object.convert" not in ops and set(ops) == {vo.MOD}, (text, reply)
+    for text in ("hello", "well", "right", "alright", "come"):
+        msg = protocol.message("voice.resolve", {"text": text, "confidence": 1.0,
+                                                 "target": target_of(suzanne)})
+        _, reply = yield from bc.ask(talia, msg)
+        p = reply["payload"]
+        assert (p["decision"], p["reason"], p["candidates"]) == ("reject", None, []), (text, p)
+    bc.log("ok no Convert to mesh unasked; fillers rejected with nothing to say")
 
 
 def add_without_selection(talia, other, commander):
@@ -393,6 +489,8 @@ def checks():
            f"median {times[len(times) // 2] * 1000:.0f} ms, max {times[-1] * 1000:.0f} ms")
 
     yield from add_without_selection(talia, other, commander)
+    yield from adds_in_view(talia, other, commander)
+    yield from the_demo_question(talia, other, commander)
     yield from refused_shrink(talia, other, commander)
 
     # Too heavy: Suzanne at level 2 (15,744 triangles) times five is 78,720.
