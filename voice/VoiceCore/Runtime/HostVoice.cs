@@ -15,6 +15,9 @@ namespace SpatialModeling.VoiceCore
     {
         public const string Type = "voice.resolve";
 
+        /// <summary>The contract's longest <c>text</c>; longer text (only typed) stays on VoiceCore's own path.</summary>
+        public const int MaxText = 500;
+
         internal VoiceResolve(string text, float confidence, SceneObject target, bool lowConfidence)
         {
             Text = text;
@@ -141,10 +144,16 @@ namespace SpatialModeling.VoiceCore
         }
     }
 
-    /// <summary>The host's <c>voice.grammar</c>: the phrases its resolver knows, for <see cref="VoiceSession.SetHostGrammar"/>.</summary>
+    /// <summary>The host's <c>voice.grammar</c>: the phrases its resolver knows, for <see cref="VoiceSession.SetHostGrammar"/>.
+    /// Ask for it after <c>welcome</c> with a <see cref="QueryType"/> message (payload <c>{}</c>); the answer's <c>re</c> is
+    /// the query's ID. A host without voice answers <c>error</c> <c>unknown_type</c>: then call
+    /// <see cref="VoiceSession.HostHasNoVoice"/>.</summary>
     public static class VoiceGrammar
     {
         public const string Type = "voice.grammar";
+
+        /// <summary>The request for the host's <c>voice.grammar</c>.</summary>
+        public const string QueryType = "voice.grammar_query";
 
         /// <summary>Reads the <c>phrases</c> of a <c>voice.grammar</c> payload (the <c>payload</c> object as JSON text).</summary>
         /// <exception cref="FormatException">It isn't one.</exception>
@@ -208,7 +217,7 @@ namespace SpatialModeling.VoiceCore
         static readonly Dictionary<string, int> Typed = new Dictionary<string, int>
         {
             { "the first", 1 }, { "the second", 2 }, { "the third", 3 },
-            { "first one", 1 }, { "second one", 2 }, { "third one", 3 }, { "nevermind", 0 },
+            { "first one", 1 }, { "second one", 2 }, { "third one", 3 }, { "nevermind", 0 }, { "cancel that", 0 },
         };
 
         /// <summary>The grammar while asking: the phrases for the offered choices, cancel, and "[unk]".</summary>

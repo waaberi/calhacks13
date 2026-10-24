@@ -24,6 +24,11 @@ namespace SpatialModeling.VoiceCore
         /// <summary>How long to wait for the host's <c>voice.candidates</c> before handling the words as if there were no
         /// host. At least 3 s: a reply can wait 1.1 to 2.4 s behind a large scene message on the app's read thread.</summary>
         public TimeSpan HostTimeout { get; set; } = TimeSpan.FromSeconds(3);
+
+        /// <summary>Answers to "which one?" below this confidence are asked again. On real speech (Speech Commands, 71
+        /// answers and 488 other words, exact phrases only): 0.9 kept 68 answers with none wrong and let 13 other words
+        /// through, against 69, 1 wrong and 24 at 0.6. The choice grammar has no "to", so "two" scores high.</summary>
+        public float ChoiceMinConfidence { get; set; } = 0.9f;
     }
 
     [Flags]
@@ -147,6 +152,10 @@ namespace SpatialModeling.VoiceCore
                 return phrases;
             var merged = new SortedSet<string>(phrases, StringComparer.Ordinal);
             merged.Remove(Vocabulary.Unknown);
+            // "to" only fills ("scale this to fifty percent"), and Vosk splits "two"'s confidence with it. With the host's
+            // phrases (which leave it out too), dropping it took today's 17 commands from 201 to 205 of 255 right and
+            // "two" from a median confidence of 0.78 to 1.0 (TTS, voice/README.md). Typed "to" still parses.
+            merged.Remove("to");
             merged.UnionWith(hostGrammar);
             return new List<string>(merged) { Vocabulary.Unknown };
         }
@@ -345,6 +354,11 @@ namespace SpatialModeling.VoiceCore
             return turn.Build();
         }
 
+        /// <summary>This connection's host doesn't know voice (it answered <c>voice.grammar_query</c> with
+        /// <c>unknown_type</c>): nothing is sent to it, and the grammar stays VoiceCore's own, until
+        /// <see cref="ConnectionLost"/>.</summary>
+        public void HostHasNoVoice() => hostResolves = false;
+
         /// <summary>An <c>error</c> whose <c>re</c> is a <c>voice.resolve</c>: the words are handled as without a host. After
         /// <c>unknown_type</c> (a host without voice) nothing more is sent to this connection's host.</summary>
         public VoiceTurn HostError(string re, string code)
@@ -408,7 +422,7 @@ namespace SpatialModeling.VoiceCore
         /// </summary>
         bool ForHost(RecognitionResult result)
         {
-            if (!options.AskHost || !hostResolves)
+            if (!options.AskHost || !hostResolves || result.Text.Length > VoiceResolve.MaxText)
                 return false;
             ParsedUtterance parsed = CommandParser.Parse(result.Text, objects, pending?.Kind);
             if (!parsed.HasWords || parsed.ConflictingVerbs)
@@ -460,11 +474,11 @@ namespace SpatialModeling.VoiceCore
             HearHere(result, turn);
         }
 
-        /// <summary>The answer to the host's question: only an exact answer phrase without "[unk]" counts, at the usual
-        /// confidence; anything else asks again.</summary>
+        /// <summary>The answer to the host's question: only an exact answer phrase without "[unk]" counts, at
+        /// <see cref="VoiceSessionOptions.ChoiceMinConfidence"/>; anything else asks again.</summary>
         void HearChoice(RecognitionResult result, Turn turn)
         {
-            if (result.Confidence < options.MinConfidence)
+            if (result.Confidence < options.ChoiceMinConfidence)
             {
                 turn.Prompts.Add(Prompt.LowConfidence);
                 return;

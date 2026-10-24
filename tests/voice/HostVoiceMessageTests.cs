@@ -134,8 +134,14 @@ namespace SpatialModeling.VoiceCore.Tests
                 VoiceCandidates answer = VoiceCandidates.FromJson(Contract.Example(Path.GetFileName(file))["payload"].ToJsonString());
                 Assert.InRange(answer.Candidates.Count, answer.Decision == VoiceDecision.Reject ? 0 : 1, 3);
             }
-            foreach (string file in Directory.GetFiles(examples, "voice.grammar*.json"))
+            foreach (string file in Directory.GetFiles(examples, "voice.grammar*.json").Where(f => !f.Contains("grammar_query")))
                 Assert.NotEmpty(VoiceGrammar.FromJson(Contract.Example(Path.GetFileName(file))["payload"].ToJsonString()));
+            foreach (string file in Directory.GetFiles(examples, "voice.resolve*.json"))
+            {
+                JsonNode example = Contract.Example(Path.GetFileName(file));
+                Assert.Equal(VoiceResolve.Type, (string)example["type"]);
+                Assert.True(example["payload"]["text"] != null && example["payload"]["confidence"] != null, file);
+            }
         }
 
         [Fact]

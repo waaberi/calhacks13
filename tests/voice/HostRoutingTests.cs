@@ -261,6 +261,7 @@ namespace SpatialModeling.VoiceCore.Tests
         [InlineData("cancel")]
         [InlineData("never mind")]
         [InlineData("Nevermind.")]
+        [InlineData("cancel that")]
         public void CancelEndsTheQuestion(string text)
         {
             var asking = new Asking(Cube);
@@ -598,6 +599,40 @@ namespace SpatialModeling.VoiceCore.Tests
         {
             var asking = new Asking(Cube);
             Assert.Equal(Vocabulary.GrammarPhrases(new[] { "Cube" }), asking.Session.GrammarPhrases());
+            Assert.Contains("to", asking.Session.GrammarPhrases());
+        }
+
+        [Fact]
+        public void WithHostPhrasesToLeavesTheGrammarSoTwoIsHeard()
+        {
+            var asking = new Asking(Cube);
+            asking.Session.SetHostGrammar(new[] { "subdivide level two" });
+            Assert.DoesNotContain("to", asking.Session.GrammarPhrases());
+            Assert.Contains("two", asking.Session.GrammarPhrases());
+            Assert.Equal(0.5, asking.Say("scale this to fifty percent").Command.Factor.Value, 9); // typed "to" still parses
+        }
+
+        [Fact]
+        public void AHostWithoutVoiceGetsNoRequests()
+        {
+            var asking = new Asking(Cube);
+            asking.Session.HostHasNoVoice(); // voice.grammar_query answered unknown_type
+            Assert.Equal(new[] { "unsupported" }, Prompts(asking.Say("shade smooth")));
+            asking.Session.ConnectionLost();
+            Assert.NotNull(asking.Say("shade smooth").Resolve);
+            Assert.Equal("voice.grammar_query", VoiceGrammar.QueryType);
+        }
+
+        [Fact]
+        public void AnswersNeedTheChoiceConfidence()
+        {
+            // Measured on real speech: 0.9 keeps the answers and halves the other words taken as answers.
+            var asking = new Asking(Cube);
+            Assert.Equal(0.9f, asking.F.Options.ChoiceMinConfidence);
+            asking.Say("make copies");
+            asking.Answer(VoiceDecision.Ask, Array, Duplicate);
+            Assert.Equal(new[] { "low_confidence" }, Prompts(asking.Say("two", 0.85f)));
+            Assert.Equal(2, asking.Say("two", 0.9f).Command.Choice);
         }
     }
 }
