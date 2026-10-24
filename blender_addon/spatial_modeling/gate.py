@@ -417,6 +417,10 @@ def _observed(changed, removed, everything):
         return  # a command's own write, checked by leases.py before it was applied
     lease = host.blocked_ids([*changed, *removed], whole=everything)
     if lease is not None:
+        # This observer can run inside Commands._run's pre-write flush. Freeze
+        # synchronously, before that handler can admit another mutation. The
+        # later UI poll is only for reporting; it must not be the safety gate.
+        host.stop_writes("leased data changed outside the native input gate")
         _pending.append({"session": sess, "ids": [*changed, *removed], "removed": dict(removed),
                          "lease": lease, "history": False})
 
@@ -428,6 +432,7 @@ def _on_history(*_args):
         return  # history.undo / history.redo commands, checked by leases.py
     lease = host.blocked_ids(whole=True)
     if lease is not None:
+        host.stop_writes("native Undo/Redo changed history outside the input gate")
         _pending.append({"session": sess, "ids": [], "removed": {}, "lease": lease,
                          "history": True})
 

@@ -115,6 +115,7 @@ class Leases:
         self.editor = editor
         self.max_requests = MAX_REQUESTS if max_requests is None else max_requests
         self.requests = OrderedDict()  # lease.acquire ID -> (payload digest, reply type, payload)
+        self.evicted = False  # unseen IDs might be old acquisitions: never grant them again
 
     @property
     def store(self):
@@ -137,6 +138,10 @@ class Leases:
         rid, p = msg["id"], msg["payload"]
         digest = _digest(p)
         stored = self.requests.get(rid)
+        if stored is None and self.evicted:
+            return server.error("duplicate_request", "The bounded lease request history is "
+                                "full. This ID may have been used before; restart the hosting "
+                                "session before requesting a new reservation.", rid)
         if stored is not None:
             if stored[0] == digest:
                 return protocol.message(stored[1], stored[2], re=rid)  # nothing granted again
@@ -146,6 +151,7 @@ class Leases:
         self.requests[rid] = (digest, reply["type"], reply["payload"])
         while len(self.requests) > self.max_requests:
             self.requests.popitem(last=False)
+            self.evicted = True
         return reply
 
     def release(self, msg, conn):
