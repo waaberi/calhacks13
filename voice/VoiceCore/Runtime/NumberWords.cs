@@ -79,6 +79,12 @@ namespace SpatialModeling.VoiceCore
                     whole += rest;
                     j = k;
                 }
+                else if (k > j)
+                {
+                    value = 0;
+                    return false; // "one hundred and a degrees": the rest of the number was misheard
+                }
+
             }
             else if (ReadBelowHundred(w, ref j, out int below))
             {
