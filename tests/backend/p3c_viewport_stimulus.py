@@ -49,6 +49,26 @@ def _delta(left, right):
             "perspective_matches": left["perspective"] == right["perspective"]}
 
 
+def drawable_bounds(record):
+    """Only line/circle geometry counts; CAD's unconnected origin is not a frame."""
+    points = {e["id"]: e["at"] for e in record["entities"] if e["kind"] == "point"}
+    bounds = []
+    for entity in record["entities"]:
+        if entity["kind"] == "line":
+            bounds.extend(points[pid] for pid in entity["points"])
+        elif entity["kind"] == "circle":
+            x, y = points[entity["center"]]
+            radius = entity["radius"]
+            bounds.extend(([x - radius, y - radius], [x + radius, y + radius]))
+    if not bounds:
+        return None
+    lo = [min(p[i] for p in bounds) for i in (0, 1)]
+    hi = [max(p[i] for p in bounds) for i in (0, 1)]
+    if not all(math.isfinite(v) for v in (*lo, *hi)):
+        raise ValueError("nonfinite authoritative sketch bounds")
+    return lo, hi
+
+
 class OwnedCadViewport:
     def __init__(self, output, allow_orbit=False):
         import bpy
@@ -123,22 +143,13 @@ class OwnedCadViewport:
         if record is None:
             self.report["status"] = "frame_pending"
             return
-        points = {e["id"]: e["at"] for e in record["entities"] if e["kind"] == "point"}
-        bounds = list(points.values())
-        for entity in record["entities"]:
-            if entity["kind"] == "circle":
-                x, y = points[entity["center"]]
-                radius = entity["radius"]
-                bounds.extend(([x - radius, y - radius], [x + radius, y + radius]))
-        if not bounds:
+        bounds = drawable_bounds(record)
+        if bounds is None:
             self.report["status"] = "frame_pending"
             return
         if not math.isfinite(unit_scale) or unit_scale <= 0:
             raise ValueError("C viewport requires a finite positive native Unit Scale")
-        lo = [min(p[i] for p in bounds) for i in (0, 1)]
-        hi = [max(p[i] for p in bounds) for i in (0, 1)]
-        if not all(math.isfinite(v) for v in (*lo, *hi)):
-            raise ValueError("nonfinite authoritative sketch bounds")
+        lo, hi = bounds
         center = Vector(((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, 0))
         plane = record["plane"]
         rotation = Quaternion(plane["rotation"]).normalized()

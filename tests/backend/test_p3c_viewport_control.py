@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from p3c_viewport_stimulus import control_request
+from p3c_viewport_stimulus import control_request, drawable_bounds
 
 
 @pytest.mark.parametrize("value", [
@@ -31,3 +31,22 @@ def test_explicit_real_sketch_target_and_size_limit():
     assert control_request(json.dumps(value), 0) == value
     with pytest.raises(ValueError, match="4096"):
         control_request(" " * 4097, 0)
+
+
+def test_fixed_origin_alone_does_not_complete_a_frame():
+    assert drawable_bounds({"entities": [{"id": "origin", "kind": "point", "at": [0, 0]}]}) is None
+
+
+def test_unconnected_origin_does_not_skew_drawable_bounds():
+    entities = [{"id": pid, "kind": "point", "at": at}
+                for pid, at in (("origin", [0, 0]), ("a", [.1, .2]), ("b", [.2, .3]))]
+    entities.append({"id": "line", "kind": "line", "points": ["a", "b"]})
+    assert drawable_bounds({"entities": entities}) == ([.1, .2], [.2, .3])
+
+
+def test_circle_extents_include_real_radius():
+    record = {"entities": [{"id": "a", "kind": "point", "at": [.03, .04]},
+                           {"id": "circle", "kind": "circle", "center": "a", "radius": .01}]}
+    lo, hi = drawable_bounds(record)
+    assert lo == pytest.approx([.02, .03])
+    assert hi == pytest.approx([.04, .05])
