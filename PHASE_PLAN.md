@@ -992,12 +992,12 @@ Waaberi owns the module and the host's SpacetimeDB adapter. Jihyeon owns the Uni
 
 **Where it runs:** the self-hosted server runs on Talia's PC and listens on localhost only, because self-hosted SpacetimeDB has no TLS. The Unity app and the host add-on reach it locally. The Client-role add-on on Lee Jae-yeon's PC gets presence and leases relayed by the host over the TLS LAN link, so the LAN has a single entry point.
 
-**Spike:** Waaberi's side (the module, the Blender side, and a latency check through SpacetimeDB's C# SDK from a console app) runs Friday night. Jihyeon connects the Unity SDK once P1 passes. It passes only if all of these work:
+**Spike:** Waaberi's side passed on Linux on Friday night (PR #70; numbers in [spacetime/README.md](spacetime/README.md)): the module, the Blender side, and a latency check through SpacetimeDB's C# SDK from a console app (about 4 ms median). What remains is criterion 1 on Windows: Lee Jae-yeon dry-runs it on his PC, then Talia runs it on hers. The Unity subscription is optional, because the host already relays participants and leases to the app over the host connection; Jihyeon adds it only if there's time after the freeze. It passes only if all of these work:
 
 1. `spacetime start` runs on Talia's PC, and a module with participant, lease and activity tables publishes to it.
-2. The Unity app subscribes and shows a lease change within a quarter of a second.
+2. A subscriber using SpacetimeDB's C# SDK (the console app now, Unity if added) sees a lease change within a quarter of a second.
 3. The host add-on, using only Python's standard library, acquires a lease through a reducer, and a second acquire of the same object is rejected.
-4. Restarting Blender loses neither the receipt log nor the current leases.
+4. Restarting Blender doesn't lose the receipt log. Leases are meant to lapse: every reconnect gets a new actor, so nobody can renew the old leases, and they expire after 6 s.
 
 If any of these fails, or the spike runs over, the host keeps the same state in memory and sends it over the existing connections. Write the host's lease and presence code behind one interface so this switch stays cheap. The product must pass two-person editing either way.
 

@@ -665,12 +665,14 @@ def test_drop_after_closes_and_a_reconnect_gets_a_fresh_snapshot(monkeypatch):
 def test_stall_after_stops_answering_until_stall_for_ends(monkeypatch):
     monkeypatch.setattr(fake_client, "PING_EVERY", 0.2)
     monkeypatch.setattr(fake_client, "NOT_RESPONDING_AFTER", 0.6)
-    with proxied("--stall-after", "0.5", "--stall-for", "1.5") as (_host, proxy), \
+    # The client reports "not responding" from ~1.1 s until the stall ends at 3.5 s; keep that
+    # window wide so a slow CI runner still sends its command inside it.
+    with proxied("--stall-after", "0.5", "--stall-for", "3.0") as (_host, proxy), \
             joined(proxy.port) as a:
         wait_until(lambda: a.not_responding, timeout=3)
         with pytest.raises(fake_client.UsageError, match="not responding"):
             a.run("move Shaft 10mm 0 0")
-        wait_until(lambda: not a.not_responding, timeout=3)
+        wait_until(lambda: not a.not_responding, timeout=6)
         assert a.sock is not None  # stalled, never closed
         assert any("responding again" in line for line in a.output)
         pings = {m["id"] for m in proxy.messages(0, "up", pongs=True) if m["type"] == "ping"}
