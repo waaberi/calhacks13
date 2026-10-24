@@ -92,3 +92,65 @@ revision/colors/materials during lease/release, real command activity, and empty
 ownership after disconnect. Native ownership draw handlers and strict native
 lock bypasses remain the native worker's separate checks; this hook does not
 claim a visual, strict-lock, headset or second-PC pass.
+
+## P3C solved sketches in the read-only Client
+
+The former P2 Client ignored `payload.sketches` in both its cache and display,
+while the native CAD adapter intentionally excludes those sketch display objects
+from generic mesh records. A current-looking Client therefore omitted all CAD
+geometry and editable sketch data. The C increment repairs both paths.
+
+`SceneState.sketches` atomically retains complete UUID/generation, rigid plane,
+solver status/DoF, solved point/line/circle entities and editable constraint
+IDs/values. Snapshots replace all records; updates replace full changed records
+and remove object/sketch IDs. Invalid IDs, duplicate/cross-kind IDs, missing
+references, nonfinite geometry, invalid planes and regressing generations reject
+the whole update. An invalid sketch cannot partially remove valid objects.
+
+The mirror creates owned read-only Blender Curve objects keyed by each sketch
+UUID. Lines use actual solved endpoints, circles use 128 segments at the exact
+host-solved center/radius, and the rigid host plane places those meter coordinates
+in world space. No Client constraint solver is installed or invoked. Complete
+editable records are preserved as plain JSON in `spatial_modeling_sketch_record`;
+document identity/units are preserved on the owned collection. JSON is never
+executed. Geometry changes only from host snapshots, no local echo exists, and
+the C code creates no materials. Ownership leases target the same sketch UUIDs.
+
+Native serializer error code `failed` now retains its safe code and presents a
+fixed local host-scene-unavailable/stale diagnosis; arbitrary host error text is
+never displayed. Recovery still requires an authoritative fresh snapshot.
+
+Verification: **46 focused tests pass**, including full editable preservation,
+dimension/generation/removal, atomic failures and analytic circle tessellation.
+The earlier P3A/B checks remain included; Ruff passes.
+
+Actual pinned CAD Sketcher0.32.1/slvs3.2 Host and separate solver-free Blender
+Client (`run-08-c-real`) passed baseline100x60mm, live120x60mm, circle20→30mm,
+angle45→60degrees, actual rejected-width rollback, native Save, explicit mirror
+reconnect and saved mirror JSON. A fresh solver-free Blender reopened that saved
+mirror and preserved all3 full editable records exactly. No state/prefs adapters
+were used. Focused real-host `run-11-c-faults` and final-source
+`run-13-c-final-faults` passed full
+sketch ownership/name, unsupported-frame serializer refusal/stale diagnosis,
+cleared ownership, restored-frame/fresh-snapshot recovery, native sketch deletion
+and reconnect. Inbound Client messages were only hello/ping. These focused fault
+checks explicitly report dimension/native-reopen/mirror-reopen as not run.
+
+The strict combined roundtrip is **not passed**: native host reopen in run08
+changed the angle sketch's implicit origin point UUID and its synthetic fixed
+constraint UUID. Native driving constraints, solved geometry and solver status
+otherwise matched. Subsequent runs09/10 unexpectedly rejected the solvable native
+45→60degree edit. The CAD owner is investigating these native defects; Client
+checks do not ignore the mismatch or convert those failed gates to passes. Runs06
+and07 also retain a corrected harness error (the first native point was the
+implicit origin, not the circle's referenced center). All raw failures remain.
+
+Reproduce with `tests/backend/run_p3c_client.py --blender <executable> --output
+<fresh-outside-folder> --extension <pinned-CAD_Sketcher>`. During independent
+preparation, `--host-root <CAD-worktree>` selects the actual CAD implementation;
+the cumulative branch uses its own source by default. Host bootstrap reuses the
+CAD tests' isolated wheel extraction and registration, preserving personal
+preferences. `--faults-only` runs the independent baseline/ownership/fault/delete
+checks and explicitly makes no complete-roundtrip claim. The default keeps the
+strict native full-record reopen equality assertion. No phase, strict native
+lock, physical headset or real second-PC acceptance is established here.

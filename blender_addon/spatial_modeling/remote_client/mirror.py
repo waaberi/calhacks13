@@ -1,9 +1,12 @@
 """Apply replication only to an owned collection in a separate empty session."""
 
+import json
+
 import bpy
 from mathutils import Matrix, Quaternion, Vector
 
 OWNER = "spatial_readonly_mirror"
+SKETCH_RECORD = "spatial_modeling_sketch_record"
 
 
 class Mirror:
@@ -16,6 +19,8 @@ class Mirror:
         self.collection.hide_select = True
         self.objects = {}
         self.records = {}
+        self.sketches = {}
+        self.sketch_records = {}
         self.document = None
 
     def apply(self, state):
@@ -73,7 +78,53 @@ class Mirror:
                                                  Quaternion(transform["rotation"]),
                                                  Vector(transform["scale"]))
         self.records = state.objects.copy()
+        for sid in set(self.sketches) - state.sketches.keys():
+            self._remove_sketch(sid)
+        for sid, record in state.sketches.items():
+            self._apply_sketch(sid, record)
+        self.sketch_records = state.sketches.copy()
         self.document = state.document.copy()
+        self.collection["spatial_modeling_document"] = json.dumps(state.document, allow_nan=False)
+
+    def _apply_sketch(self, sid, record):
+        from .sketches import polylines
+        obj = self.sketches.get(sid)
+        if obj is None:
+            curve = bpy.data.curves.new(record["name"], "CURVE")
+            curve.dimensions = "3D"
+            curve.resolution_u = 1
+            curve.bevel_depth = .0001
+            curve.bevel_resolution = 1
+            obj = bpy.data.objects.new(record["name"], curve)
+            obj[OWNER] = True
+            obj["spatial_modeling_id"] = sid
+            obj["spatial_modeling_mirror_kind"] = "host_solved_sketch"
+            self.collection.objects.link(obj)
+            self.sketches[sid] = obj
+        if record != self.sketch_records.get(sid):
+            obj.data.splines.clear()
+            for points, cyclic in polylines(record):
+                spline = obj.data.splines.new("POLY")
+                spline.points.add(len(points) - 1)
+                for point, co in zip(spline.points, points, strict=True):
+                    point.co = (*co, 1)
+                spline.use_cyclic_u = cyclic
+            # Plain JSON preserves complete editable host records without
+            # registering solver properties or executing data as Python.
+            obj[SKETCH_RECORD] = json.dumps(record, sort_keys=True, allow_nan=False)
+            obj["spatial_modeling_solver_status"] = record["solver"]["status"]
+        obj.name = record["name"]
+        obj.hide_select = True
+        plane = record["plane"]
+        obj.matrix_world = Matrix.LocRotScale(Vector(plane["location"]),
+                                             Quaternion(plane["rotation"]), Vector((1, 1, 1)))
+
+    def _remove_sketch(self, sid):
+        obj = self.sketches.pop(sid)
+        curve = obj.data
+        bpy.data.objects.remove(obj, do_unlink=True)
+        if curve.users == 0:
+            bpy.data.curves.remove(curve)
 
     def _remove(self, oid):
         obj = self.objects.pop(oid)
@@ -89,5 +140,7 @@ class Mirror:
     def clear(self):
         for oid in list(self.objects):
             self._remove(oid)
+        for sid in list(self.sketches):
+            self._remove_sketch(sid)
         if self.collection.name in bpy.data.collections:
             bpy.data.collections.remove(self.collection)
