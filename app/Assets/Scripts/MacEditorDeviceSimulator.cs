@@ -1,6 +1,8 @@
 #if UNITY_EDITOR_OSX
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.SceneManagement;
+using UnityEngine.XR.Interaction.Toolkit.Inputs.Simulation;
 
 namespace SpatialModeling.App
 {
@@ -16,6 +18,14 @@ namespace SpatialModeling.App
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         static void Spawn()
         {
+            // As in XRI's own loader: leave test runs alone and never add a second simulator.
+            if (SceneManager.GetActiveScene().name.StartsWith("InitTestScene"))
+                return;
+#pragma warning disable CS0618 // the imported sample uses the classic XRDeviceSimulator, which XRI marks obsolete
+            if (XRInteractionSimulator.instance != null || XRDeviceSimulator.instance != null)
+                return;
+#pragma warning restore CS0618
+
             var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(AssetDatabase.GUIDToAssetPath(k_PrefabGuid));
             if (prefab == null)
             {
