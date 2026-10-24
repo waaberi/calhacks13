@@ -122,6 +122,7 @@ public static class ManagedChecks
             root = Path.GetFullPath(args[0]);
             P25Checks.RunMapping(Console.WriteLine);
             P25Checks.RunTransport(Console.WriteLine);
+            P25Checks.RunTargets(Console.WriteLine);
             SessionChecks();
             Console.WriteLine("P25_MANAGED_CHECKS PASS actual compiled implementation; runtime acceptance=False");
             return 0;

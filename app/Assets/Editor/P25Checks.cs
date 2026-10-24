@@ -1,6 +1,12 @@
 using System;
+using System.Collections.Generic;
+using System.Reflection;
+using Newtonsoft.Json.Linq;
 using SpatialModeling;
+using UnityEditor;
 using UnityEngine;
+using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.LowLevel;
 
 // Edit-time deterministic checks only. No input injection, network or runtime launch.
 public static class P25Checks
@@ -20,7 +26,9 @@ public static class P25Checks
     {
         RunMapping(message => Debug.Log(message));
         RunTransport(message => Debug.Log(message));
+        RunTargets(message => Debug.Log(message));
         RunSpatial(message => Debug.Log(message));
+        RunKeyboardIsolation();
     }
 
     // The same actual mapping gate can run under the bundled managed runtime,
@@ -135,5 +143,152 @@ public static class P25Checks
         Check(!PreviewSketchMapping.TryMapRay(new Ray(Vector3.up, Vector3.down), Matrix4x4.identity,
             Vector3.zero, new Quaternion(0, 0, 0, 0), out _, out _), "invalid native workplane orientation refuses drawing");
         report("P25_SPATIAL_MAPPING_CHECK PASS native-axis/metres/known-world-point/display-scale/native-rotated-plane/parallel/behind/singular/nonfinite; physical drawing acceptance=False");
+    }
+
+    public static void RunTargets(Action<string> report)
+    {
+        var a = new JObject { ["id"] = "native-A", ["name"] = "Previously active sketch" };
+        var b = new JObject { ["id"] = "new-B", ["name"] = "Newly created sketch" };
+        var c = new JObject { ["id"] = "native-C", ["name"] = "Later native choice" };
+        var sketches = new Dictionary<string, JObject> { ["native-A"] = a, ["new-B"] = b, ["native-C"] = c };
+        var nativeA = new JObject { ["sketch_id"] = "native-A", ["native_tool"] = "line", ["available"] = true, ["mode"] = "OBJECT" };
+        Check(SpatialSketchTarget.CanStartCreation(true, nativeA), "fresh native Object Mode can start sketch creation");
+        Check(!SpatialSketchTarget.CanStartCreation(false, nativeA), "stale native tool state cannot start sketch creation");
+        var unavailable = (JObject)nativeA.DeepClone(); unavailable["available"] = false;
+        Check(!SpatialSketchTarget.CanStartCreation(true, unavailable), "missing native CAD cannot create a sketch");
+        var editMode = (JObject)nativeA.DeepClone(); editMode["mode"] = "EDIT_MESH";
+        Check(!SpatialSketchTarget.CanStartCreation(true, editMode), "native edit mode cannot create a sketch under stale Object assumptions");
+        Func<string, string, string, JObject> receipt = (request, outcome, op) => new JObject {
+            ["type"] = "result", ["payload"] = new JObject { ["request_id"] = request,
+                ["outcome"] = outcome, ["op"] = op, ["created"] = new JArray("new-B") } };
+        var target = new SpatialSketchTarget();
+        target.ObserveContext(nativeA);
+        Check(target.Resolve("native-A", "new-B", sketches) == a, "ordinary native toolbar selection governs before a confirmed local creation");
+        target.BeginCreate("create-B", nativeA);
+        Check(!target.Receive(receipt("unrelated", "applied", "sketch.create"), sketches), "another command receipt cannot change the drawing target");
+        Check(!target.Receive(receipt("create-B", "pending", "sketch.create"), sketches), "pending receipt cannot select uncommitted geometry");
+        Check(target.Receive(receipt("create-B", "applied", "sketch.create"), sketches)
+            && target.Resolve("native-A", "native-A", sketches) == b,
+            "newly confirmed sketch B receives drawing even while native telemetry still names A");
+        sketches.Remove("new-B");
+        Check(target.Resolve("native-A", "native-A", sketches) == null && target.MissingExplicitTarget,
+            "removing B cannot silently redirect the next stroke to A");
+        target.ObserveContext(nativeA);
+        Check(target.Resolve("native-A", "native-A", sketches) == null,
+            "repeated unchanged native state cannot clear a removed-target refusal");
+        target.ObserveContext(new JObject { ["sketch_id"] = "native-C", ["native_tool"] = "circle" });
+        Check(target.Resolve("native-C", "native-A", sketches) == c, "genuine new native selection/tool context becomes the spatial target");
+        target.Reset();
+        target.BeginCreate("create-before-scene", nativeA);
+        Check(target.Receive(receipt("create-before-scene", "applied", "sketch.create"), sketches)
+            && target.Resolve("native-A", "native-A", sketches) == null && target.WaitingForExplicitTarget,
+            "receipt before B's scene record waits for B instead of using A");
+        sketches["new-B"] = b;
+        Check(target.Resolve("native-A", "native-A", sketches) == b && !target.WaitingForExplicitTarget,
+            "matching authoritative B scene record safely resolves the pending target");
+        target.Reset();
+        target.BeginCreate("rejected-create", nativeA);
+        Check(!target.Receive(receipt("rejected-create", "rejected", "sketch.create"), sketches)
+            && target.Resolve("native-A", "new-B", sketches) == a, "rejected creation preserves native targeting");
+        target.BeginCreate("different-op", nativeA);
+        Check(!target.Receive(receipt("different-op", "applied", "sketch.add_line"), sketches),
+            "non-creation receipt cannot replace the drawing target");
+        target.Reset();
+        Check(target.Resolve("native-A", "new-B", sketches) == a, "leaving/resetting spatial mode restores ordinary native targeting");
+        report("P25_SPATIAL_TARGET_CHECK PASS confirmed-new-sketch/stale-native-selection/late-scene-record/removed-target/native-switch/rejected-receipt; no native mutations");
+    }
+
+    public static void RunKeyboardIsolation()
+    {
+        var currentProperty = typeof(PreviewInteraction).GetProperty("Current", BindingFlags.Static | BindingFlags.Public);
+        var currentSetter = currentProperty.GetSetMethod(true);
+        var previousCurrent = PreviewInteraction.Current;
+        var enabledField = typeof(PreviewInteraction).GetField("inputEnabled", BindingFlags.Instance | BindingFlags.NonPublic);
+        var endingField = typeof(PreviewInteraction).GetField("endAfterRelease", BindingFlags.Instance | BindingFlags.NonPublic);
+        var previousKeyboard = Keyboard.current;
+        var container = new GameObject("P25 synthetic keyboard isolation");
+        container.SetActive(false); // No component OnEnable, networking, XR or helper start.
+        var cameraObject = new GameObject("P25 isolation camera", typeof(Camera));
+        cameraObject.tag = "MainCamera";
+        var keyboard = InputSystem.AddDevice<Keyboard>("P25 test keyboard");
+        var gamepad = InputSystem.AddDevice<Gamepad>("P25 test pan controller");
+        PreviewInteraction preview = null;
+        HostScene host = null;
+        try
+        {
+            preview = container.AddComponent<PreviewInteraction>();
+            currentSetter.Invoke(null, new object[] { preview });
+            host = container.AddComponent<HostScene>();
+            typeof(HostScene).GetField("objectMaterial", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(host,
+                AssetDatabase.LoadAssetAtPath<Material>("Assets/SpatialModeling/Materials/HostObject.mat"));
+            typeof(HostScene).GetMethod("Awake", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(host, null);
+            var table = container.GetComponent<TablePlacement>();
+            table.SeedFromHead(new Vector3(0, 1.65f, 0), Vector3.forward);
+            table.Place();
+            var update = typeof(TablePlacement).GetMethod("Update", BindingFlags.Instance | BindingFlags.NonPublic);
+            Action<Key> press = key =>
+            {
+                InputSystem.QueueStateEvent(keyboard, new KeyboardState());
+                InputSystem.Update();
+                InputSystem.QueueStateEvent(keyboard, new KeyboardState(key));
+                InputSystem.Update();
+                Check(keyboard[key].wasPressedThisFrame, "synthetic keyboard actually delivers a fresh key event");
+                update.Invoke(table, null);
+            };
+            enabledField.SetValue(preview, true);
+            Check(PreviewInteraction.BlocksDesktopShortcuts, "inactive test component represents admitted native input without starting its runtime");
+            press(Key.M);
+            Check(table.IsPlaced, "native M must not also begin moving the table");
+            table.BeginMove();
+            press(Key.Enter);
+            Check(table.State == TablePlacement.PlacementState.Moving, "native Enter must not confirm a table move");
+            press(Key.Escape);
+            Check(table.State == TablePlacement.PlacementState.Moving, "native Escape must not cancel a table move");
+            enabledField.SetValue(preview, false);
+            press(Key.Escape);
+            Check(table.IsPlaced, "unowned desktop Escape retains P2 cancel behavior");
+            press(Key.M);
+            Check(table.State == TablePlacement.PlacementState.Moving, "unowned desktop M retains P2 move behavior");
+            press(Key.Enter);
+            Check(table.IsPlaced, "unowned desktop Enter retains P2 confirm behavior");
+            endingField.SetValue(preview, true);
+            press(Key.M);
+            Check(table.IsPlaced && PreviewInteraction.BlocksDesktopShortcuts,
+                "pending synthetic-input cleanup keeps placement keyboard shortcuts blocked");
+            endingField.SetValue(preview, false);
+
+            using var pan = new InputAction("P25 actual composite pan", InputActionType.Value);
+            pan.AddBinding("<Gamepad>/leftStick");
+            pan.AddCompositeBinding("2DVector").With("Up", "<Keyboard>/upArrow")
+                .With("Down", "<Keyboard>/downArrow").With("Left", "<Keyboard>/leftArrow").With("Right", "<Keyboard>/rightArrow");
+            pan.Enable();
+            InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.RightArrow));
+            InputSystem.Update();
+            Check(pan.activeControl?.device == keyboard && pan.ReadValue<Vector2>() == Vector2.right,
+                "actual composite pan action receives the native keyboard arrow");
+            enabledField.SetValue(preview, true);
+            Check(BlenderScreen.ReadInspectionPan(pan) == Vector2.zero, "native keyboard arrows do not pan the captured image");
+            enabledField.SetValue(preview, false);
+            Check(BlenderScreen.ReadInspectionPan(pan) == Vector2.right, "unowned keyboard arrows still pan the captured image");
+            InputSystem.QueueStateEvent(keyboard, new KeyboardState());
+            InputSystem.QueueStateEvent(gamepad, new GamepadState { leftStick = Vector2.up });
+            InputSystem.Update();
+            enabledField.SetValue(preview, true);
+            Check(pan.activeControl?.device == gamepad && BlenderScreen.ReadInspectionPan(pan).y > .9f,
+                "native keyboard ownership preserves independent controller-axis pan input");
+            Debug.Log("P25_KEYBOARD_ISOLATION_CHECK PASS actual TablePlacement.Update M/Enter/Escape admission and composite arrow/controller pan; no OS input injected");
+        }
+        finally
+        {
+            if (preview != null) enabledField.SetValue(preview, false);
+            if (preview != null) endingField.SetValue(preview, false);
+            currentSetter.Invoke(null, new object[] { previousCurrent });
+            InputSystem.RemoveDevice(keyboard);
+            InputSystem.RemoveDevice(gamepad);
+            if (previousKeyboard != null && previousKeyboard.added) previousKeyboard.MakeCurrent();
+            if (host != null && host.Placement != null) UnityEngine.Object.DestroyImmediate(host.Placement.gameObject);
+            UnityEngine.Object.DestroyImmediate(container);
+            UnityEngine.Object.DestroyImmediate(cameraObject);
+        }
     }
 }
