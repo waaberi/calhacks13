@@ -7,8 +7,9 @@ import unittest
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
+import bootstrap_c
 from fresh_c import (
     archive_entries,
     build_addon_zip,
@@ -26,6 +27,36 @@ from fresh_c import (
 
 
 class FreshCTests(unittest.TestCase):
+    def test_c_splash_is_suppressed_before_gui_timer_without_saving_preferences(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = Path(folder)
+            config = session / "c-bootstrap.json"
+            write_json(config, {"session": str(session)})
+            view = SimpleNamespace(show_splash=True)
+            def before_gui(_callback, **_kwargs):
+                self.assertFalse(view.show_splash)
+            save_preferences = Mock()
+            fake = SimpleNamespace(context=SimpleNamespace(preferences=SimpleNamespace(view=view)),
+                                   app=SimpleNamespace(timers=SimpleNamespace(register=Mock(side_effect=before_gui))),
+                                   ops=SimpleNamespace(wm=SimpleNamespace(save_userpref=save_preferences)))
+            with patch.dict("sys.modules", {"bpy": fake}), patch.dict("os.environ", isolated_environment(session / "blender-resources")), \
+                    patch("sys.argv", ["blender", "--factory-startup", "--", str(config)]), \
+                    patch("bootstrap_c._splash_original", None):
+                bootstrap_c.main()
+                fake.app.timers.register.assert_called_once()
+                self.assertFalse(view.show_splash)
+                bootstrap_c.restore_private_startup_splash()
+                self.assertTrue(view.show_splash)
+                save_preferences.assert_not_called()
+
+    def test_splash_guard_does_not_change_nonisolated_preferences(self):
+        view = SimpleNamespace(show_splash=True)
+        fake = SimpleNamespace(context=SimpleNamespace(preferences=SimpleNamespace(view=view)))
+        with patch.dict("sys.modules", {"bpy": fake}), patch("sys.argv", ["blender"]):
+            with self.assertRaisesRegex(RuntimeError, "factory-startup"):
+                bootstrap_c.suppress_private_startup_splash({"session": "unused"})
+            self.assertTrue(view.show_splash)
+
     def test_player_changed_during_picker_cannot_spawn(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
