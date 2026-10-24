@@ -341,9 +341,9 @@ namespace SpatialModeling
             };
             if(compact) actions=new (string, Action)[] {
                 ("Undo placement",arrangement.UndoPlacement), ("Recover workspace",arrangement.Recover),
-                ("Desk level",()=>arrangement.Surfaces.BeginLevel("desk")),
-                ("Wall level",()=>arrangement.Surfaces.BeginLevel("wall")),
-                ("Floor level",()=>arrangement.Surfaces.BeginLevel("floor")),
+                ("Desk: adjust / add",()=>arrangement.Surfaces.BeginLevel("desk")),
+                ("Wall: adjust / add",()=>arrangement.Surfaces.BeginLevel("wall")),
+                ("Floor: adjust / add",()=>arrangement.Surfaces.BeginLevel("floor")),
                 ("Reload room surfaces",arrangement.Surfaces.Reload),
                 ("Auto detection on/off",arrangement.Surfaces.ToggleAutomatic),
                 ("Show/hide detected",arrangement.Surfaces.ToggleDetected),

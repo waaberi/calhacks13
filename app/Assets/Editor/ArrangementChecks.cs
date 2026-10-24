@@ -18,6 +18,21 @@ public static class ArrangementChecks
         var desk=new WorkspaceSurfaces.Surface {Name="Desk",Pose=new Pose(new Vector3(0,.8f,0),Quaternion.LookRotation(Vector3.up,Vector3.forward)),Size=new Vector2(1.5f,1)};
         var before=new Pose(new Vector3(0,.85f,0),Quaternion.identity);
         var desired=new Pose(new Vector3(.1f,.65f,0),Quaternion.Euler(0,37,0));
+        desk.Id=Guid.NewGuid();
+        // Menu attention must not define the guide frame. Replay sideward/downward
+        // menu gaze against a previously settled workspace at several room headings.
+        foreach(float heading in new[]{0f,73f,180f,-120f})
+        {
+            var facing=Quaternion.Euler(0,heading,0);
+            var eye=new Vector3(2,1.6f,-3);
+            var pose=WorkspaceSurfaces.InitialLevelPose("desk",eye,facing);
+            Near(Vector3.ProjectOnPlane(pose.position-eye,Vector3.up),facing*Vector3.forward*.8f,"fallback starts along settled workspace forward, independent of left-menu gaze");
+            Check(Vector3.Dot(pose.rotation*Vector3.forward,Vector3.up)>.999f
+                && Vector3.Dot(pose.rotation*Vector3.up,facing*Vector3.forward)>.999f,"desk is gravity level with a consistent heading at any room yaw");
+            var wallPose=WorkspaceSurfaces.InitialLevelPose("wall",eye,facing);
+            Check(Vector3.Dot(wallPose.rotation*Vector3.up,Vector3.up)>.999f
+                && Vector3.Dot(wallPose.rotation*Vector3.forward,-(facing*Vector3.forward))>.999f,"new wall is upright and faces into the workspace");
+        }
         Check(WorkspaceArrangement.Assist(bounds,Vector3.one,before,desired,desk,false,out var stopped,out var suggested),"desk crossing gets assistance");
         Check(WorkspaceArrangement.MinimumDistance(bounds,Vector3.one,stopped,desk)>=.0029f,"desk stops the actual bottom, including non-centred mesh origin");
         Check(Quaternion.Angle(stopped.rotation,desired.rotation)<.001f,"contact stop never force-rotates the item");
@@ -107,8 +122,24 @@ public static class ArrangementChecks
             Near(provider.Surfaces.Single().Pose.position,moved.position,"placed plane reads the moved grid's world pose exactly once");
             var detectedSurfaces=(List<WorkspaceSurfaces.Surface>)typeof(WorkspaceSurfaces).GetField("detected",BindingFlags.Instance|BindingFlags.NonPublic).GetValue(provider);
             detectedSurfaces.Add(desk); detectedSurfaces.Add(wall);
+            var secondDesk=desk; secondDesk.Id=Guid.NewGuid(); secondDesk.Pose.position+=Vector3.right*5;
+            detectedSurfaces.Add(secondDesk);
+            Check(provider.TryChooseDetected("desk",new Vector3(0,1.5f,0),out var chosen) && chosen.Id==desk.Id,"adjust starts from the nearest REAL detected surface");
+            provider.CreateLevel("desk",chosen.Pose,chosen.Size,chosen.Id);
             typeof(WorkspaceSurfaces).GetMethod("RebuildSurfaces",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(provider,null);
-            Check(provider.Surfaces.Count==2 && provider.Surfaces.Count(s=>s.Name=="Desk")==1,"manual desk replaces inaccurate automatic desk, while automatic wall remains usable");
+            Check(provider.Surfaces.Count==3 && provider.Surfaces.Count(s=>s.Name=="Desk")==2,"adjusted desk replaces only its source anchor, preserving other desk and wall");
+            Near(level.position,desk.Pose.position,"adjustable overlay retains the actual detected desk position");
+            Check(level.Find("Level outer border").GetComponent<LineRenderer>().GetPosition(0).x==-desk.Size.x*.5f,"adjust overlay uses actual detected extents");
+            // Run the real menu callback with a camera looking to the left. The
+            // existing calibrated guide must never reset to that click-time gaze.
+            string oldTag=cameraObject.tag; cameraObject.tag="MainCamera";
+            cameraObject.transform.rotation=Quaternion.Euler(35,-70,12);
+            var calibrated=new Pose(new Vector3(.2f,.75f,.9f),level.rotation);
+            level.SetPositionAndRotation(calibrated.position,calibrated.rotation);
+            provider.BeginLevel("desk");
+            Near(level.position,calibrated.position,"reselecting Desk adjustment never resets the calibrated position");
+            Check(Quaternion.Angle(level.rotation,calibrated.rotation)<.001f,"reselecting from a side-facing menu never twists the calibrated desk");
+            cameraObject.tag=oldTag;
             provider.ToggleAutomatic();
             Check(!provider.AutomaticEnabled && provider.LevelCount==1,"turning off an inaccurate room scan preserves manual levels");
             typeof(WorkspaceSurfaces).GetMethod("LateUpdate",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(provider,null);
@@ -120,6 +151,34 @@ public static class ArrangementChecks
             typeof(WorkspaceSurfaces).GetMethod("LateUpdate",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(provider,null);
             Near(level.position,placed,"head movement only billboards level label, never moves the calibrated plane");
             provider.ClearLevels(); Check(provider.LevelCount==0,"clear levels removes overrides so automatic surfaces can be reused");
+            var facingHostObject=new GameObject("Disabled no-network workspace facing fixture");
+            facingHostObject.SetActive(false);
+            var facingHost=facingHostObject.AddComponent<HostScene>(); facingHost.enabled=false;
+            try
+            {
+                facingHostObject.SetActive(true); // Disabled HostScene never opens its transport.
+                typeof(HostScene).GetField("placed",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(facingHost,true);
+                var settled=new Pose(new Vector3(2,1.65f,3),Quaternion.Euler(0,73,0));
+                typeof(HostScene).GetProperty("PlacementHeadPose").SetValue(facingHost,settled);
+                cameraObject.tag="MainCamera";
+                cameraObject.transform.SetPositionAndRotation(settled.position,Quaternion.Euler(35,3,12));
+                provider.BeginLevel("desk");
+                var spawned=provider.Surfaces.Single();
+                Near(spawned.Pose.position,WorkspaceSurfaces.InitialLevelPose("desk",settled.position,settled.rotation).position,
+                    "actual menu callback uses common settled workspace frame even when head looks70degrees left at the menu");
+                Check(Vector3.Dot(spawned.Pose.rotation*Vector3.up,settled.rotation*Vector3.forward)>.999f,
+                    "actual menu callback does not seed side-menu yaw");
+                var adjustedLevel=provider.RaycastLevel(new Ray(spawned.Pose.position+Vector3.up,Vector3.down),out _);
+                typeof(WorkspaceArrangement).GetProperty("RotationAxis").SetValue(arrangement,Vector3.right);
+                arrangement.Apply(adjustedLevel,spawned.Pose,spawned.Pose,false,false);
+                Near(arrangement.RotationAxis,Vector3.up,"level rotation cannot inherit a previous wall normal");
+            }
+            finally
+            {
+                cameraObject.tag=oldTag;
+                provider.ClearLevels();
+                UnityEngine.Object.DestroyImmediate(facingHostObject);
+            }
             screen=container.AddComponent<BlenderScreen>();
             typeof(BlenderScreen).GetField("arrangement",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(screen,arrangement);
             var camera=cameraObject.GetComponent<Camera>();

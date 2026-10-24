@@ -141,6 +141,7 @@ namespace SpatialModeling
         }
         public Pose Apply(Transform target,Pose previous,Pose desired,bool align,bool bypass,Vector3? previousScale=null)
         {
+            RotationAxis=Vector3.up; // A previous wall contact must not leak its rotation axis into the next grab/level.
             if(Surfaces!=null && Surfaces.IsLevel(target))
             { HideGuide(); return Surfaces.ConstrainLevel(target,desired); }
             if(!AssistEnabled || bypass || Surfaces==null) { HideGuide(); return desired; }

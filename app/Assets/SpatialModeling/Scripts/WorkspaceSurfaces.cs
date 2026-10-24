@@ -15,12 +15,13 @@ namespace SpatialModeling
         public struct Surface
         {
             public string Name;
+            public Guid Id;
             public Pose Pose;
             public Vector2 Size;
             public Vector3 Normal => Pose.rotation * Vector3.forward;
         }
         struct RoomAnchor { public OVRAnchor Anchor; public OVRLocatable Locatable; public Guid Room; public string Kind; }
-        sealed class Level { public string Kind; public Transform Target, LabelRoot, Handle; public Vector2 Size; public Text Label; }
+        sealed class Level { public string Kind; public Transform Target, LabelRoot, Handle; public Vector2 Size; public Text Label; public Guid? Replaces; }
         readonly List<RoomAnchor> anchors = new List<RoomAnchor>();
         readonly List<Surface> surfaces = new List<Surface>();
         readonly List<Surface> detected = new List<Surface>();
@@ -35,6 +36,7 @@ namespace SpatialModeling
         public string State => AutomaticEnabled ? message + "\n" + Counts(detected) + " · levels " + levels.Count
             : "Auto detection OFF · levels " + levels.Count;
         public int LevelCount => levels.Count;
+        public int DetectedCount => detected.Count;
         string message = "Checking saved room";
         string lastCounts;
         bool loading, disposed, reloadPending, wasPresent;
@@ -133,10 +135,53 @@ namespace SpatialModeling
                     new OVRAnchor.FetchOptions { SingleComponentType = typeof(OVRRoomLayout) });
                 owned.AddRange(rooms);
                 if (!Current()) return;
-                if (!result.Success) { message = "Room query failed · retry or use a level"; Debug.LogWarning("WORKSPACE_SURFACES rooms status=" + result.Status); return; }
+                Debug.Log("WORKSPACE_SURFACES discovery rooms="+rooms.Count+" status="+result.Status);
+                // Link also exposes the earlier FB query API. Try it only when discovery
+                // fails/returns no data; this is a compatibility path, not evidence of a scan.
+                if ((!result.Success || rooms.Count == 0) && OpenXRRuntime.IsExtensionEnabled("XR_FB_spatial_entity_query"))
+                {
+                    rooms = new List<OVRAnchor>();
+#pragma warning disable CS0618
+                    bool legacy = await OVRAnchor.FetchAnchorsAsync<OVRRoomLayout>(rooms, timeout: 5);
+#pragma warning restore CS0618
+                    owned.AddRange(rooms);
+                    if (!Current()) return;
+                    Debug.Log("WORKSPACE_SURFACES compatibility rooms="+rooms.Count+" success="+legacy);
+                }
                 roomCount = rooms.Count;
                 if (rooms.Count == 0)
-                { message = "No room data · scan room / check Link spatial data"; return; }
+                {
+                    // Some runtimes expose labelled elements without a RoomLayout root.
+                    // These are still real saved scene anchors, never synthetic desks/walls.
+                    var elements = new List<OVRAnchor>();
+                    var elementsResult = await OVRAnchor.FetchAnchorsAsync(elements,
+                        new OVRAnchor.FetchOptions { SingleComponentType = typeof(OVRSemanticLabels) });
+                    owned.AddRange(elements);
+                    if (!Current()) return;
+                    Debug.Log("WORKSPACE_SURFACES discovery labelled="+elements.Count+" status="+elementsResult.Status);
+                    if ((!elementsResult.Success || elements.Count == 0) && OpenXRRuntime.IsExtensionEnabled("XR_FB_spatial_entity_query"))
+                    {
+                        elements = new List<OVRAnchor>();
+#pragma warning disable CS0618
+                        bool legacy = await OVRAnchor.FetchAnchorsAsync<OVRSemanticLabels>(elements, timeout: 5);
+#pragma warning restore CS0618
+                        owned.AddRange(elements);
+                        if (!Current()) return;
+                        Debug.Log("WORKSPACE_SURFACES compatibility labelled="+elements.Count+" success="+legacy);
+                    }
+                    foreach (var anchor in elements)
+                    {
+                        if (!anchor.TryGetComponent<OVRLocatable>(out var locatable)) continue;
+                        await locatable.SetEnabledAsync(true);
+                        if (!Current()) return;
+                        if (locatable.IsEnabled && !next.Exists(a=>a.Anchor.Uuid==anchor.Uuid))
+                            next.Add(new RoomAnchor { Anchor=anchor,Locatable=locatable });
+                    }
+                    if (!Current()) return;
+                    anchors.AddRange(next);
+                    message = anchors.Count > 0 ? "Saved surfaces loaded" : "No room data received · adjust/add a level";
+                    return;
+                }
                 foreach (var room in rooms)
                 {
                     var ids = new HashSet<Guid>(); var kinds = new Dictionary<Guid,string>();
@@ -154,7 +199,16 @@ namespace SpatialModeling
                         var childrenResult = await OVRAnchor.FetchAnchorsAsync(children, new OVRAnchor.FetchOptions { Uuids = batch });
                         owned.AddRange(children);
                         if (!Current()) return;
-                        if (!childrenResult.Success) { Debug.LogWarning("WORKSPACE_SURFACES children status=" + childrenResult.Status); continue; }
+                        if ((!childrenResult.Success || children.Count == 0) && OpenXRRuntime.IsExtensionEnabled("XR_FB_spatial_entity_query"))
+                        {
+                            children = new List<OVRAnchor>();
+#pragma warning disable CS0618
+                            bool legacy = await OVRAnchor.FetchAnchorsAsync(batch, children, timeout: 5);
+#pragma warning restore CS0618
+                            owned.AddRange(children);
+                            if (!Current()) return;
+                            Debug.Log("WORKSPACE_SURFACES compatibility children="+children.Count+" success="+legacy);
+                        }
                         foreach (var anchor in children)
                         {
                             if (!anchor.TryGetComponent<OVRLocatable>(out var locatable)) continue;
@@ -199,7 +253,7 @@ namespace SpatialModeling
         public bool IsLevel(Transform target) => levels.Exists(l => l.Target == target);
         public Pose ConstrainLevel(Transform target, Pose desired)
         { var level = levels.Find(l => l.Target == target); return level == null ? desired : LevelPose(level.Kind, desired); }
-        public Transform CreateLevel(string kind, Pose desired)
+        public Transform CreateLevel(string kind, Pose desired, Vector2? size = null, Guid? replaces = null)
         {
             if (kind != "desk" && kind != "floor" && kind != "wall") throw new ArgumentException("Unknown level kind");
             EnsureMaterials();
@@ -229,9 +283,15 @@ namespace SpatialModeling
                 var rect=text.GetComponent<RectTransform>(); rect.sizeDelta=new Vector2(600,115);
                 level.Label=text.GetComponent<Text>(); level.Label.font=Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
                 level.Label.fontSize=32; level.Label.fontStyle=FontStyle.Bold; level.Label.alignment=TextAnchor.MiddleCenter; level.Label.color=Color.white;
-                level.Label.text=kind.ToUpperInvariant()+" LEVEL\nGrip yellow handle · release to place";
                 level.Label.raycastTarget = false;
             }
+            level.Replaces=replaces;
+            level.Size=size??(kind=="desk"?new Vector2(1.2f,.8f):new Vector2(2.4f,2.4f));
+            foreach(var stroke in level.Target.GetComponentsInChildren<LineRenderer>())
+                if(stroke.name=="Level outer border") DrawBorder(stroke,level.Size,.0012f);
+                else if(stroke.name=="Level outer border contrast") DrawBorder(stroke,level.Size,.0006f);
+                else DrawGrid(stroke,level.Size);
+            level.Label.text=kind.ToUpperInvariant()+(replaces.HasValue?" · ADJUST DETECTED":" LEVEL · MANUAL")+"\nGrip move · stick turn · release place";
             var pose = LevelPose(kind, desired); level.Target.SetPositionAndRotation(pose.position, pose.rotation);
             level.Target.localScale = Vector3.one;
             UpdateLabel(level);
@@ -242,12 +302,33 @@ namespace SpatialModeling
         {
             FindFirstObjectByType<WorkspaceInteraction>()?.CancelGrabs();
             var camera = Camera.main; if (camera == null) return;
-            var forward = Vector3.ProjectOnPlane(camera.transform.forward, Vector3.up).normalized;
-            if (forward.sqrMagnitude < .5f) forward = Vector3.forward;
-            var position = camera.transform.position + forward * .8f;
-            if (kind != "wall") position.y -= kind == "desk" ? .6f : 1.2f;
-            CreateLevel(kind, new Pose(position, kind == "wall" ? Quaternion.LookRotation(-forward,Vector3.up)
-                : Quaternion.LookRotation(Vector3.up,forward)));
+            // Selecting again must not throw an already adjusted surface back at the wearer.
+            if (levels.Exists(l=>l.Kind==kind)) return;
+            if (AutomaticEnabled && TryChooseDetected(kind,camera.transform.position,out var surface))
+            { CreateLevel(kind,surface.Pose,surface.Size,surface.Id); return; }
+            var host=FindFirstObjectByType<HostScene>();
+            var facing=host!=null && host.DisplayPlacementReady ? host.PlacementHeadPose.rotation : camera.transform.rotation;
+            CreateLevel(kind,InitialLevelPose(kind,camera.transform.position,facing));
+        }
+        public static Pose InitialLevelPose(string kind, Vector3 eye, Quaternion workspaceFacing)
+        {
+            var forward=Vector3.ProjectOnPlane(workspaceFacing*Vector3.forward,Vector3.up).normalized;
+            if(forward.sqrMagnitude<.5f) forward=Vector3.forward;
+            var position=eye+forward*.8f;
+            if(kind!="wall") position.y-=kind=="desk"?.6f:1.2f;
+            return new Pose(position,kind=="wall"?Quaternion.LookRotation(-forward,Vector3.up):Quaternion.LookRotation(Vector3.up,forward));
+        }
+        public bool TryChooseDetected(string kind, Vector3 eye, out Surface surface)
+        {
+            surface=default; float nearest=float.PositiveInfinity; bool found=false;
+            foreach(var candidate in detected)
+            {
+                if(candidate.Name!=Title(kind)) continue;
+                float distance=(candidate.Pose.position-eye).sqrMagnitude;
+                if(distance>=nearest) continue;
+                nearest=distance; surface=candidate; found=true;
+            }
+            return found;
         }
         public void ClearLevels()
         {
@@ -294,6 +375,8 @@ namespace SpatialModeling
                     {
                         labels.Clear(); semantic.GetClassifications(labels);
                         if (labels.Contains(OVRSemanticLabels.Classification.Table)) kind = "Desk";
+                        else if (labels.Contains(OVRSemanticLabels.Classification.Floor)) kind = "Floor";
+                        else if (labels.Contains(OVRSemanticLabels.Classification.WallFace)) kind = "Wall";
                     }
                     if (kind == null) continue;
                     var world = WorkspaceInteraction.ToWorldPose(Origin, new Pose(tracked.Position.Value,tracked.Rotation.Value));
@@ -310,6 +393,7 @@ namespace SpatialModeling
                         surface = new Surface { Name=kind,Pose=new Pose(center,Quaternion.LookRotation(normal,world.rotation*Vector3.up)),Size=bounds.size };
                     }
                     else continue;
+                    surface.Id=item.Anchor.Uuid;
                     if (surface.Size.x <= .01f || surface.Size.y <= .01f) continue;
                     candidates.Add((item.Room,surface));
                     if (kind == "Floor" && Camera.main != null)
@@ -323,7 +407,7 @@ namespace SpatialModeling
             foreach (var item in candidates) if (roomCount == 1 || item.room == currentRoom) detected.Add(item.surface);
             var counts=Counts(detected);
             if(counts!=lastCounts) { lastCounts=counts; Debug.Log("WORKSPACE_SURFACES localized " + counts); }
-            if (!loading && anchors.Count > 0) message = detected.Count > 0 ? "Saved room loaded" : "Room not localized · look around or use a level";
+            if (!loading && anchors.Count > 0) message = detected.Count > 0 ? "Automatic surfaces · adjust if needed" : "Room not localized · look around or use a level";
             foreach (var level in levels)
                 UpdateLabel(level);
             RebuildSurfaces(); RefreshVisuals();
@@ -352,8 +436,9 @@ namespace SpatialModeling
             foreach (var level in levels) surfaces.Add(new Surface {Name=Title(level.Kind),Pose=new Pose(level.Target.position,level.Target.rotation),
                 Size=Vector2.Scale(level.Size,new Vector2(level.Target.lossyScale.x,level.Target.lossyScale.y))});
             if (AutomaticEnabled) foreach (var surface in detected)
-                if (!levels.Exists(l => Title(l.Kind) == surface.Name)) surfaces.Add(surface);
+                if (!IsOverridden(surface)) surfaces.Add(surface);
         }
+        bool IsOverridden(Surface surface) => levels.Exists(l=>l.Replaces.HasValue && l.Replaces.Value==surface.Id && Title(l.Kind)==surface.Name);
         static string Title(string kind) => char.ToUpperInvariant(kind[0])+kind.Substring(1);
         static string Counts(List<Surface> values)
             => "Desk " + values.FindAll(s=>s.Name=="Desk").Count + " · floor " + values.FindAll(s=>s.Name=="Floor").Count + " · wall " + values.FindAll(s=>s.Name=="Wall").Count;
@@ -399,7 +484,7 @@ namespace SpatialModeling
                 if(i>=outlines.Count) outlines.Add(MakeLine(transform,detectedMaterial));
                 var surface=detected[i]; var line=outlines[i];
                 line.transform.SetPositionAndRotation(surface.Pose.position,surface.Pose.rotation); DrawGrid(line,surface.Size);
-                line.gameObject.SetActive(AutomaticEnabled && ShowDetected && !levels.Exists(l=>Title(l.Kind)==surface.Name));
+                line.gameObject.SetActive(AutomaticEnabled && ShowDetected && !IsOverridden(surface));
             }
             for(int i=detected.Count;i<outlines.Count;i++) outlines[i].gameObject.SetActive(false);
         }
