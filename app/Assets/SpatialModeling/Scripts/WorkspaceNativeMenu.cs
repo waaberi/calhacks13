@@ -273,6 +273,12 @@ namespace SpatialModeling
             return false;
         }
         internal void SmokeNumber(int index, string value) { fields[index].text = value; }
+        internal bool OwnershipSmokeClick(string title)
+        {
+            if (!Array.Exists(Environment.GetCommandLineArgs(), arg => arg == "-p3-ownership-smoke")) return false;
+            foreach (var button in buttons) if (button != null && button.name == title && button.interactable) { button.onClick.Invoke(); return true; }
+            return false;
+        }
         public JArray Values(int first, int count, double multiplier, bool positive = false)
         {
             var values = new JArray();
