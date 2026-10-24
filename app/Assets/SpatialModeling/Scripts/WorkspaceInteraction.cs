@@ -55,6 +55,8 @@ namespace SpatialModeling
             public Pose previousHandPose;
             public float depth;
             public Quaternion rotationOffset=Quaternion.identity;
+            public Quaternion placementRotation=Quaternion.identity;
+            public bool preserveRotation;
             public Vector3 rotationAxis=Vector3.up;
             public bool turnLatched, stickDown, freePlacement, alignRequested;
             public Color color;
@@ -387,14 +389,13 @@ namespace SpatialModeling
                 h.largestGripTurn = Mathf.Max(h.largestGripTurn, Quaternion.Angle(hand.rotation, h.previousHandPose.rotation));
                 h.previousRawPosition = desired.position;
                 h.previousHandPose = hand;
-                var pose = FollowRay(new Pose(h.stableAim.position, h.stableAim.rotation), h.rayRelative, h.depth);
-                pose.rotation=h.rotationOffset*pose.rotation;
+                var pose = FollowPlacementRay(new Pose(h.stableAim.position, h.stableAim.rotation), h.rayRelative,
+                    h.depth,h.preserveRotation,h.placementRotation,h.rotationOffset);
                 if(arrangement!=null) pose=arrangement.Apply(h.target,new Pose(h.target.position,h.target.rotation),pose,h.alignRequested,h.freePlacement);
                 if(arrangement!=null) h.rotationAxis=arrangement.RotationAxis;
                 if(h.alignRequested)
                 {
-                    h.rayRelative=RelativeRayPose(new Pose(h.stableAim.position,h.stableAim.rotation),pose);
-                    h.depth=0; h.rotationOffset=Quaternion.identity;
+                    RebasePlacement(h,new Pose(h.stableAim.position,h.stableAim.rotation),pose);
                 }
                 h.alignRequested=false;
                 h.largestDisplayStep = Mathf.Max(h.largestDisplayStep, Vector3.Distance(h.target.position, pose.position));
@@ -425,6 +426,10 @@ namespace SpatialModeling
             hand.part = part;
             hand.depth = 0f;
             hand.rotationOffset=Quaternion.identity;
+            hand.placementRotation=target.rotation;
+            // Arrange a model/level by aiming, without wrist pitch/roll tilting it.
+            // Screen/menu keep their accepted legacy mapping; sticks/two hands rotate deliberately.
+            hand.preserveRotation=arrangement!=null && ((scene!=null && target==scene.Placement) || part!=null || arrangement.Surfaces.IsLevel(target));
             hand.rotationAxis=Vector3.up;
             hand.freePlacement=hand.alignRequested=hand.turnLatched=false;
             hand.rayRelative = RelativeRayPose(pose, new Pose(target.position, target.rotation));
@@ -458,8 +463,7 @@ namespace SpatialModeling
                         if(hand.target!=null && TryReadHand(hand,out _,out var aim))
                         {
                             hand.stableAim.SetPositionAndRotation(aim.position,aim.rotation);
-                            hand.rayRelative=RelativeRayPose(aim,new Pose(hand.target.position,hand.target.rotation));
-                            hand.depth=0; hand.rotationOffset=Quaternion.identity;
+                            RebasePlacement(hand,aim,new Pose(hand.target.position,hand.target.rotation));
                         }
                     pairTarget=null;
                 }
@@ -525,6 +529,18 @@ namespace SpatialModeling
             Quaternion.Inverse(aim.rotation) * (target.position - aim.position), Quaternion.Inverse(aim.rotation) * target.rotation);
         public static Pose FollowRay(Pose aim, Pose relative, float depth) => new Pose(
             aim.position + aim.rotation * (relative.position + Vector3.forward * depth), aim.rotation * relative.rotation);
+        public static Pose FollowPlacementRay(Pose aim,Pose relative,float depth,bool preserveRotation,
+            Quaternion placementRotation,Quaternion explicitRotation)
+        {
+            var pose=FollowRay(aim,relative,depth); // Accepted far-ray POSITION mapping stays intact.
+            pose.rotation=explicitRotation*(preserveRotation?placementRotation:pose.rotation);
+            return pose;
+        }
+        static void RebasePlacement(Hand hand,Pose aim,Pose target)
+        {
+            hand.rayRelative=RelativeRayPose(aim,target); hand.placementRotation=target.rotation;
+            hand.depth=0; hand.rotationOffset=Quaternion.identity;
+        }
 
         // Use Unity XRI's endpoint-aware ray stabilization BEFORE mapping a distant
         // target. These are InteractionAttachController's default stabilization

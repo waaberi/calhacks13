@@ -20,7 +20,7 @@ namespace SpatialModeling
             public Vector3 Normal => Pose.rotation * Vector3.forward;
         }
         struct RoomAnchor { public OVRAnchor Anchor; public OVRLocatable Locatable; public Guid Room; public string Kind; }
-        sealed class Level { public string Kind; public Transform Target; public Vector2 Size; public Text Label; }
+        sealed class Level { public string Kind; public Transform Target, LabelRoot, Handle; public Vector2 Size; public Text Label; }
         readonly List<RoomAnchor> anchors = new List<RoomAnchor>();
         readonly List<Surface> surfaces = new List<Surface>();
         readonly List<Surface> detected = new List<Surface>();
@@ -40,7 +40,7 @@ namespace SpatialModeling
         bool loading, disposed, reloadPending, wasPresent;
         int generation, attempts, roomCount;
         float retryAt;
-        Material levelMaterial, detectedMaterial;
+        Material levelMaterial, detectedMaterial, contrastMaterial;
         Transform Origin => Camera.main != null ? Camera.main.transform.parent : null;
 
         IEnumerator Start()
@@ -66,6 +66,7 @@ namespace SpatialModeling
             foreach (var outline in outlines) if (outline != null) DestroyObject(outline.gameObject);
             if (levelMaterial != null) DestroyObject(levelMaterial);
             if (detectedMaterial != null) DestroyObject(detectedMaterial);
+            if (contrastMaterial != null) DestroyObject(contrastMaterial);
         }
         static void DestroyObject(UnityEngine.Object value)
         { if (Application.isPlaying) Destroy(value); else DestroyImmediate(value); }
@@ -209,18 +210,31 @@ namespace SpatialModeling
                 target.SetParent(Origin, false);
                 level = new Level { Kind = kind, Target = target, Size = kind == "desk" ? new Vector2(1.2f,.8f) : new Vector2(2.4f,2.4f) };
                 levels.Add(level);
-                var line = MakeLine(target, levelMaterial); DrawGrid(line, level.Size);
-                var label = new GameObject("Level grip handle", typeof(RectTransform), typeof(Canvas), typeof(Text));
-                label.transform.SetParent(target, false); label.transform.localScale = Vector3.one * .001f;
-                label.GetComponent<Canvas>().renderMode = RenderMode.WorldSpace;
-                label.GetComponent<RectTransform>().sizeDelta = new Vector2(500,100);
-                level.Label = label.GetComponent<Text>(); level.Label.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-                level.Label.fontSize = 28; level.Label.alignment = TextAnchor.MiddleCenter; level.Label.color = Color.white;
-                level.Label.text = kind.ToUpperInvariant() + " LEVEL\nGrip grid/label · move · release to place";
+                // Double-stroke unlit lines stay readable against both light and dark desks.
+                var backing = MakeLine(target, contrastMaterial,.014f); backing.name="Grid contrast backing"; DrawGrid(backing,level.Size);
+                var line = MakeLine(target, levelMaterial,.006f); line.transform.localPosition=Vector3.forward*.0005f; DrawGrid(line, level.Size);
+                var rim = MakeLine(target,contrastMaterial,.024f); rim.name="Level outer border contrast"; DrawBorder(rim,level.Size,.0006f);
+                rim = MakeLine(target,levelMaterial,.012f); rim.name="Level outer border"; DrawBorder(rim,level.Size,.0012f);
+                var handle=GameObject.CreatePrimitive(PrimitiveType.Sphere); handle.name="Visible level grip handle";
+                DestroyObject(handle.GetComponent<Collider>()); handle.transform.SetParent(target,false);
+                handle.transform.localScale=Vector3.one*.065f; handle.GetComponent<Renderer>().sharedMaterial=levelMaterial;
+                level.Handle=handle.transform;
+                var label = new GameObject("Level label backing",typeof(RectTransform),typeof(Canvas),typeof(Image));
+                label.transform.SetParent(target,false); label.transform.localScale=Vector3.one*.001f;
+                label.GetComponent<Canvas>().renderMode=RenderMode.WorldSpace;
+                label.GetComponent<RectTransform>().sizeDelta=new Vector2(620,125);
+                label.GetComponent<Image>().color=new Color(.015f,.02f,.025f,.96f); label.GetComponent<Image>().raycastTarget=false;
+                level.LabelRoot=label.transform;
+                var text=new GameObject("Level instructions",typeof(RectTransform),typeof(Text)); text.transform.SetParent(label.transform,false);
+                var rect=text.GetComponent<RectTransform>(); rect.sizeDelta=new Vector2(600,115);
+                level.Label=text.GetComponent<Text>(); level.Label.font=Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+                level.Label.fontSize=32; level.Label.fontStyle=FontStyle.Bold; level.Label.alignment=TextAnchor.MiddleCenter; level.Label.color=Color.white;
+                level.Label.text=kind.ToUpperInvariant()+" LEVEL\nGrip yellow handle · release to place";
                 level.Label.raycastTarget = false;
             }
             var pose = LevelPose(kind, desired); level.Target.SetPositionAndRotation(pose.position, pose.rotation);
             level.Target.localScale = Vector3.one;
+            UpdateLabel(level);
             RebuildSurfaces();
             return level.Target;
         }
@@ -251,6 +265,13 @@ namespace SpatialModeling
                 float along = Vector3.Dot(center + Vector3.up*.06f - ray.origin,ray.direction);
                 if (along > 0 && Vector3.Distance(ray.GetPoint(along), center + Vector3.up*.06f) < .13f && along < distance)
                 { distance = along; target = level.Target; }
+                var labelPlane=new Plane(level.LabelRoot.forward,level.LabelRoot.position);
+                if(labelPlane.Raycast(ray,out float labelHit) && labelHit<distance)
+                {
+                    var localLabel=level.LabelRoot.InverseTransformPoint(ray.GetPoint(labelHit));
+                    if(Mathf.Abs(localLabel.x)<=310 && Mathf.Abs(localLabel.y)<=62.5f)
+                    { distance=labelHit; target=level.Target; }
+                }
                 var plane = new Plane(level.Target.forward, center);
                 if (!plane.Raycast(ray, out float hit) || hit >= distance) continue;
                 var local = level.Target.InverseTransformPoint(ray.GetPoint(hit));
@@ -304,12 +325,18 @@ namespace SpatialModeling
             if(counts!=lastCounts) { lastCounts=counts; Debug.Log("WORKSPACE_SURFACES localized " + counts); }
             if (!loading && anchors.Count > 0) message = detected.Count > 0 ? "Saved room loaded" : "Room not localized · look around or use a level";
             foreach (var level in levels)
-            {
-                // Label faces the wearer; the calibrated plane itself never follows the head.
-                level.Label.transform.position = level.Target.position + Vector3.up*.06f;
-                if (Camera.main != null) level.Label.transform.rotation = Quaternion.LookRotation(level.Label.transform.position-Camera.main.transform.position,Vector3.up);
-            }
+                UpdateLabel(level);
             RebuildSurfaces(); RefreshVisuals();
+        }
+        static void UpdateLabel(Level level)
+        {
+            // Only the text billboards. The plane and physical handle remain world-stationary.
+            level.Handle.position=level.Target.position+Vector3.up*.06f;
+            level.LabelRoot.position=level.Target.position+Vector3.up*.17f;
+            float scale=Mathf.Max(.001f,Mathf.Abs(level.Target.lossyScale.x));
+            level.Handle.localScale=Vector3.one*(.065f/scale);
+            level.LabelRoot.localScale=Vector3.one*(.001f/scale);
+            level.LabelRoot.rotation=Camera.main!=null ? Quaternion.LookRotation(level.LabelRoot.position-Camera.main.transform.position,Vector3.up) : Quaternion.identity;
         }
         public static Surface DeskTop(Pose world, Bounds bounds)
         {
@@ -333,24 +360,34 @@ namespace SpatialModeling
         void EnsureMaterials()
         {
             if (levelMaterial != null) return;
-            var table=FindFirstObjectByType<TablePlacement>(); var source=table!=null?table.PreviewMaterial:null;
-            levelMaterial=source!=null?new Material(source):new Material(Shader.Find("UI/Default"));
-            levelMaterial.color=new Color(1,.75f,.15f,1);
+            // Resource asset pins the unlit shader in the Player, independent of scene lighting/Shader.Find stripping.
+            var source=Resources.Load<Material>("WorkspaceSurfaceGuide");
+            if(source==null) throw new InvalidOperationException("WorkspaceSurfaceGuide material missing");
+            levelMaterial=new Material(source); levelMaterial.color=new Color(1,.85f,.1f,1);
             detectedMaterial=new Material(levelMaterial); detectedMaterial.color=new Color(.1f,.85f,.7f,1);
+            contrastMaterial=new Material(levelMaterial); contrastMaterial.color=new Color(.015f,.02f,.025f,1);
         }
-        static LineRenderer MakeLine(Transform parent, Material material)
+        static LineRenderer MakeLine(Transform parent, Material material,float width=.003f)
         {
             var go=new GameObject("Visible surface grid",typeof(LineRenderer)); go.transform.SetParent(parent,false);
             var line=go.GetComponent<LineRenderer>(); line.sharedMaterial=material; line.useWorldSpace=false;
-            line.startWidth=line.endWidth=.003f; return line;
+            line.startWidth=line.endWidth=width;
+            line.shadowCastingMode=UnityEngine.Rendering.ShadowCastingMode.Off; line.receiveShadows=false;
+            return line;
+        }
+        static void DrawBorder(LineRenderer line,Vector2 size,float depth)
+        {
+            line.loop=true; line.positionCount=4;
+            line.SetPositions(new[]{new Vector3(-size.x*.5f,-size.y*.5f,depth),new Vector3(-size.x*.5f,size.y*.5f,depth),
+                new Vector3(size.x*.5f,size.y*.5f,depth),new Vector3(size.x*.5f,-size.y*.5f,depth)});
         }
         static void DrawGrid(LineRenderer line, Vector2 size)
         {
             var points=new List<Vector3>();
             for(int i=0;i<=6;i++) {float u=i/6f-.5f,sign=i%2==0?1:-1;
-                points.Add(new Vector3(u*size.x,-sign*size.y*.5f,.004f)); points.Add(new Vector3(u*size.x,sign*size.y*.5f,.004f));}
+                points.Add(new Vector3(u*size.x,-sign*size.y*.5f,.0005f)); points.Add(new Vector3(u*size.x,sign*size.y*.5f,.0005f));}
             for(int i=0;i<=6;i++) {float u=.5f-i/6f,sign=i%2==0?1:-1;
-                points.Add(new Vector3(sign*size.x*.5f,u*size.y,.004f)); points.Add(new Vector3(-sign*size.x*.5f,u*size.y,.004f));}
+                points.Add(new Vector3(sign*size.x*.5f,u*size.y,.0005f)); points.Add(new Vector3(-sign*size.x*.5f,u*size.y,.0005f));}
             line.positionCount=points.Count; line.SetPositions(points.ToArray());
         }
         void RefreshVisuals()

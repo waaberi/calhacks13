@@ -121,14 +121,23 @@ namespace SpatialModeling
             float after=MinimumDistance(bounds,scale,desired,surface);
             // A deep object already behind a surface must be allowed to escape.
             if(before<-.02f || after>.14f) return false;
-            var rotation=Mathf.Abs(normal.y)>.7f
-                ? Quaternion.FromToRotation(desired.rotation*Vector3.up,normal)*desired.rotation
-                : Quaternion.LookRotation(-normal,Vector3.up);
+            var rotation=AlignedRotation(desired.rotation,normal);
             suggested=new Pose(desired.position,rotation);
             suggested.position+=normal*(.003f-MinimumDistance(bounds,scale,suggested,surface));
             if(align) result=suggested;
             else if(after<.003f) result.position+=normal*(.003f-after); // Contact stop only; never auto-rotate or attract.
             return true;
+        }
+        public static Quaternion AlignedRotation(Quaternion desired,Vector3 normal)
+        {
+            if(Mathf.Abs(normal.y)<=.7f) return Quaternion.LookRotation(-normal,Vector3.up);
+            // Keep the user's heading when levelling pitch/roll; shortest-arc up-vector
+            // rotation can otherwise change yaw unexpectedly for a heavily tilted object.
+            var forward=Vector3.ProjectOnPlane(desired*Vector3.forward,normal);
+            if(forward.sqrMagnitude<.0001f)
+                forward=Vector3.Cross(Vector3.ProjectOnPlane(desired*Vector3.right,normal),normal);
+            if(forward.sqrMagnitude<.0001f) forward=Vector3.ProjectOnPlane(Vector3.forward,normal);
+            return Quaternion.LookRotation(forward.normalized,normal);
         }
         public Pose Apply(Transform target,Pose previous,Pose desired,bool align,bool bypass,Vector3? previousScale=null)
         {

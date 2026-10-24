@@ -11,6 +11,10 @@ The top-left of the Blender preview's app-owned frame says **Arrange space**.
 The mode strip remains accessible when the preview image is hidden.
 
 - Grip and aim to move the preview, menu, or whole build. Release leaves it stationary.
+- One-hand model/part/level placement keeps its pickup orientation while aim still
+  moves its position. Wrist pitch/roll no longer tilts the model during placement.
+  Stick and two hands deliberately rotate it. After explicit alignment or a two-hand
+  handoff, continued one-hand movement keeps the newly chosen orientation.
 - While held, flick the stick left/right for 15-degree rotation increments.
   Up/down changes distance. Stick click toggles free placement for that grab.
 - Grab the same item with the second controller to rotate and resize it. Releasing
@@ -64,6 +68,16 @@ after release, ready to regrab. No controller-touch marking or hidden trigger ca
 is involved. A manual level overrides automatic surfaces of the same type, so an
 inaccurate scan cannot fight the correction. Clear manual levels restores those
 automatic surfaces. Levels remain usable when automatic detection is switched off.
+The level uses a retained unlit material, thick yellow border with a dark backing,
+double-stroke grid, visible yellow grip sphere and large white instructions on a
+dark label. Lighting cannot dim the reference. The label/handle keep a readable
+physical size when the plane is resized; only the label turns toward the wearer.
+
+Physical e880714 feedback: manual placement was possible, but the level was hard
+to see and objects tilted during grip movement and at alignment. This failure
+overrides the earlier visibility-only pass. The complete grip path now separates
+aim-based position from model orientation; helper-only rotation tests were
+insufficient. Horizontal alignment preserves projected heading while levelling.
 
 Surface and controller poses use the same tracking origin exactly once. A tracking
 origin reset invalidates manual levels instead of keeping stale physical surfaces.
@@ -85,6 +99,9 @@ explicit alignment, tracking-origin conversion, two-hand rotation, native-safe
 Undo, SDK-size UUID batching, rotated furniture top faces, visible grabbable levels,
 horizontal/vertical constraints, automatic-off fallback, stationary planes through
 head movement and mode-strip access with the preview hidden. The cumulative
+checks also exercise actual model/screen pickup policy, aim displacement with fixed
+orientation, stick rotation, explicit alignment and two-hand rebase retention.
+An optional real camera render verifies unlit contrast/text without scene lights.
 P1/P2 movement/controller/readiness/native/render/freshness gates stay in force.
 
 Software checks do not establish physical room-scan availability or exact headset
