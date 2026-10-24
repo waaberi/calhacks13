@@ -39,7 +39,7 @@ namespace SpatialModeling
                 if (pair.Value == null || !pair.Value.activeInHierarchy) continue;
                 bool found = false; Bounds bounds = default;
                 foreach (var line in pair.Value.GetComponentsInChildren<LineRenderer>())
-                    if (line.isActiveAndEnabled && line.positionCount > 1)
+                    if (line.enabled && line.gameObject.activeInHierarchy && line.positionCount > 1)
                     { if (!found) { bounds = line.bounds; found = true; } else bounds.Encapsulate(line.bounds); }
                 if (found) yield return new NativeOwnershipOverlay.DisplayTarget(pair.Key, bounds);
             }

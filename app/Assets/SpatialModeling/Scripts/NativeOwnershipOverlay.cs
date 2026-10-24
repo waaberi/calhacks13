@@ -18,7 +18,7 @@ namespace SpatialModeling
         // Additional rendered data can participate without becoming generic editable objects.
         public Func<IEnumerable<DisplayTarget>> AdditionalTargets;
         public bool HasVisibleTarget(string id) => overlays.TryGetValue(id, out var o)
-            && o.go.activeInHierarchy && o.line.isActiveAndEnabled && o.label.isActiveAndEnabled;
+            && o.go.activeInHierarchy && o.line.enabled && o.line.gameObject.activeInHierarchy && o.label.isActiveAndEnabled;
         sealed class Overlay
         {
             public GameObject go;
