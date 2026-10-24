@@ -159,6 +159,9 @@ class Editor:
             obj = self.sync.find_object(target_id)
             if obj is None:
                 raise Refused("not_found", "That object doesn't exist (any more).")
+            is_sketch = getattr(sketch, "is_sketch", None)
+            if is_sketch is not None and is_sketch(obj):
+                raise Refused("failed", "Use the sketch tools to edit this native sketch.")
             if obj.library is not None:
                 raise Refused("failed", f"{obj.name} is linked from another file, so it can't "
                               "be changed here.")
