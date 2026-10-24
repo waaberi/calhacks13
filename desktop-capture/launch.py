@@ -92,9 +92,24 @@ def main():
     parser.add_argument(
         "--diagnose", action="store_true", help="Read-only dependency/connection diagnostic"
     )
+    parser.add_argument("--fresh-c", action="store_true", help="Start a new verified C host; never attach an existing host")
+    parser.add_argument("--addon-zip", type=Path, help="Matching frozen C extension ZIP with source identity")
+    parser.add_argument("--addon-sha256", help="Expected published C extension ZIP SHA256")
+    parser.add_argument("--cad-extension", type=Path, help="Verified CAD Sketcher0.32.1 directory to copy privately")
+    parser.add_argument("--host-only", action="store_true", help="Fresh C only: verify native host without picker/Player")
+    parser.add_argument("--player-assembly-sha256", help="Fresh C: expected tested Assembly-CSharp.dll SHA256")
+    parser.add_argument("--player-source-revision", help="Fresh C: exact source commit of the tested Player build")
     args = parser.parse_args()
     if os.name != "nt":
         parser.error("This launcher requires Windows")
+    if args.fresh_c:
+        if args.diagnose:
+            parser.error("Use normal --diagnose separately; it is not a fresh C capability check")
+        from fresh_c import run
+        return run(args, existing_players=player_processes, capture_status=capture_status)
+    if (args.host_only or args.addon_zip or args.addon_sha256 or args.cad_extension
+            or args.player_assembly_sha256 or args.player_source_revision):
+        parser.error("C package/dependency and --host-only options require explicit --fresh-c")
     if args.diagnose:
         from capture_helper import Windows
 
