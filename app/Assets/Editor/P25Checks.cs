@@ -7,6 +7,7 @@ using UnityEditor;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.LowLevel;
+using UnityEngine.UI;
 
 // Edit-time deterministic checks only. No input injection, network or runtime launch.
 public static class P25Checks
@@ -28,6 +29,7 @@ public static class P25Checks
         RunTransport(message => Debug.Log(message));
         RunTargets(message => Debug.Log(message));
         RunSpatial(message => Debug.Log(message));
+        RunPreviewOcclusion();
     }
 
     public static void RunCumulativeEditor()
@@ -321,5 +323,40 @@ public static class P25Checks
         }
         Check(UnityEngine.Object.FindObjectsByType<TableAction>(FindObjectsInactive.Include, FindObjectsSortMode.None).Length == previousTableControls,
             "keyboard fixture leaves no external TableAction controls for later gates");
+    }
+
+    public static void RunPreviewOcclusion()
+    {
+        var container = new GameObject("P25 inactive preview occlusion fixture");
+        container.SetActive(false); // No OnEnable, native connection or HTTP owner.
+        var imageObject = new GameObject("P25 actual RawImage hit plane", typeof(RectTransform), typeof(RawImage));
+        try
+        {
+            var screen = container.AddComponent<BlenderScreen>();
+            var preview = container.AddComponent<PreviewInteraction>();
+            var image = imageObject.GetComponent<RawImage>();
+            image.rectTransform.sizeDelta = new Vector2(2, 1);
+            image.rectTransform.position = Vector3.forward * 2;
+            image.uvRect = new Rect(0, 0, 1, 1);
+            image.enabled = true;
+            typeof(BlenderScreen).GetField("image", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(screen, image);
+            typeof(PreviewInteraction).GetField("screen", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(preview, screen);
+            var ray = new Ray(Vector3.zero, Vector3.forward);
+            Check(!preview.RouteHand(UnityEngine.XR.XRNode.RightHand, ray, false, false,
+                Vector2.zero, 1, out _), "closer level/control at one metre occludes the preview at two metres");
+            Check(preview.RouteHand(UnityEngine.XR.XRNode.RightHand, ray, false, false,
+                Vector2.zero, 3, out var distance) && Mathf.Abs(distance - 2) < .00001f,
+                "visible preview consumes its hit before a farther level/control even with native input off");
+            Check(!preview.RouteHand(UnityEngine.XR.XRNode.RightHand, ray, false, true,
+                Vector2.zero, 3, out _), "grip remains available to P2 arrangement instead of preview input");
+            Check(!preview.RouteHand(UnityEngine.XR.XRNode.LeftHand, ray, false, false,
+                Vector2.zero, 3, out _), "unselected hand cannot consume the primary preview input route");
+            Debug.Log("P25_PREVIEW_OCCLUSION_CHECK PASS actual RouteHand+RawImage nearest level/image/grip/hand routing; input disabled and no HTTP owner");
+        }
+        finally
+        {
+            UnityEngine.Object.DestroyImmediate(imageObject);
+            UnityEngine.Object.DestroyImmediate(container);
+        }
     }
 }
