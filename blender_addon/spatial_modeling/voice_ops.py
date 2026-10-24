@@ -25,6 +25,14 @@ confidence may only ask. Join, hide, duplicate and show-hidden stay in the
 table only so that they are recognized and refused with a reason: they never
 run, are never offered, and aren't in the grammar.
 
+Rules on top of the scores. "Add a modifier", which names none, always asks
+MODIFIER_MENU (Array, Mirror, Bevel): the demo's "which one?". Words with
+"modifier" in them get only modifiers as candidates. Convert to mesh applies
+the whole modifier stack, so it is a candidate only when it is asked for
+("convert to mesh", "apply all modifiers"). Words that are only FILLERS
+("hello", "well", "right", "come": grammar words that let chatter be heard as
+chatter) are rejected with no reason, so Unity says nothing.
+
 grammar_phrases() is the recognizer's phrase list (`voice.grammar`), generated
 from the same table. It leaves out "to": CommandParser treats it as a filler,
 and with it in a grammar Vosk scores "two" about 0.5 (#93). "level to" and
@@ -74,11 +82,16 @@ MAX_BEVEL_SEGMENTS = 4
 REUSED_MODIFIERS = ("SUBSURF", "ARRAY", "SOLIDIFY", "DECIMATE", "MIRROR", "WIREFRAME", "BEVEL")
 MODE_NAMES = {"EDIT_MESH": "Edit Mode", "SCULPT": "Sculpt Mode", "POSE": "Pose Mode"}
 MIN_SIZE_KEPT = 0.8  # a keep_size result must keep this share of every side of the mesh
-# Where "add a monkey" goes. The app shows Blender at 5x, 1 m in front of the headset
-# (HostScene.cs displayScale, viewingDistance), sized for parts of about 100 mm (the fake
-# bracket): Blender's own 2 m Suzanne at the origin became 13.7 m around the camera. So a voice
-# add is the selection's size, within ADD_SIZE_RANGE (10 cm to 1.25 m in VR), beside it on +X;
-# without one, ADD_SIZE at the 3D cursor; either way moved along +X until it overlaps nothing.
+# Where "add a monkey" goes. The app shows Blender at 5x, with Blender's origin 1 m in front of
+# the headset and 0.35 m below the eyes (HostScene.cs displayScale, viewingDistance,
+# belowEyeHeight), sized for parts of about 100 mm (the fake bracket): Blender's own 2 m Suzanne
+# at the origin became 13.7 m around the camera. The host doesn't know where the headset looks,
+# but the selection is what the user is looking at, so a voice add is the selection's size,
+# within ADD_SIZE_RANGE (10 cm to 1.25 m in VR), centred above it on +Z and moved up until it
+# overlaps nothing: over the P0 reference's 20 mm cube, 11 degrees off the app's initial view
+# (beside it on +X, 17). Blender's 2 m default cube is 10 m around the user, so an add beside it
+# was 79 degrees off the view (24 Oct), and above it is 80. Without a selection: ADD_SIZE at the
+# 3D cursor, moved along +X until it overlaps nothing.
 ADD_SIZE = 0.1  # meters, the new object's longest side without a selection
 ADD_SIZE_RANGE = (0.02, 0.25)
 ADD_GAP = 0.25  # of the new object's size, between it and its neighbour
@@ -445,9 +458,10 @@ def _intent(id_, op, say, props=None, post=None, fill=None, needs="MESH", macro=
     None. macro: run in a temporary Edit Mode on the whole mesh. edit: the intent used instead
     in Edit Mode. unsupported: recognized only to refuse it, with this sentence. hear: whole
     phrases with numbers in them ("subdivide it twice") that only the recognizer needs: the
-    resolver reads their numbers as slots. requires: words of which one must be said, or the
-    intent is never a candidate ("smooth" alone isn't "smooth the vertices"). keep_size: undo
-    and refuse a result that shrinks the mesh below MIN_SIZE_KEPT."""
+    resolver reads their numbers as slots. requires: words, or groups of words ("apply
+    modifier"), of which one must be said (each word as it is or by its stem), or the intent is
+    never a candidate ("smooth" alone isn't "smooth the vertices"). keep_size: undo and refuse
+    a result that shrinks the mesh below MIN_SIZE_KEPT."""
     return {"id": id_, "op": op, "say": say, "props": props or {}, "post": post or {},
             "fill": fill, "needs": needs, "macro": macro, "edit": edit,
             "label": label or say[0], "words_fill": words_fill, "edit_only": edit_only,
@@ -549,9 +563,10 @@ INTENTS = [
     _intent("smooth_vertices", "mesh.vertices_smooth", ["smooth vertices", "smooth the vertices"],
             props={"factor": 0.25, "repeat": 1}, macro=True,
             requires={"vertices", "vertex", "verts"}, keep_size=True),
+    # It applies every modifier, so only when asked for: never for "add a (mirror) modifier".
     _intent("convert_mesh", "object.convert",
-            ["convert to mesh", "convert it to a mesh", "apply modifiers"],
-            props={"target": "MESH"}, needs="ANY"),
+            ["convert to mesh", "convert it to a mesh", "apply modifiers", "apply all modifiers"],
+            props={"target": "MESH"}, needs="ANY", requires={"convert", "apply modifier"}),
     # Edit Mode only. Commands are refused while host Blender is in Edit Mode, so these are
     # recognized only to say why they can't run.
     _intent("extrude", "mesh.extrude_region_move",
@@ -664,17 +679,37 @@ COUNTED = {"array": {"copies", "copy", "times", "instances"},
 NO_WORDS = "I didn't hear a command."
 NO_MATCH = "I don't know that command."
 
+# "Add a modifier" names none: it always asks these, in this order (the demo's "which one?").
+# Safe and visible on a part: none applies anything, and Undo takes each back.
+MODIFIER_MENU = ("array", "mirror", "bevel")
+MENU_WORDS = {"modifier", "add", "make", "another"}  # by stem: all a request for the menu says
+MENU_SCORE = 0.75  # from ASK_MIN to RUN_MIN: it asks
+MENU_PHRASES = ("add a modifier",)  # in the grammar: Whisper's text snaps onto it whole
+_INDEX = {it["id"]: k for k, it in enumerate(INTENTS)}
+
 
 def _used_counted_slot(intent_id, slots):
     nouns = COUNTED.get(intent_id, set())
     return any(n["noun"] in nouns or n["key"] in nouns for n in slots["numbers"])
 
 
+def _said(group, ws):
+    """Every word of group ("apply modifier") was said, as it is or by its stem."""
+    heard = set(ws) | {stem(w) for w in ws}
+    return all(w in heard or stem(w) in heard for w in group.split())
+
+
+def _names_no_modifier(uw):
+    """uw (content words) asks for a modifier without naming one: "add a modifier"."""
+    stems = {stem(w) for w in uw}
+    return "modifier" in stems and stems <= MENU_WORDS
+
+
 def resolve(text, confidence=1.0, context=None):
     """Rank the intents for text. context: mode ("OBJECT" or "EDIT"), active_type (the target's
     Blender type, such as "MESH", or None without one). Returns a dict: decision ("run", "ask"
-    or "reject"), reason (a sentence, or None), candidates (up to 3, best first; empty for
-    reject), and what was heard (words, slots)."""
+    or "reject"), reason (a sentence, or None: say nothing), candidates (up to 3, best first;
+    empty for reject), and what was heard (words, slots)."""
     context = context or {}
     mode = context.get("mode", "OBJECT")
     active = context.get("active_type", "MESH")
@@ -682,20 +717,29 @@ def resolve(text, confidence=1.0, context=None):
     unk = sum(1 for w in ws if w == "unk")
     slots, rest = extract_slots(ws)
     uw = _content(rest)
+    if rest and all(w in FILLERS for w in rest):
+        # "hello", "well", "right", "come", "hello two": chatter Vosk heard as grammar fillers
+        return {"decision": "reject", "reason": None, "candidates": [], "words": uw,
+                "slots": slots}
     ukey = "".join(phonetic(w) for w in uw)
     best = {}
-    for k, cw, wts, pkey in _PHRASES:
-        s, ex = phrase_score(uw, ukey, cw, wts, pkey)
-        if s > best.get(k, (0, 0))[0]:
-            best[k] = (s, ex)
+    if _names_no_modifier(uw):
+        best = {_INDEX[i]: (MENU_SCORE, 0.0) for i in MODIFIER_MENU}  # equal: kept in order
+    else:
+        for k, cw, wts, pkey in _PHRASES:
+            s, ex = phrase_score(uw, ukey, cw, wts, pkey)
+            if s > best.get(k, (0, 0))[0]:
+                best[k] = (s, ex)
+    modifier_said = any(stem(w) == "modifier" for w in uw)
     ranked = []
     for k, (s, ex) in best.items():
         it = INTENTS[k]
         if mode == "EDIT" and it["edit"]:
             continue  # its Edit Mode variant scores on its own
-        if it["requires"] and not any(stem(w) in it["requires"] or w in it["requires"]
-                                      for w in ws):
+        if it["requires"] and not any(_said(group, ws) for group in it["requires"]):
             continue  # named only
+        if modifier_said and it["op"] != MOD and it["id"] != "convert_mesh":
+            continue  # "add array modifier" offered Add a light third
         why = None
         if it["edit_only"] and mode != "EDIT":
             s *= 0.9
@@ -840,6 +884,12 @@ CORE_WORDS = [  # VoiceCore's own (Vocabulary.GrammarPhrases) but "to": its comm
 ]
 LEFT_OUT = {"to"}  # sounds like "two"; CommandParser only skips it
 SPOKEN_AS_IS = {"twice", "once", "thrice"}  # words() reads them as numbers; the recognizer hears them
+CHATTER = {"hmm", "hm", "huh", "ah", "er", "erm", "eh", "mhm", "yep", "yup", "nope", "bye", "sure",
+           "fine", "awesome", "perfect", "morning"}  # more words no command uses
+# Words that make no command, alone or together (no phrase is only these, a test checks): the
+# absorbers, the stop words but the verbs, "all" and "more", and some chatter. Said alone,
+# "hello" was Solidify (0.92, by sound), "well" Weld, "right" Add a light, "come" Add a cone.
+FILLERS = frozenset(set(ABSORBERS) | (STOP - KEEP_IN_PHRASE) | {"all", "more"} | CHATTER)
 
 
 def spoken_words(phrase):
@@ -864,6 +914,7 @@ def grammar_phrases():
             phrases.add(" ".join(spoken))
             if it["op"] == MOD and len(spoken) == 1:
                 phrases.add("make it " + spoken[0])
+    phrases.update(MENU_PHRASES)
     phrases.update(SMALL[1:] + [t for t in TENS if t] + ["hundred", "point", "half"])
     for n in SMALL[1:6]:
         phrases.update({f"level {n}", f"{n} copies", f"{n} times", f"{n} segments"})
@@ -992,7 +1043,7 @@ class Voice:
         if _refusal(c):
             raise commands.Refused("failed", _refusal(c))
         if c["needs"] is None:  # the target only told the resolver what the user meant,
-            return dict(c, anchor=target_id), None  # and where an add goes (beside it)
+            return dict(c, anchor=target_id), None  # and where an add goes (above it)
         if obj is None:
             raise commands.Refused("failed", f"{label} needs an object. Select one, then say "
                                    "it again.")
@@ -1016,7 +1067,7 @@ class Voice:
 
         given = obj
         c, obj = self.choose(obj, args)
-        # An add goes beside the object selected when it was said (or now), if it is shown.
+        # An add goes above the object selected when it was said (or now), if it is shown.
         anchor = (self.sync.find_object(c["anchor"]) if c.get("anchor") else None) or given
         label = _spoken(c["label"])
         if obj is not None and not obj.visible_get():
@@ -1100,7 +1151,7 @@ def _select_only(bpy, obj):
 
 
 def _execute(bpy, c, obj, label, anchor=None):
-    """Run candidate c on obj (or nothing, for an add: then beside anchor, see ADD_SIZE).
+    """Run candidate c on obj (or nothing, for an add: then above anchor, see ADD_SIZE).
 
     Returns (a note for the summary or None, a function that takes a modifier change back
     exactly, or None for other operations).
@@ -1115,12 +1166,10 @@ def _execute(bpy, c, obj, label, anchor=None):
         anchor_box = _world_box(anchor) if anchor is not None else None
         size = (max(ADD_SIZE_RANGE[0], min(max(_sides(anchor_box)), ADD_SIZE_RANGE[1]))
                 if anchor_box else ADD_SIZE)
-        start = tuple(bpy.context.scene.cursor.location)
+        start, axis = tuple(bpy.context.scene.cursor.location), 0
         if anchor_box:
-            low, high = anchor_box
-            start = (high[0] + size * (ADD_GAP + 0.5), (low[1] + high[1]) / 2,
-                     (low[2] + high[2]) / 2)
-        c = dict(c, props=dict(c["props"], location=add_location(start, size, boxes)))
+            start, axis = above(anchor_box, size), 2
+        c = dict(c, props=dict(c["props"], location=add_location(start, size, boxes, axis)))
     _select_only(bpy, obj)
     reused = None
     with _override(bpy, obj):
@@ -1169,18 +1218,24 @@ def _execute(bpy, c, obj, label, anchor=None):
     return ("changed the existing one" if reused else None), revert
 
 
-def add_location(start, size, boxes):
-    """Where a new object of longest side size goes: start, moved along +X past every box
-    (low, high corners) it would overlap, with ADD_GAP. Pure, for the tests."""
-    x, y, z = start
+def above(box, size):
+    """The centre of a new object of longest side size on top of box (low, high corners):
+    centred over it, ADD_GAP above it. Pure, for the tests."""
+    low, high = box
+    return ((low[0] + high[0]) / 2, (low[1] + high[1]) / 2, high[2] + size * (ADD_GAP + 0.5))
+
+
+def add_location(start, size, boxes, axis=0):
+    """Where a new object of longest side size goes: start, moved along +axis (0 is X, 2 is Z)
+    past every box (low, high corners) it would overlap, with ADD_GAP. Pure, for the tests."""
+    p = list(start)
     half = size / 2
     for _ in range(len(boxes) + 1):
-        hit = [b for b in boxes if all(b[0][i] - half < (x, y, z)[i] < b[1][i] + half
-                                       for i in range(3))]
+        hit = [b for b in boxes if all(b[0][i] - half < p[i] < b[1][i] + half for i in range(3))]
         if not hit:
             break
-        x = max(b[1][0] for b in hit) + size * (ADD_GAP + 0.5)
-    return (x, y, z)
+        p[axis] = max(b[1][axis] for b in hit) + size * (ADD_GAP + 0.5)
+    return tuple(p)
 
 
 def _sides(box):
