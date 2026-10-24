@@ -233,6 +233,28 @@ def test_an_unknown_outcome_freezes_writes_on_both_ports_until_everyone_has_the_
         assert [a[0] for a in host.editor.applied] == ["object.move", "object.move"]
 
 
+def test_a_change_outside_the_gate_stops_writes_until_everyone_has_the_snapshot():
+    """gate.py's bypass path (#77): host.stop_writes() works like an unknown outcome."""
+    def broken(document):
+        raise RuntimeError("the scene can't be read yet")
+
+    with hosting(lan_port=True, client_can_edit=True) as host, host.vr("Talia") as talia, \
+            host.lee() as lee:
+        talia.expect("session.update")
+        real_snapshot, host.sess.snapshot = host.sess.snapshot, broken
+        host.cmds.stop_writes("Shaft changed outside the gate while Lee is editing")
+        for peer in (talia, lee):
+            assert_rejected(peer.run("object.move", PLATE, MOVE), "permission_denied")
+        assert host.editor.applied == [] and host.cmds.frozen
+
+        host.sess.snapshot = real_snapshot  # the timer re-reads the scene by itself
+        for peer in (talia, lee):
+            (snapshot,) = peer.expect("scene.snapshot")
+            assert snapshot["payload"]["document"]["revision"] == host.editor.revision
+        assert not host.cmds.frozen
+        assert talia.run("object.move", PLATE, MOVE)["outcome"] == "applied"
+
+
 # 5. Published only after Blender confirmed it, the same way on both ports
 
 

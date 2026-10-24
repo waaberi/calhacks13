@@ -1269,12 +1269,14 @@ def finish(code):
     os._exit(code)
 
 
-def main():
+def main(run=checks):
+    """Run the generator function `run` in Blender, then exit 0 if it passed. gate_check.py
+    passes its own."""
     if not os.environ.get("BLENDER_USER_RESOURCES"):
         log("set BLENDER_USER_RESOURCES to a throwaway directory first")
         finish(2)
     log("Blender", bpy.app.version_string)
-    steps = checks()
+    steps = run()
     if GUI:
         def tick():
             try:
@@ -1301,4 +1303,5 @@ def main():
     finish(0)
 
 
-main()
+if __name__ == "__main__":
+    main()

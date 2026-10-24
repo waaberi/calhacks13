@@ -5,7 +5,8 @@ One add-on, two roles chosen in the add-on preferences:
 - Host (Talia's PC) owns the document. It serves the Unity app on localhost and
   Client-role add-ons on the LAN, and applies every edit in Blender. Lives in
   host.py (lifecycle), server.py (networking, no bpy) and lan.py (the LAN
-  port's session token and TLS, shared with the Client role).
+  port's session token and TLS, shared with the Client role). gate.py holds
+  back the host desktop's own edits while someone else's lease covers them.
 - Client (Lee Jae-yeon's PC) joins a host, mirrors its scene and sends edits
   as requests. Lives in remote_client/.
 
@@ -15,7 +16,7 @@ through bpy.app.timers. Never execute received data as Python.
 
 import bpy
 
-from . import host, lan
+from . import gate, host, lan
 
 
 def _restart(self, context):
@@ -150,9 +151,11 @@ def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     host.register()
+    gate.register()
 
 
 def unregister():
+    gate.unregister()
     host.unregister()
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)

@@ -487,6 +487,19 @@ def test_may_write_answers_the_host_desktop():
         host.leases.end(mine["lease_id"], host.sess.host["actor_id"])
 
 
+def test_desktop_reason_names_the_owner_and_what_they_edit():
+    owner = {"actor_id": "a" * 32, "name": "Lee", "role": "vr"}
+    shared = {"lease_id": "b" * 32, "mode": "shared", "owner": owner, "targets": ["c" * 32]}
+    exclusive = {**shared, "mode": "exclusive", "targets": []}
+    reason = leases.Leases.desktop_reason
+    assert reason(shared, "Cube") == "Lee is editing Cube"
+    assert reason(shared) == "Lee is editing"
+    assert reason(shared, "Cube", whole=True) == ("Lee is editing Cube, so Undo and Redo wait "
+                                                  "until they finish")
+    assert reason(exclusive, "Cube") == "Lee is editing — wait for Apply"
+    assert reason(exclusive, whole=True) == "Lee is editing — wait for Apply"
+
+
 # The hand-written schema check
 
 

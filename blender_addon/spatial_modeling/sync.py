@@ -23,6 +23,11 @@ find_object(object_id) -> bpy.types.Object | None
     Undo, Redo and file loads replace data-blocks, so references go stale.
 object_id(obj) -> str
     The object's ID, given now if it has none yet: for a receipt's `created`.
+on_change
+    None, or a function (changed IDs, {removed ID: its last name}, everything)
+    that every flush which finds a change calls before it broadcasts. gate.py
+    uses it to see changes to leased data that no gate stopped (#77). It must
+    not flush.
 
 Which objects: those of the current view layer. Objects in excluded collections
 count as removed; hidden ones are sent with `visible` false. Instances
@@ -69,6 +74,7 @@ _UUID = re.compile(r"[0-9a-f]{32}")
 log = logging.getLogger(__name__)
 
 _state = None  # the running _Sync, between start() and stop()
+on_change = None  # see the module docstring
 _assigned = {}  # session_uid -> the ID we gave that object; cleared when a file loads
 
 
@@ -300,7 +306,13 @@ def _flush(st):
         touched = current if resnapshot else {oid for oid, _ in changed}
         for oid in touched:
             current[oid].generation = st.document.revision
+    gone = {oid: st.objects[oid].record["name"] for oid in removed}
     st.objects, st.units = current, units
+    if on_change is not None and (resnapshot or changed or removed):
+        try:
+            on_change([oid for oid, _ in changed], gone, resnapshot)
+        except Exception:  # watching must never stop the sync itself
+            log.exception("on_change failed")
 
     doc = st.document.describe()
     if resnapshot:
