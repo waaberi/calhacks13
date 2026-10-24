@@ -43,6 +43,16 @@ public static class P2Checks
             scene.Handle(decoded);
             Check(scene.ObjectCount==3,"receive real contract objects including mesh:null");
             Check(!scene.Placement.gameObject.activeSelf,"model must wait for Place Table");
+            var immediateRecenter=typeof(HostScene).GetField("recenterRequested",BindingFlags.Instance|BindingFlags.NonPublic);
+            Check(!(bool)immediateRecenter.GetValue(scene),"initial/new-document snapshot cannot bypass startup settling");
+            scene.RequestRecenter();
+            Check((bool)immediateRecenter.GetValue(scene),"explicit B/Y recenter retains prompt user-requested placement");
+            typeof(TablePlacement).GetMethod("TrackingReset",BindingFlags.Instance|BindingFlags.NonPublic)
+                .Invoke(table,new object[]{null});
+            Check(!(bool)immediateRecenter.GetValue(scene),"actual automatic tracking-origin callback must not impersonate explicit B/Y intent");
+            scene.RequestRecenter();
+            scene.InvalidateUnconfirmedPlacement();
+            Check(!(bool)immediateRecenter.GetValue(scene),"explicit intent from before headset removal cannot bypass remount settling");
             table.SeedFromHead(new Vector3(1,1.65f,2),Vector3.forward);
             Check(preview.gameObject.activeSelf,"settled seed reveals preview while model remains gated");
             scene.InvalidateUnconfirmedPlacement();

@@ -74,7 +74,7 @@ namespace SpatialModeling
 
         void TrackingReset(XRInputSubsystem _)
         {
-            GetComponent<HostScene>()?.RequestRecenter();
+            GetComponent<HostScene>()?.RequestTrackedPlacement();
             ConfirmTrackingReset();
         }
 
@@ -89,6 +89,7 @@ namespace SpatialModeling
         public void RequirePlacement()
         {
             State = PlacementState.Preview;
+            seeded = false;
             cancelAllowed = pointing = false;
             Refresh();
         }

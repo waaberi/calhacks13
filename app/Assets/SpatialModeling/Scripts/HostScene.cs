@@ -159,10 +159,18 @@ namespace SpatialModeling
             else status = opened || haveScene ? Status.Disconnected : Status.Connecting;
         }
 
-        public void RequestRecenter()
+        public void RequestRecenter() => RequestPlacement(true);
+
+        public void RequestTrackedPlacement() => RequestPlacement(false);
+
+        void RequestPlacement(bool explicitUserRequest)
         {
             FindFirstObjectByType<WorkspaceInteraction>()?.CancelGrabs();
-            recenterRequested = true;
+            placed = false;
+            // XR-origin callbacks are automatic, including at initial session
+            // startup. Only an actual user B/Y/button request may skip settling.
+            recenterRequested = explicitUserRequest;
+            startupFacing.Ready(Vector3.forward, false, Time.realtimeSinceStartupAsDouble);
             table?.ConfirmTrackingReset();
             FindFirstObjectByType<BlenderScreen>()?.RequestRecenter();
         }
@@ -180,6 +188,7 @@ namespace SpatialModeling
             // must not silently recenter an arrangement the user already placed.
             if (table == null || table.IsPlaced) return;
             placed = false;
+            recenterRequested = false;
             table.InvalidateSeed();
             FindFirstObjectByType<BlenderScreen>()?.RequestRecenter();
         }
@@ -416,6 +425,7 @@ namespace SpatialModeling
                             FindFirstObjectByType<WorkspaceInteraction>()?.CancelGrabs();
                             ClearScene();
                             table.RequirePlacement();
+                            InvalidateUnconfirmedPlacement();
                         }
                         documentId = e.DocumentId;
                         openEpoch = e.OpenEpoch;

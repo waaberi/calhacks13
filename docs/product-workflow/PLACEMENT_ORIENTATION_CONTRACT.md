@@ -19,6 +19,11 @@ Link can keep tracking a headset on a desk. The unconfirmed preview then kept it
 old seed across removal/focus transitions. A separate desktop camera fallback
 could also commit before XR was active. Earlier gaze-only tests did not cover this
 lifecycle and therefore could not establish correct headset startup.
+The automatic tracking-origin callback also called the immediate B/Y recenter
+path, bypassing the startup-facing delay. It now requests tracked placement with
+fresh settling instead. New-document snapshots invalidate an old preview seed.
+The old log did not record the exact readiness branch, so missing presence and
+the inactive-XR fallback are both covered without inventing which one ran.
 
 ## Required behavior
 
@@ -28,7 +33,8 @@ lifecycle and therefore could not establish correct headset startup.
    an available XRNode presence=false also refuses placement. Desktop-window
    focus is not VR focus: Blender may keep desktop keyboard focus during use.
 2. After readiness, wait for the current horizontal facing to settle for0.5seconds.
-   Reject downward/vertical or turning samples. Removal/focus loss restarts the
+   Reject downward/vertical or turning samples. Automatic XR-origin callbacks
+   must not impersonate explicit B/Y intent or skip this delay. Removal/focus loss restarts the
    settling interval; elapsed time from before removal cannot qualify a new pose.
 3. Unconfirmed Preview/Move placement loses its seed and hides on readiness loss.
    On return, seed from the new worn/focused pose. Keep Move/Cancel's saved pose.
