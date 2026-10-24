@@ -6,6 +6,78 @@ P2 headset test is requested or repeated by this verification workflow. FPS is
 not an acceptance criterion. A compiler or simulated input pass cannot establish
 that a native Blender button or spatial drawing gesture works in the headset.
 
+## Common modeling and preview expansion
+
+Frozen source `c76b247f50f6891e9088bee0a5d0573e70cf6dd7` adds eight exact numeric
+actions, 31 common shortcut buttons and 29 additional function/numpad keys. The
+[controls and coverage checklist](P2_5_COMMON_CONTROLS.md) describes the actual
+routes and limits. This is a concrete workflow expansion, not a measured claim
+that a remaining percentage of Blender is complete. No backend, contract, P2
+placement, capture or XR source change was needed.
+
+| Verification on this expansion | Result | External evidence |
+| --- | --- | --- |
+| Full offline C# compile and actual managed implementation checks | Passed, including all eight numeric modes and independent rotation/basis oracles | `p25-common-controls-offline/compile-manifest.json` |
+| Actual numeric/shortcut/full-key button callbacks, bridge/session and routing | Passed; all 8/31/29 controls | `p25-common-controls-cumulative-editor.log` / `p25-common-controls-editor-result.json` |
+| Unchanged Model tools and cumulative P1/P2/arrangement/Current+Legacy/keyboard-last gates | Passed, exit 0 | Same cumulative result; original gates remain mandatory |
+| Held-input release and native session-end ordering | 2 cases passed | `p25-common-controls-release-http-result.json` |
+| Existing actual Unity HTTP regressions | 9 cases passed | `p25-common-controls-http9-result.json` |
+| Actual typed exact-transform/custom-dimension native handlers and common modeling operators | 194 assertions / 70 typed receipts passed in four private background processes | `p25-native-modeling-unit1-context`, `p25-native-modeling-unit001-context` |
+| Installed Blender default keymap and native viewport state | 31/31 chords matched; 25 viewport assertions passed | `p25-native-preview-navigation-context`; two panel assertions remain pending as described below |
+| Full Python suite plus new outcome tests | 873 passed / 36 skipped; 4 new reporting tests passed separately | `p25-common-modeling-pytest.log`, `p25-common-modeling-outcome-tests.log` |
+| Capture/input/launcher/bootstrap unittest suite | 77 passed | `p25-common-modeling-helper-final.log` |
+| Repository-wide Ruff | Passed | `p25-common-modeling-ruff.log` |
+| Frozen Windows v11 build | Passed, zero errors / exit 0; all original and new mandatory gates including final keyboard isolation | `p25-preview-spatial-v11-build-result.json` / build log; no Player launch |
+
+The callback gates exercise current position/rotation/scale preload, editing just
+one axis, native WXYZ Euler conversion including equivalent gimbal orientation,
+missing transform refusal, explicit typed Apply and delayed native permission.
+They also test consumed/stale numeric drafts, actual left-image anchoring,
+hover/right/middle refusal, native/capture identity binding, modal/Edit Mode
+admission, held mouse/modifier isolation and restoration, exact 64 versus 65 event
+atomic queue admission, both overlay pages, gaps, nearer UI, grip/other-hand
+priority and desktop ownership. No OS input or actual native GUI delivery occurs.
+
+The [native report](P2_5_NUMERIC_MODELING_NATIVE.md) preserves the original
+background hide-context failure and its explicit VIEW_3D override correction,
+the initial ANY-modifier keymap inspection error, and both unresolved panel
+observations. Toolbar hide and sidebar restore each expected false but observed
+true synchronously in background Blender. The second navigation gate remains
+archived as failed (32/34 assertions), even though all required keymap/navigation
+assertions passed. Revised reporting distinguishes required failure, optional
+pending (exit 2, `passed=false`) and full pass; its four pure tests pass, but that
+reporting revision was not rerun in Blender. Actual panel UI verification remains
+pending; this is not evidence of successful panel toggling or a helper defect.
+
+The initial helper command used pytest in bundled Python 3.12, where pytest is
+absent (`No module named pytest`); no product test ran. Correct unittest discovery
+with existing capture dependencies passed 77 tests. Both logs are retained.
+Actual executed native modeling Python/add-on inputs match the final source in
+`p25-common-modeling-provenance.json`; unrelated managed harness and later
+navigation reporting changes are not passed off as native rerun evidence.
+Failures and remaining limits are recorded in
+[issue 139](https://github.com/waaberi/calhacks13/issues/139#issuecomment-6390641009).
+
+The current complete candidate is external `artifacts/p25-preview-spatial-v11/`.
+Its build manifest verifies every C# source and new meta hash against the passing
+prebuild evidence and links the actual cumulative/HTTP results. The own-Library
+build ran hidden at BelowNormal priority with one worker. Six generated settings
+diffs were preserved externally, verified as whitespace-only and restored; no
+semantic XR/render/project setting change persisted. V10 remains preserved.
+
+| Final v11 identity | Value |
+| --- | --- |
+| Frozen app source | `c76b247f50f6891e9088bee0a5d0573e70cf6dd7` |
+| Git app tree | `38d2091b16ed747d8a34356d65065ec518c4180d` |
+| Managed assembly SHA-256 | `72db685fd5bdf3877a2e293a2c1da5ddec3a36951375b02d880ae97f2fca9bd9` |
+| Executable SHA-256 | `001aeebfb92718f8b49f0c0e0a03e313c54669552b08e952b2fee3ddd143683a` |
+
+No Player, interactive Blender, OS input, native capture or headset was launched.
+P2 runtime/testing and the separately owned physical-scale repair remain separate;
+typed numeric values already use native physical meters without compensating for
+the viewer's current magnification. Later P2/scale integration requires its own
+review and affected checks; it is not imported into this branch by these tests.
+
 ## Model tools button expansion
 
 The user requested more working buttons while P2 completes. Frozen source
@@ -35,7 +107,7 @@ late grant can emit an edit, including wrong identity followed by valid recovery
 | Repository-wide Ruff | Passed | `p25-model-tools-ruff.log` |
 | Final Windows v10 build | Passed, zero errors/exit 0 | `p25-preview-spatial-v10-build-result.json` / build log; every mandatory gate passed, no Player launch |
 
-The current complete Windows candidate is external
+The earlier complete Windows candidate is external
 `artifacts/p25-preview-spatial-v10/`. Its manifest records exact source/meta
 hashes, matching cumulative UI/HTTP evidence, final keyboard isolation and all
 prior cumulative gates. The own-Library build used BelowNormal priority and one
