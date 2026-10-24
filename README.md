@@ -26,7 +26,7 @@ Other folders in the plan's ownership table (`spacetime/`, `scripts/windows-rele
 
 - **Blender add-on:** link `blender_addon/spatial_modeling` into Blender's extensions folder (`extensions/user_default/`). Then enable it under Preferences > Add-ons and pick Host or Client.
 - **Unity app:** open `app/` with Unity 6000.6.5f1. VoiceCore is referenced from `app/Packages/manifest.json` as `"com.calhacks13.voicecore": "file:../../voice/VoiceCore"`.
-- **Checks:** `pip install ruff pytest`, then run `ruff check .` and `pytest tests`. CI runs the same on every PR.
+- **Checks:** `pip install ruff pytest jsonschema`, then run `ruff check .` and `pytest tests`. CI runs the same on every PR.
 
 ## Working in this repo
 
