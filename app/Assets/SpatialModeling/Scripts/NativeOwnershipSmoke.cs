@@ -43,6 +43,7 @@ namespace SpatialModeling
             if (!NativeSmokeWorkspace.Place(scene) || NativeSmokeWorkspace.ActiveModelRenderers(scene) == 0)
             { Fail("Real Place Table action did not expose active object renderers"); yield break; }
             report["placement"] = "Bounded software test pose and real Place Table callback; no physical placement pass";
+            yield return null; // Let the real menu presentation react to explicit Place.
             menu.Home(); if (!Click("Pin menu")) yield break;
             var menuPanel = GameObject.Find("Native edit controls").transform;
             var pinnedPose = new Pose(menuPanel.position, menuPanel.rotation);
