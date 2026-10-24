@@ -1,7 +1,7 @@
 {
   "name": "com.calhacks13.voicecore",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "displayName": "VoiceCore",
-  "description": "Voice command parsing and missing-information memory. Plain C#, no Unity references.",
+  "description": "Voice command parsing, missing-information memory, prompt clips and Vosk recognition. Plain C#, no Unity references.",
   "unity": "6000.0"
 }

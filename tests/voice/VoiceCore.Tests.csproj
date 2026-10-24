@@ -11,6 +11,7 @@
 
   <ItemGroup>
     <Compile Include="../../voice/VoiceCore/Runtime/**/*.cs" Link="Runtime/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../../voice/VoiceCore/Vosk/**/*.cs" Link="Vosk/%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Remove="UnityCompat/**" />
   </ItemGroup>
 
@@ -18,11 +19,18 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <!-- 7.x: 9.x resolves the contract's cross-file $refs with fragments wrongly. -->
+    <PackageReference Include="JsonSchema.Net" Version="7.3.4" />
+    <PackageReference Include="Xunit.SkippableFact" Version="1.5.23" />
+    <PackageReference Include="NVorbis" Version="0.10.5" />
+    <!-- Only for libvosk.so next to the tests (the same 0.3.38 binaries as voice/fetch-vosk.sh); not its Vosk.dll. -->
+    <PackageReference Include="Vosk" Version="0.3.38" ExcludeAssets="compile;runtime" />
   </ItemGroup>
 
   <ItemGroup>
     <!-- Only has to compile: builds VoiceCore against Unity's API surface. -->
     <ProjectReference Include="UnityCompat/VoiceCore.UnityCompat.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="UnityCompat/VoiceCore.Vosk.UnityCompat.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

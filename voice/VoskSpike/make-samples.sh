@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Generates spike samples with local text-to-speech (espeak-ng and flite) into voice/VoskSpike/samples/.
+# Generates spike samples with local text-to-speech (espeak-ng, flite and Piper through voice/make-prompts.py) into
+# voice/VoskSpike/samples/, as 48 kHz 16-bit WAV like a Windows microphone, so the spike also exercises resampling.
 # TTS is cleaner than a headset microphone, so treat the results as an upper bound.
 set -euo pipefail
 
-out="$(dirname "$0")/samples"
+here="$(dirname "$0")"
+out="$here/samples"
 mkdir -p "$out"
 
 commands=(
@@ -19,12 +21,13 @@ say() { # voice text wav
   case "$1" in
     espeak-*) espeak-ng -v "${1#espeak-}" -w "$raw" "$2" ;;
     flite-*) flite -voice "${1#flite-}" -t "$2" -o "$raw" ;;
+    piper) raw="$out/raw.ogg"; uv run -q "$here/../make-prompts.py" --say "$raw" "$2" ;;
   esac
-  ffmpeg -loglevel error -y -i "$raw" -ar 16000 -ac 1 -sample_fmt s16 "$3"
+  ffmpeg -loglevel error -y -i "$raw" -ar 48000 -ac 1 -sample_fmt s16 "$3"
   rm -f "$raw"
 }
 
-for voice in espeak-en-us espeak-en-gb flite-slt flite-rms; do
+for voice in espeak-en-us espeak-en-gb flite-slt flite-rms piper; do
   for text in "${commands[@]}"; do
     name="$voice-${text// /-}"
     say "$voice" "$text" "$out/$name.wav"
