@@ -334,7 +334,8 @@ def check_hello(p):
 
 
 def check_receipt_query(p):
-    _fields(p, "receipt.query payload", ("request_ids",))
+    _fields(p, "receipt.query payload", ("host_epoch", "request_ids"))
+    _uuid(p["host_epoch"], "host_epoch")
     ids = p["request_ids"]
     if not isinstance(ids, list) or not 1 <= len(ids) <= 100:
         raise Invalid("request_ids must be a list of 1 to 100 IDs")
@@ -785,6 +786,7 @@ class Connection:
 
 
 TOO_LARGE = object()  # put in the inbox when a line is over MAX_LINE_BYTES
+FENCED = (None, None)  # a request ID receipt.query reported missing: never applied from then on
 
 
 def _print_log(text):
@@ -1085,15 +1087,31 @@ class FakeHost:
         p = msg["payload"]
         check_receipt_query(p)
         ids = p["request_ids"]
-        found = [self.receipts[i][1] for i in ids if i in self.receipts]
-        missing = [i for i in ids if i not in self.receipts]
-        conn.send(message("receipts", {"receipts": found, "missing": missing}, re=msg["id"]))
+        found = [self.receipts[i][1] for i in ids if self.receipts.get(i, FENCED)[1] is not None]
+        unseen = [i for i in ids if self.receipts.get(i, FENCED)[1] is None]
+        if p["host_epoch"] != self.host_epoch:  # from before a restart: they may have applied
+            conn.send(message("receipts", {"receipts": found, "missing": [], "unknown": unseen},
+                              re=msg["id"]))
+            return
+        for i in unseen:
+            self.receipts[i] = FENCED  # never received; refused if it turns up late
+        conn.send(message("receipts", {"receipts": found, "missing": unseen, "unknown": []},
+                          re=msg["id"]))
 
     def on_command(self, conn, msg):
         p, rid = msg["payload"], msg["id"]
         check_command(p)
         key = json.dumps(p, sort_keys=True)
         stored = self.receipts.get(rid)
+        if stored is FENCED:
+            receipt = self._receipt(conn, p, rid, "rejected", error={
+                "code": "duplicate_request",
+                "message": "receipt.query already reported this request ID as not received.",
+            })
+            self.receipts[rid] = (key, receipt)
+            self.log(f"{conn.label}: {p['op']} rejected: duplicate_request (fenced by receipt.query)")
+            conn.send(message("result", receipt, re=rid))
+            return
         if stored is not None:
             if stored[0] == key:
                 self.log(f"{conn.label}: repeated request {rid[:8]}; sent its stored result again")

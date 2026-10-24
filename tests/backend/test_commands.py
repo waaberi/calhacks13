@@ -232,6 +232,15 @@ class Peer(Client):
         """Send a command; return its receipt."""
         return self.ask(self.command(*args, **kwargs))[1]["payload"]
 
+    def query(self, *request_ids, host_epoch=None):
+        """receipt.query for request_ids, sent under host_epoch (default: this welcome's)."""
+        host_epoch = host_epoch or self.welcome["host_epoch"]
+        msg = protocol.message("receipt.query", {"host_epoch": host_epoch,
+                                                 "request_ids": list(request_ids)})
+        before, reply = self.ask(msg)
+        assert reply["type"] == "receipts" and reply["re"] == msg["id"], reply
+        return reply["payload"]
+
     def expect(self, *types):
         """The next messages, which must have these types, in this order."""
         msgs = [self.recv() for _ in types]
@@ -434,9 +443,8 @@ def test_the_same_id_with_a_changed_payload_is_a_duplicate_request(change):
         assert result["payload"]["request_id"] == msg["id"]
         assert len(host.editor.applied) == 1
         other.assert_quiet()
-        query = protocol.message("receipt.query", {"request_ids": [msg["id"]]})
-        _, receipts = talia.ask(query)
-        assert receipts["payload"]["receipts"] == [first["payload"]], "the original stays stored"
+        receipts = talia.query(msg["id"])
+        assert receipts["receipts"] == [first["payload"]], "the original stays stored"
 
 
 # Admission, session and document
@@ -462,9 +470,7 @@ def test_with_the_flag_on_the_client_role_can_edit_and_vr_sees_it():
         assert receipt["outcome"] == "applied", receipt
         activity = talia.expect("scene.update", "activity")[1]["payload"]
         assert activity["actor"]["name"] == "Lee" and activity == receipt
-        receipts = lee.ask(protocol.message("receipt.query",
-                                            {"request_ids": [receipt["request_id"]]}))[1]
-        assert receipts["payload"]["receipts"] == [receipt]
+        assert lee.query(receipt["request_id"])["receipts"] == [receipt]
 
 
 def test_the_flag_doesnt_change_the_vr_app():
@@ -733,10 +739,8 @@ def test_receipt_query_finds_receipts_and_lists_missing_ids():
         rejected = talia.run("object.move", "0" * 32, {"by": [0.01, 0, 0]})
         missing = uuid.uuid4().hex
         ids = [rejected["request_id"], missing, applied["request_id"]]
-        query = protocol.message("receipt.query", {"request_ids": ids})
-        _, reply = other.ask(query)  # any participant may ask
-        assert reply["type"] == "receipts" and reply["re"] == query["id"]
-        assert reply["payload"] == {"receipts": [rejected, applied], "missing": [missing]}
+        reply = other.query(*ids)  # any participant may ask
+        assert reply == {"receipts": [rejected, applied], "missing": [missing], "unknown": []}
 
 
 @pytest.mark.parametrize("payload", [
@@ -744,7 +748,9 @@ def test_receipt_query_finds_receipts_and_lists_missing_ids():
     {"request_ids": ["0" * 32] * 2},
     {"request_ids": [uuid.uuid4().hex for _ in range(101)]},
     {"request_ids": ["nope"]},
-    {"request_ids": ["0" * 32], "since": 3},
+    {"request_ids": ["0" * 32], "host_epoch": "0" * 32, "since": 3},
+    {"request_ids": ["0" * 32]},
+    {"request_ids": ["0" * 32], "host_epoch": "restarted"},
     {},
 ])
 def test_a_bad_receipt_query_is_invalid(payload):
@@ -759,8 +765,9 @@ def test_the_receipt_store_keeps_the_newest(monkeypatch):
     with two_peers() as (_, talia, _other):
         receipts = [talia.run("object.move", "0" * 32, {"by": [0.01, 0, 0]}) for _ in range(4)]
         ids = [r["request_id"] for r in receipts]
-        _, reply = talia.ask(protocol.message("receipt.query", {"request_ids": ids}))
-        assert reply["payload"] == {"receipts": receipts[1:], "missing": ids[:1]}
+        # The oldest was dropped: the host can't tell it from one it never got, so not missing
+        reply = talia.query(*ids)
+        assert reply == {"receipts": receipts[1:], "missing": [], "unknown": ids[:1]}
 
 
 # The host's participant
@@ -838,11 +845,11 @@ def test_command_problem_agrees_with_the_schema():
 
 
 def test_receipt_query_problem_agrees_with_the_schema():
-    (example,) = examples("receipt.query")
-    for payload in mutations(example["payload"]):
-        if isinstance(payload, dict):
-            msg = {**example, "payload": payload}
-            assert valid(msg) == (commands.receipt_query_problem(msg) is None), payload
+    for example in examples("receipt.query"):
+        for payload in mutations(example["payload"]):
+            if isinstance(payload, dict):
+                msg = {**example, "payload": payload}
+                assert valid(msg) == (commands.receipt_query_problem(msg) is None), payload
 
 
 def test_every_example_command_is_valid_for_command_problem():

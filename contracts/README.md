@@ -39,8 +39,8 @@ Every message has this envelope:
 | `command` | client → host | request fields, `base_revision`, `source`, `op`, `target`, `args`, optional `lease` | P3A |
 | `result` | host → sender, answers `command` | the command's receipt: `outcome`, `revision`, `error` if rejected | P3A |
 | `activity` | host → every other client | the receipt of a command someone applied, or of an edit made directly in host Blender | P2, P3B, P5 |
-| `receipt.query` | client → host | `request_ids` (1 to 100) | P5 |
-| `receipts` | host → client, answers `receipt.query` | `receipts`, and `missing` IDs the host has no record of | P5 |
+| `receipt.query` | client → host | `host_epoch` the requests were sent under, `request_ids` (1 to 100) | P5 |
+| `receipts` | host → client, answers `receipt.query` | `receipts`; `missing` IDs the host never received (never applied); `unknown` IDs it has no record of but may have applied | P5 |
 | `lease.acquire` | client → host | request fields, `mode` (`exclusive` or `shared`), `targets` | P3B |
 | `lease.granted` | host → client, answers `lease.acquire` | the `lease` | P3B |
 | `lease.release` | client → host | `lease_id` | P3B |
@@ -60,7 +60,7 @@ The host listens on `8767` only while "Let a Client-role Blender join over the L
 1. The client connects and sends `hello`. Until it has been welcomed, the host answers only `hello` and `ping`; anything else gets `error` `permission_denied` and the connection stays open. A `hello` that doesn't match its schema gets `invalid_message` and the connection stays open; so does a second `hello` on a welcomed connection.
    - On the LAN port with TLS, the handshake has already checked the token.
    - On the LAN port without TLS, the first message must be `hello` with the right `token`. Otherwise the host replies `error` `permission_denied` (`invalid_message` if it isn't a message at all) and closes, before any other check. The host removes `token` before any handler sees the `hello`, and ignores it on the other ports.
-2. The host replies `welcome`, then sends `scene.snapshot`, then `session.update` to every participant on either port, the new one included. The client is connected once it has the snapshot. It sends no `command` or `lease.acquire` before that. Both ports get the same snapshot and every `scene.update` after it (see [Scene](#scene)); `sketches` stays empty until P3C. (A P1 host sent empty `objects` too; that didn't mean the file was empty.)
+2. The host replies `welcome`, then sends `scene.snapshot`, then `session.update` to every participant on either port, the new one included. A reconnect is a new connection like any other: a new `actor_id`, a fresh snapshot, and nothing replayed (see [Reconnecting](#reconnecting)). The client is connected once it has the snapshot. It sends no `command` or `lease.acquire` before that. Both ports get the same snapshot and every `scene.update` after it (see [Scene](#scene)); `sketches` stays empty until P3C. (A P1 host sent empty `objects` too; that didn't mean the file was empty.)
 3. If the host refuses the `hello`, it replies `error` (with `re`) and closes the connection. It checks in this order:
    - `permission_denied`: the host doesn't admit this client here. `127.0.0.1:8765` admits only role `vr`, the LAN port only `blender-client`.
    - `unsupported_version`: the envelope's `v` differs, or a Client-role add-on's `app.version` differs from the host's (P5-M1-3). The Unity app's version isn't compared.
@@ -104,7 +104,7 @@ The first six codes are the transport-level codes that [`server.py`](../blender_
 | `not_found` | The target, lease or sketch entity doesn't exist (for example it was deleted). | |
 | `stale_revision` | The target changed since the client saw it, or Undo/Redo was sent from an old revision. `details.generation` or `details.revision`: the current value. | Look again, then make a new request. |
 | `lease_conflict` | Another participant's lease covers the target or the document. `details.lease`: that lease, with the owner's name. | |
-| `duplicate_request` | A request ID was reused with a different payload. | |
+| `duplicate_request` | A request ID was reused with a different payload, or arrived after `receipt.query` had reported it `missing` or `unknown` (see [Reconnecting](#reconnecting)). | Use a new ID. |
 | `solver_conflict` | The sketch solver can't satisfy the constraints. The sketch is unchanged. | |
 | `failed` | Blender refused (nothing to undo, a file that was never saved). Nothing changed. | |
 
@@ -216,7 +216,7 @@ A `command` adds:
 **How the host checks a command,** in this order:
 
 1. Schema: otherwise `error` `invalid_message`.
-2. Request ID: a repeat with an identical payload gets the stored result again and is never re-applied (if it is still running, the host answers once when it finishes). A repeat with a different payload is rejected with `duplicate_request`.
+2. Request ID: a repeat with an identical payload gets the stored result again and is never re-applied (if it is still running, the host answers once when it finishes). This comes before admission, so a repeat sent after a reconnect, with the old `actor_id`, still gets its stored result. A repeat with a different payload, a new `actor_id` included, is rejected with `duplicate_request`.
 3. Admission: welcomed, `can_edit`, `actor_id` is this connection's. Otherwise `permission_denied`.
 4. `session_id` and `host_epoch`, otherwise `wrong_session`; `document_id` and `open_epoch`, otherwise `wrong_document`.
 5. The target exists (`not_found`) and its generation is current; for Undo/Redo, `base_revision` is current (`stale_revision`).
@@ -231,7 +231,7 @@ A `command` adds:
 - `rotate.to` isn't a unit quaternion (within 0.001);
 - nothing to undo or redo; Save of a file that was never saved.
 
-`object.add` names the object as Blender's Add menu does (`Cube`, `Sphere`, `Cylinder`, then `.001` and so on), with 32 segments (and 16 rings for the sphere), centered on `location`, in the active collection. `object.delete` leaves the deleted object's children where they are. Undo and Redo say which command they undid in `summary` ("Undid: Moved Cube 10 mm along X"), or "Undid a change made in host Blender". Until P3C sketch ops get `failed`, and until P3B a command naming a `lease` gets `not_found`. The host keeps the receipts of the newest 10,000 requests, for deduplication and `receipt.query`, until its server restarts.
+`object.add` names the object as Blender's Add menu does (`Cube`, `Sphere`, `Cylinder`, then `.001` and so on), with 32 segments (and 16 rings for the sphere), centered on `location`, in the active collection. `object.delete` leaves the deleted object's children where they are. Undo and Redo say which command they undid in `summary` ("Undid: Moved Cube 10 mm along X"), or "Undid a change made in host Blender". Until P3C sketch ops get `failed`, and until P3B a command naming a `lease` gets `not_found`. The host keeps the receipts of the newest 10,000 requests, for deduplication and `receipt.query`, until its server restarts (see [Reconnecting](#reconnecting)).
 
 ### Outcomes
 
@@ -239,10 +239,26 @@ A `command` adds:
 | --- | --- |
 | `applied` | Blender committed the change; `revision` is the new revision. |
 | `rejected` | Nothing changed; `error` says why. |
-| `unknown` | The host can't tell whether Blender changed, for example after a failure halfway through. The host refuses writes (`permission_denied`) until it has re-read the scene and sent a fresh snapshot. |
+| `unknown` | The host can't tell whether Blender changed, for example after a failure halfway through. The host refuses writes (`permission_denied`) until it has re-read the scene and sent every client a fresh snapshot; if it can't re-read it straight away, it keeps trying every 0.5 s. |
 | `pending` | Only in `receipts`: the host has the command but hasn't finished it. |
 
-A client treats an `internal_error` reply to a command, or a connection lost before the `result`, as unknown too. While any of its outcomes is unknown, the client stops sending edits. It reconnects if needed, asks with `receipt.query`, and waits for the fresh snapshot. It never resends a command whose outcome is unknown. `missing` in `receipts` means the host has no record of the request; if the host restarted in between, that doesn't prove the command never ran, so trust the snapshot.
+A client treats an `internal_error` reply to a command, or a connection lost before the `result`, as unknown too. While any of its outcomes is unknown, the client stops sending edits. It reconnects if needed, asks with `receipt.query`, and waits for the fresh snapshot. It never resends a command whose outcome is unknown.
+
+### Reconnecting
+
+Recovery never replays anything: the host doesn't resend old results or activity to a connection, and clients don't queue edits while offline or resend them afterwards.
+
+1. **Reconnect** on the same port, every 2 s (see [Connecting](#connecting)). The new `welcome` brings a new `actor_id`, and the `host_epoch` tells whether the host's server restarted in between. The fresh `scene.snapshot` replaces the stale scene; send no `command` before it has arrived. If `document.id` or `open_epoch` changed, drop everything held for the old document (Wrong document above).
+2. **Ask about outstanding requests:** every command sent without a `result` (or answered with `internal_error`) goes into one `receipt.query` per `host_epoch` it was sent under, with that `host_epoch`. Requests sent under an earlier `actor_id` are found too: receipts are keyed by request ID alone, and any participant may ask about any request (the others saw it as `activity` anyway).
+3. **Read the answer:**
+   - In `receipts`: what happened, as the `result` would have said. `applied` means it happened, and the fresh snapshot already shows it; `rejected` means nothing changed; `unknown` means wait for the host's fresh snapshot (it follows straight away unless the host is still re-reading the scene).
+   - `missing`: the host never received it in its current `host_epoch`, so it wasn't applied. From then on the host refuses that ID with `duplicate_request` rather than apply it, even if it arrives late over a half-open connection. Make a new request, with a new ID, if the user still wants it.
+   - `unknown`: the host has no record and can't rule out that it applied it: the request was sent under an earlier `host_epoch` (the host restarted, which drops every receipt), or the host had dropped it from its 10,000 newest. Treat it like outcome `unknown`: the fresh snapshot shows what is true; tell the user to check before redoing it.
+4. **Resume editing** once nothing is unknown any more and the snapshot has arrived.
+
+Resending instead of asking is safe but not useful: an identical repeat gets its stored `result`; one rebuilt with the new `actor_id` gets `duplicate_request`; and after a host restart a request carries the old `host_epoch` and is refused. None is applied twice.
+
+**Host restarts.** The host's server restarts when it loads a file (open, revert, new file), when the role, the LAN or the editing preferences change, and when the add-on or Blender restarts. Every restart starts a new `host_epoch` and a new `open_epoch`, and drops every receipt. Receipts aren't kept on disk: an old receipt couldn't be checked against the reopened scene, and a crash between Blender's commit and the receipt would still lose it, so a client must trust the snapshot either way. That is why the host answers an earlier `host_epoch`'s requests as `unknown`, never as `missing`.
 
 **Receipt fields** (the payload of `result` and `activity`, and the items of `receipts`): `request_id`, `op`, `target` (if any), `actor` (`actor_id`, `name`, `role`), `source`, `outcome`, `revision`, `created` (new IDs, if any), `solver` (sketch ops), `summary` (one line for activity lists, for example "Moved Shaft 10 mm along X"), `error` (if rejected or unknown) and `at` (Unix ms).
 
@@ -348,6 +364,6 @@ python3 contracts/fakes/fake_client.py                                   # watch
 python3 contracts/fakes/fake_client.py "move Shaft 10mm 0 0" "undo" --exit
 ```
 
-Shortcuts include `move OBJ DX DY DZ`, `rotate OBJ Z 90deg`, `scale OBJ 1 1 1.5`, `add cube X Y Z DX DY DZ`, `delete OBJ`, `undo`, `redo`, `save` and `again` (resend the last command with the same ID). JSON gives any command or message. Bare numbers are meters and radians, as on the wire; `--help` lists everything. `--reconnect` reconnects every 2 s, `--role blender-client` acts like the Client role, and `--check` validates every message against [`schemas/`](schemas/) (needs `pip install jsonschema`). It speaks plain TCP only: the [LAN port](#lan-port)'s TLS and token aren't in it yet, so it reaches the host's port 8765 or a fake host.
+Shortcuts include `move OBJ DX DY DZ`, `rotate OBJ Z 90deg`, `scale OBJ 1 1 1.5`, `add cube X Y Z DX DY DZ`, `delete OBJ`, `undo`, `redo`, `save` and `again` (resend the last command with the same ID). For [Reconnecting](#reconnecting): `lose COMMAND` sends the command and drops the connection before its `result`, reconnects and asks for it with `receipt.query`; `query [ID ...]` asks about the last command or the given IDs. JSON gives any command or message. Bare numbers are meters and radians, as on the wire; `--help` lists everything. `--reconnect` reconnects every 2 s, `--role blender-client` acts like the Client role, and `--check` validates every message against [`schemas/`](schemas/) (needs `pip install jsonschema`). It speaks plain TCP only: the [LAN port](#lan-port)'s TLS and token aren't in it yet, so it reaches the host's port 8765 or a fake host.
 
 **Check:** `pytest tests/backend/test_fakes.py` runs the two fakes against each other through a recording proxy and validates every message they send against the schemas.

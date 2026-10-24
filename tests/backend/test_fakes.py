@@ -521,10 +521,9 @@ def test_handshake_commands_and_the_order_of_replies():
         result(a.send(changed), "rejected", "duplicate_request")
 
         missing = uuid.uuid4().hex
-        receipts = a.send(protocol.message("receipt.query",
-                                           {"request_ids": [moved["request_id"], missing]}))
-        assert receipts["payload"]["receipts"] == [moved]
-        assert receipts["payload"]["missing"] == [missing]
+        receipts = a.send(protocol.message("receipt.query", {
+            "host_epoch": a.welcome["host_epoch"], "request_ids": [moved["request_id"], missing]}))
+        assert receipts["payload"] == {"receipts": [moved], "missing": [missing], "unknown": []}
         assert a.send(protocol.message("ping"))["type"] == "pong"
 
     kinds = proxy.assert_all_valid()

@@ -64,6 +64,9 @@ or m to lengths and deg or rad to angles.
                                 (v and id are added if missing)
   again                         resend the last command with the same ID
                                 (the host answers with the stored result)
+  lose COMMAND                  send COMMAND, then drop the connection before its
+                                result; reconnect and ask for it with receipt.query
+  query [ID ...]                receipt.query for the last command, or these IDs
   scene | who | help | quit
 """
 
@@ -256,8 +259,12 @@ class FakeClient:
         self.sketches = {}
         self.participants, self.leases = [], []
         self.replies = {}  # id of a request we sent -> the message answering it
-        self.pending = set()  # commands sent on this connection without an answer yet
-        self.unknown = set()  # commands whose outcome we lost; no edits until a fresh snapshot
+        # Request ID -> the host_epoch it was sent under, which receipt.query names.
+        self.pending = {}  # commands sent on this connection without an answer yet
+        self.unknown = {}  # commands whose outcome we lost; asked about after the next welcome
+        self.querying = {}  # asked about with receipt.query; no edits until the answer
+        self.sent_under = {}  # every command we sent
+        self.rejoin_once = False  # `lose`: reconnect after this drop even without --reconnect
         self.user_pings = set()
         self.last_command = None
         self.last_heard = time.monotonic()
@@ -383,9 +390,13 @@ class FakeClient:
             if sock is not self.sock and not self.stopping:
                 return  # an older connection
             self.sock = None
-            lost, self.pending = self.pending, set()
-            self.unknown |= lost
-            again = self.reconnect and not self.stopping and self.refused is None
+            lost, self.pending = self.pending, {}
+            self.unknown.update(lost)
+            self.unknown.update(self.querying)  # the answer was lost too: ask again
+            self.querying = {}
+            again = ((self.reconnect or self.rejoin_once) and not self.stopping
+                     and self.refused is None)
+            self.rejoin_once = False
             self.finished = not again
             self.connected = False
             self.lock.notify_all()
@@ -442,7 +453,7 @@ class FakeClient:
             finally:
                 if isinstance(msg.get("re"), str):
                     self.replies[msg["re"]] = msg
-                    self.pending.discard(msg["re"])
+                    self.pending.pop(msg["re"], None)
                 self.lock.notify_all()
 
     def _dispatch(self, sock, msg):
@@ -459,7 +470,7 @@ class FakeClient:
             self.objects = {o["id"]: o for o in p["objects"]}
             self.sketches = {s["id"]: s for s in p["sketches"]}
             self.connected = True
-            self.unknown.clear()  # the fresh snapshot is the truth
+            self.unknown.clear()  # the fresh snapshot is the truth (asked about in welcome)
             lines = [f"scene.snapshot: {describe_document(self.document)}"]
             lines += ["  " + describe_object(o, self.objects) for o in self.objects.values()]
             lines += ["  " + describe_sketch(s) for s in self.sketches.values()]
@@ -479,8 +490,14 @@ class FakeClient:
                 + (f", {describe_error(r['error'])}" if r.get("error") else "")
                 for r in p["receipts"]
             ]
-            lines += [f"  {m[:8]}: missing (the host has no record)" for m in p["missing"]]
+            lines += [f"  {m[:8]}: missing (never received, so not applied)" for m in p["missing"]]
+            lines += [f"  {m[:8]}: unknown (sent before the host restarted; it may have applied: "
+                      "check the scene)" for m in p["unknown"]]
             self.out("\n".join(lines))
+            for r in p["receipts"]:
+                self.querying.pop(r["request_id"], None)
+            for rid in p["missing"] + p["unknown"]:
+                self.querying.pop(rid, None)
         elif kind == "error":
             self._on_error(msg)
         elif kind == "lease.granted":
@@ -504,10 +521,16 @@ class FakeClient:
                          "everything held for the old one")
             else:
                 self.out("same document; the fresh snapshot replaces the stale scene")
-        if self.unknown:
-            ids = sorted(self.unknown)
-            self._reply(self.sock, message("receipt.query", {"request_ids": ids[:100]}))
-            self.out(f"asked for the receipts of {len(ids)} command(s) with unknown outcome")
+        if self.unknown:  # ask, never resend; one receipt.query per host_epoch they were sent under
+            epochs = {}
+            for rid, epoch in sorted(self.unknown.items()):
+                epochs.setdefault(epoch, []).append(rid)
+            for epoch, ids in epochs.items():
+                for i in range(0, len(ids), 100):
+                    self._query(self.sock, epoch, ids[i:i + 100])
+            when = "before the host restarted" if set(epochs) != {p["host_epoch"]} else "earlier"
+            self.out(f"asked for the receipts of {len(self.unknown)} command(s) with unknown "
+                     f"outcome, sent {when}")
 
     def _on_update(self, p):
         self.document = p["document"]
@@ -554,7 +577,7 @@ class FakeClient:
                 self.out("(the add-on doesn't handle hello yet; P0 answers only ping)")
             return
         if re_ in self.pending and p.get("code") == "internal_error":
-            self.unknown.add(re_)  # the command may or may not have run
+            self.unknown[re_] = self.pending[re_]  # the command may or may not have run
         self.out(f"error{' answering ' + re_[:8] if re_ else ''}: {describe_error(p)}")
 
     def _describe_session(self):
@@ -682,10 +705,12 @@ class FakeClient:
                     raise UsageError("no snapshot yet; edits wait until then")
                 if self.not_responding:
                     raise UsageError("host not responding; edits are disabled")
-                if self.unknown:
-                    raise UsageError(f"{len(self.unknown)} command outcome(s) unknown; edits "
-                                     "wait for a fresh snapshot")
-                self.pending.add(msg["id"])
+                if self.unknown or self.querying:
+                    count = len(self.unknown) + len(self.querying)
+                    raise UsageError(f"{count} command outcome(s) unknown; edits wait for the "
+                                     "receipts and a fresh snapshot")
+                self.pending[msg["id"]] = msg["payload"]["host_epoch"]
+                self.sent_under[msg["id"]] = msg["payload"]["host_epoch"]
                 self.last_command = msg
             if msg.get("type") == "ping":
                 self.user_pings.add(msg["id"])
@@ -723,14 +748,99 @@ class FakeClient:
             with self.lock:
                 if self.sock is None:
                     raise UsageError("not connected")
-                self.pending.add(self.last_command["id"])
+                self.pending[self.last_command["id"]] = self.last_command["payload"]["host_epoch"]
                 self.replies.pop(self.last_command["id"], None)
             self.out(f"> {text.strip()} ({self.last_command['payload']['op']}, same ID)")
             return self._resend(self.last_command, wait)
+        if verb == "lose":
+            return self.lose(text.strip()[len("lose"):].strip(), wait)
+        if verb == "query":
+            return self.query(text.split()[1:], wait)
         with self.lock:
             msg = self.parse(text)
         self.out(f"> {text.strip()}")
         return self.send(msg, wait)
+
+    def _query(self, sock, host_epoch, ids):
+        """Send receipt.query from the reader thread; returns the message."""
+        msg = message("receipt.query", {"host_epoch": host_epoch, "request_ids": ids})
+        for rid in ids:
+            self.querying[rid] = host_epoch
+        self.unknown = {k: v for k, v in self.unknown.items() if k not in self.querying}
+        self._reply(sock, msg)
+        return msg
+
+    def query(self, refs, wait=True):
+        """receipt.query for the last command or the given request IDs; returns the answer."""
+        with self.lock:
+            if not refs:
+                if self.last_command is None:
+                    raise UsageError("no command sent yet; give request IDs")
+                refs = [self.last_command["id"]]
+            known = {}
+            for ref in refs:
+                found = [rid for rid in self.sent_under if rid.startswith(ref)]
+                if len(found) == 1:
+                    known[found[0]] = self.sent_under[found[0]]
+                elif len(ref) == 32:  # someone else's, or before this client started
+                    known[ref] = self.welcome["host_epoch"] if self.welcome else None
+                else:
+                    raise UsageError(f"{ref!r} isn't one request ID we sent; give all 32 digits")
+            if None in known.values() or self.sock is None:
+                raise UsageError("not connected")
+        answer = None
+        for epoch in dict.fromkeys(known.values()):
+            ids = [rid for rid, e in known.items() if e == epoch]
+            msg = message("receipt.query", {"host_epoch": epoch, "request_ids": ids[:100]})
+            self.out(f"> receipt.query for {', '.join(i[:8] for i in ids)}")
+            answer = self.send(msg, wait)
+        return answer
+
+    def lose(self, text, wait=True):
+        """Send a command and drop the connection before its result: a lost acknowledgement.
+
+        Reconnects (even without --reconnect), and returns the `receipts` that answer the
+        receipt.query sent after the new welcome, or None.
+        """
+        if not text:
+            raise UsageError("usage: lose COMMAND, for example lose move Shaft 10mm 0 0")
+        with self.lock:
+            msg = self.parse(text)
+            if msg.get("type") != "command":
+                raise UsageError("lose needs a command")
+            if not self.connected or self.unknown or self.querying:
+                raise UsageError("edits wait for a snapshot and for unknown outcomes first")
+            sock = self.sock
+            epoch = msg["payload"]["host_epoch"]
+            self.pending[msg["id"]] = self.sent_under[msg["id"]] = epoch
+            self.last_command = msg
+            self.rejoin_once = True
+        self.out(f"> {text} (then dropping the connection before the result)")
+        self._send(sock, msg)
+        try:
+            sock.shutdown(socket.SHUT_RDWR)  # the reader sees the close and reconnects
+        except OSError:
+            pass
+        if not wait:
+            return None
+        rid = msg["id"]
+
+        def answers(m):
+            p = m["payload"]
+            return m.get("type") == "receipts" and (
+                rid in p["missing"] or rid in p["unknown"]
+                or any(r["request_id"] == rid for r in p["receipts"]))
+
+        with self.lock:
+            settled = (lambda: self.finished or self.connected and not {rid} & (
+                self.pending.keys() | self.unknown.keys() | self.querying.keys()))
+            self.lock.wait_for(settled, WAIT + RECONNECT_EVERY)
+            answer = next((m for m in self.replies.values() if answers(m)), None)
+            early = self.replies.get(rid)
+        if answer is None:
+            self.out(f"no receipts for {rid[:8]} after reconnecting"
+                     + (" (its result came before the drop)" if early else ""))
+        return answer
 
     def _resend(self, msg, wait):
         self._send(self.sock, msg)
@@ -783,6 +893,17 @@ def parse_args(argv=None):
     return parser.parse_args(argv)
 
 
+def succeeded(reply):
+    """For --exit: a pong, an applied result, or receipts that are all applied."""
+    if reply is None:
+        return False
+    p = reply["payload"]
+    if reply.get("type") == "receipts":
+        return (bool(p["receipts"]) and not p["missing"] and not p["unknown"]
+                and all(r["outcome"] == "applied" for r in p["receipts"]))
+    return reply.get("type") in ("result", "pong") and p.get("outcome", "applied") == "applied"
+
+
 def _stdin_lines(lines):
     for line in sys.stdin:
         lines.put(line)
@@ -815,8 +936,7 @@ def main(argv=None):
             except UsageError as e:
                 client.out(f"! {e}")
                 reply = None
-            applied = reply is not None and reply.get("type") in ("result", "pong", "receipts")
-            ok = ok and applied and reply["payload"].get("outcome", "applied") == "applied"
+            ok = ok and succeeded(reply)
         if options.exit:
             return 0 if ok else 1
         client.out("Type a command (help lists them). Ctrl-C quits.")

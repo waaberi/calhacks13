@@ -15,7 +15,11 @@ host_epoch), so stopping always closes every connection and clients rejoin.
 Scene sync (sync.py) starts with them at revision 0; the drain timer also
 polls it, so direct edits in this Blender reach every client as scene.update.
 Commands (commands.py, applied by edits.py) and their receipts live as long as
-the session.
+the session: a restart, a file load included, drops them, and receipt.query
+then answers the old host_epoch's requests as `unknown` (contracts/README.md,
+"Reconnecting"). They aren't kept on disk: every restart also starts a new open
+epoch, so an old receipt couldn't be checked against the scene anyway, and the
+fresh snapshot is what clients trust.
 
 Undo: operators run from a timer don't push their own undo step, so an edit
 silently merges into the previous one and a single Undo reverts both. Every
@@ -113,6 +117,7 @@ def _drain():
     _document.tick()
     _server.drain()
     scene_sync.poll()  # direct edits in this Blender reach clients as scene.update
+    _commands.poll()  # after an unknown outcome, retry the fresh snapshot until it goes out
     return DRAIN_INTERVAL
 
 
