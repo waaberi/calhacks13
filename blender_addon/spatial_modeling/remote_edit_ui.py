@@ -100,8 +100,9 @@ class SPATIAL_OT_client_rotate(_Edit):
 
     def request(self, context, name):
         wm = context.window_manager
-        return ("object.rotate", f"Rotate {name} {_number(wm.spatial_edit_angle)}° about {wm.spatial_edit_axis}",
-                {"by": {"axis": wm.spatial_edit_axis, "angle": math.radians(wm.spatial_edit_angle)}})
+        axis, angle = wm.spatial_edit_axis, wm.spatial_edit_angle
+        return ("object.rotate", f"Rotate {name} {_number(angle)}° about {axis}",
+                {"by": {"axis": axis, "angle": math.radians(angle)}})
 
 
 class SPATIAL_OT_client_scale(_Edit):
@@ -139,8 +140,9 @@ class SPATIAL_OT_client_add(_Edit):
     def request(self, context, _name):
         wm = context.window_manager
         size = wm.spatial_edit_add_size / 1000
-        return ("object.add", f"Add {wm.spatial_edit_add.lower()} ({_number(wm.spatial_edit_add_size)} mm)",
-                {"primitive": wm.spatial_edit_add.lower(), "location": [0, 0, size / 2],
+        primitive = wm.spatial_edit_add.lower()
+        return ("object.add", f"Add {primitive} ({_number(wm.spatial_edit_add_size)} mm)",
+                {"primitive": primitive, "location": [0, 0, size / 2],
                  "dimensions": [size, size, size]})
 
 
@@ -212,7 +214,8 @@ class SPATIAL_PT_client_edits(bpy.types.Panel):
         if reason:
             layout.label(text=reason, icon="ERROR")
         else:
-            layout.label(text="Edits go to the host; this copy updates when it answers.", icon="INFO")
+            layout.label(text="Edits go to the host; this copy updates when it answers.",
+                         icon="INFO")
         if any(r.state == "unknown" for r in remote_client.requests.requests.values()):
             layout.operator(SPATIAL_OT_client_checked.bl_idname, icon="CHECKMARK")
 

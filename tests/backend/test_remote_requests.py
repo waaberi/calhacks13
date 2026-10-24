@@ -57,7 +57,8 @@ def test_commands_validate_against_contract_schema(welcome, scene):
     pytest.importorskip("jsonschema")
     from jsonschema import Draft202012Validator
     from referencing import Registry, Resource
-    schemas = [json.loads(p.read_text()) for p in (ROOT / "contracts/schemas").glob("*.schema.json")]
+    schemas = [json.loads(p.read_text())
+               for p in (ROOT / "contracts/schemas").glob("*.schema.json")]
     registry = Registry().with_resources((s["$id"], Resource.from_contents(s)) for s in schemas)
     command = next(s for s in schemas if s["$id"].endswith("command.schema.json"))
     validator = Draft202012Validator(command, registry=registry)

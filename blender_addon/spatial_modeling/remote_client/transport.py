@@ -136,7 +136,8 @@ class ReadOnlyLink:
                                 # An error answering one of our commands or queries: it
                                 # concerns that request, not the connection or the scene.
                                 code = body.get("code")
-                                self._post("reply_error", (reply_to, code if isinstance(code, str) else ""))
+                                code = code if isinstance(code, str) else ""
+                                self._post("reply_error", (reply_to, code))
                             elif kind == "error":
                                 # Error text is intentionally not echoed: a remote host
                                 # can send arbitrary text. Codes are sufficient for UI.
