@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lease.acquire.schema.json",
+  "title": "lease.acquire",
+  "description": "Client to host. Reserve the document (exclusive) or some objects and sketches (shared) before the first native write of an edit. Answered by lease.granted or error lease_conflict.",
+  "$ref": "envelope.schema.json",
+  "properties": {
+    "type": { "const": "lease.acquire" },
+    "payload": {
+      "type": "object",
+      "$ref": "envelope.schema.json#/$defs/request",
+      "required": ["mode", "targets"],
+      "properties": {
+        "mode": { "enum": ["exclusive", "shared"] },
+        "targets": {
+          "description": "Object and sketch ids. Empty for exclusive, which covers the whole document.",
+          "type": "array",
+          "items": { "$ref": "envelope.schema.json#/$defs/uuid" },
+          "maxItems": 64,
+          "uniqueItems": true
+        }
+      },
+      "if": { "properties": { "mode": { "const": "shared" } }, "required": ["mode"] },
+      "then": { "properties": { "targets": { "minItems": 1 } } },
+      "else": { "properties": { "targets": { "maxItems": 0 } } },
+      "unevaluatedProperties": false
+    }
+  }
+}

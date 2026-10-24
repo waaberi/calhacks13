@@ -1,0 +1,10 @@
+{
+  "v": 1,
+  "type": "hello",
+  "id": "b9b866e19e5840788f452b29fd8ba6dd",
+  "payload": {
+    "role": "vr",
+    "name": "Talia",
+    "app": { "name": "spatial-modeling-vr", "version": "0.1.0" }
+  }
+}

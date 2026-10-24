@@ -15,7 +15,7 @@ jobs:
           python-version: "3.13" # Blender 5.2's Python
       - name: No file paths that differ only by case
         run: "! git ls-files | sort -f | uniq -di | grep ."
-      - run: pip install ruff==0.17.2 pytest==9.1.1
+      - run: pip install ruff==0.17.2 pytest==9.1.1 jsonschema==4.26.0
       - run: ruff check .
       - run: pytest tests
 

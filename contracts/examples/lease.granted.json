@@ -1,0 +1,15 @@
+{
+  "v": 1,
+  "type": "lease.granted",
+  "id": "71df5574e6494898883269b84a719b0d",
+  "re": "90cef6c20092407390ea5142ed021aff",
+  "payload": {
+    "lease": {
+      "lease_id": "943cc366346b4ef597eea9d5aa25acad",
+      "mode": "shared",
+      "owner": { "actor_id": "be10cd89a4e841e7b708ae9cdbefeb77", "name": "Talia", "role": "vr" },
+      "targets": ["fd7bd4ddae444528a4fedbc562fe018b"],
+      "acquired_at": 1792875607000
+    }
+  }
+}

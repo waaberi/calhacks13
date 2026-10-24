@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "error.schema.json",
+  "title": "error",
+  "description": "Either way. Answers a malformed message, or a failed request that is not a command. `re` is set when the failed message had a readable id.",
+  "$ref": "envelope.schema.json",
+  "properties": {
+    "type": { "const": "error" },
+    "payload": { "$ref": "envelope.schema.json#/$defs/error" }
+  }
+}

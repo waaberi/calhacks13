@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ping.schema.json",
+  "title": "ping",
+  "description": "Either way. Liveness check and heartbeat; the receiver answers with pong.",
+  "$ref": "envelope.schema.json",
+  "properties": {
+    "type": { "const": "ping" },
+    "payload": { "type": "object", "additionalProperties": false }
+  }
+}

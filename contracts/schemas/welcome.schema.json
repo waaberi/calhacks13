@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "welcome.schema.json",
+  "title": "welcome",
+  "description": "Host to client, answers hello. The host follows it with scene.snapshot and session.update.",
+  "$ref": "envelope.schema.json",
+  "required": ["re"],
+  "properties": {
+    "type": { "const": "welcome" },
+    "payload": {
+      "type": "object",
+      "required": ["session_id", "host_epoch", "actor_id", "can_edit", "app", "document"],
+      "properties": {
+        "session_id": { "$ref": "envelope.schema.json#/$defs/uuid" },
+        "host_epoch": { "$ref": "envelope.schema.json#/$defs/uuid" },
+        "actor_id": { "description": "Assigned to this connection.", "$ref": "envelope.schema.json#/$defs/uuid" },
+        "can_edit": { "description": "False while this client is read-only, for example the Client role before P3A-W-3.", "type": "boolean" },
+        "app": { "$ref": "envelope.schema.json#/$defs/app" },
+        "document": { "$ref": "envelope.schema.json#/$defs/document" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

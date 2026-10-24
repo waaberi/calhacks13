@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "type": "result",
+  "id": "e94a382ad8f940ae82b8124014d0ea33",
+  "re": "730923871c8f4af5b30176dde9257472",
+  "payload": {
+    "request_id": "730923871c8f4af5b30176dde9257472",
+    "op": "object.move",
+    "target": "fd7bd4ddae444528a4fedbc562fe018b",
+    "actor": { "actor_id": "be10cd89a4e841e7b708ae9cdbefeb77", "name": "Talia", "role": "vr" },
+    "source": "ui",
+    "outcome": "applied",
+    "revision": 42,
+    "summary": "Moved Shaft 10 mm along X",
+    "at": 1792875601500
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "type": "activity",
+  "id": "c5a5a058c52f44cfaf0518d3097b0e76",
+  "payload": {
+    "request_id": "1abef87f004e4105b2ef92c6135c1c5c",
+    "op": "object.rotate",
+    "target": "fd7bd4ddae444528a4fedbc562fe018b",
+    "actor": { "actor_id": "be10cd89a4e841e7b708ae9cdbefeb77", "name": "Talia", "role": "vr" },
+    "source": "voice",
+    "outcome": "applied",
+    "revision": 43,
+    "summary": "Rotated Shaft 90° about Z",
+    "at": 1792875603000
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "type": "command",
+  "id": "0fe8e7451d0c4690b78f685b578b322f",
+  "payload": {
+    "session_id": "2f05d1eb3f1e4ce98dd998abf20cdd33",
+    "host_epoch": "de36341c159e4d63a802adfefdfd4683",
+    "document_id": "15e12b8b8c12437098bb8a090659c8cb",
+    "open_epoch": "5ac7931d230d4870a872dc9e363ca56d",
+    "actor_id": "be10cd89a4e841e7b708ae9cdbefeb77",
+    "base_revision": 44,
+    "source": "voice",
+    "op": "sketch.set_dimension",
+    "target": { "id": "420d772974c747ebb91283b7ff8d22a3", "generation": 38 },
+    "args": { "constraint": "k6", "value": 0.12 }
+  }
+}

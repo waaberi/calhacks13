@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "capture.status.schema.json",
+  "title": "capture.status",
+  "description": "Body of the capture helper's GET /status (and of a 503 from GET /frame). HTTP, not a host-connection message, so no envelope.",
+  "type": "object",
+  "required": ["state", "window", "frame", "width", "height", "fps", "message"],
+  "properties": {
+    "state": { "enum": ["capturing", "no_window", "minimized", "error"] },
+    "window": { "description": "Title of the selected window, or null if none is selected.", "type": ["string", "null"], "maxLength": 1024 },
+    "frame": { "description": "Number of the newest frame kept (its ETag), or null before the first frame.", "type": ["integer", "null"], "minimum": 0 },
+    "width": { "type": ["integer", "null"], "minimum": 1, "maximum": 16384 },
+    "height": { "type": ["integer", "null"], "minimum": 1, "maximum": 16384 },
+    "fps": { "description": "Measured capture rate; 0 when not capturing.", "type": "number", "minimum": 0, "maximum": 1000 },
+    "message": { "description": "Why the state isn't capturing; empty while capturing.", "type": "string", "maxLength": 1024 }
+  },
+  "additionalProperties": false
+}

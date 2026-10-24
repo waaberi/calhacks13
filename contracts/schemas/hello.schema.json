@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "hello.schema.json",
+  "title": "hello",
+  "description": "Client to host, the first message on a connection. The contract version is the envelope's `v`.",
+  "$ref": "envelope.schema.json",
+  "properties": {
+    "type": { "const": "hello" },
+    "payload": {
+      "type": "object",
+      "required": ["role", "name", "app"],
+      "properties": {
+        "role": { "enum": ["vr", "blender-client"] },
+        "name": { "description": "Display name of the person, shown to the others.", "$ref": "envelope.schema.json#/$defs/name" },
+        "app": { "$ref": "envelope.schema.json#/$defs/app" },
+        "document": {
+          "description": "Optional: the document this client expects. If the host has another one open, it replies error wrong_document and closes.",
+          "type": "object",
+          "required": ["id", "open_epoch"],
+          "properties": {
+            "id": { "$ref": "envelope.schema.json#/$defs/uuid" },
+            "open_epoch": { "$ref": "envelope.schema.json#/$defs/uuid" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

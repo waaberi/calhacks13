@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "type": "error",
+  "id": "2459c33ad4a148e8b39b685ec19c7e16",
+  "re": "f322039256fd47ee93ed4075e37cf6bd",
+  "payload": {
+    "code": "wrong_document",
+    "message": "The host reopened bracket.blend after you last synced. Rejoin to get a fresh copy.",
+    "details": {
+      "document": { "id": "15e12b8b8c12437098bb8a090659c8cb", "open_epoch": "5ac7931d230d4870a872dc9e363ca56d", "name": "bracket.blend" }
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "v": 1,
+  "type": "error",
+  "id": "4cb6abb0e6ba4cf08e9f0ad0ea86ec1c",
+  "re": "06bd6cc7d839415a92e4a80d952fe6ba",
+  "payload": {
+    "code": "lease_conflict",
+    "message": "Lee Jae-yeon is editing Base plate.",
+    "details": {
+      "lease": {
+        "lease_id": "092c1bc6bec64e90927ee8d232ccb9e8",
+        "mode": "shared",
+        "owner": { "actor_id": "cf91fda963c247488874e12161956976", "name": "Lee Jae-yeon", "role": "blender-client" },
+        "targets": ["f21f7d20394f4c02afce7ab1e6f4a1a8"],
+        "acquired_at": 1792875604200
+      }
+    }
+  }
+}

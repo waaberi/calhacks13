@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "type": "receipt.query",
+  "id": "edb951816697445d9578278b730ea4e8",
+  "payload": {
+    "request_ids": ["0bc0319ecc92489ca6ea334a2a23d4e4", "b4e7bbc297384b7f81f48d6e0d7c442d"]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "type": "command",
+  "id": "6fae98e7ada048408244b745e6299545",
+  "payload": {
+    "session_id": "2f05d1eb3f1e4ce98dd998abf20cdd33",
+    "host_epoch": "de36341c159e4d63a802adfefdfd4683",
+    "document_id": "15e12b8b8c12437098bb8a090659c8cb",
+    "open_epoch": "5ac7931d230d4870a872dc9e363ca56d",
+    "actor_id": "be10cd89a4e841e7b708ae9cdbefeb77",
+    "base_revision": 45,
+    "source": "ui",
+    "op": "document.save",
+    "args": {}
+  }
+}
