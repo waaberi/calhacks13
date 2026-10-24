@@ -32,6 +32,7 @@ namespace SpatialModeling.VoiceCore.Tests
             SnapResult snap = AppGrammar().Snap(transcript);
             Assert.True(snap.Accepted, snap.ToString());
             Assert.Equal(expected, snap.Text);
+            Assert.Equal(transcript == "Shade smooth.", snap.WordForWord);
         }
 
         [Theory]
@@ -45,6 +46,7 @@ namespace SpatialModeling.VoiceCore.Tests
             Assert.True(snap.Accepted, snap.ToString());
             Assert.Equal(expected, snap.Text);
             Assert.Equal(1f, snap.Similarity);
+            Assert.True(snap.WordForWord);
         }
 
         [Fact]
@@ -53,6 +55,7 @@ namespace SpatialModeling.VoiceCore.Tests
             SnapResult snap = AppGrammar().Snap("Rotate this object ninety degrees, quickly.");
             Assert.Equal("rotate this object ninety degrees", snap.Text);
             Assert.True(snap.Accepted);
+            Assert.True(snap.WordForWord);
             Assert.InRange(snap.Similarity, 0.7f, 0.95f);
         }
 

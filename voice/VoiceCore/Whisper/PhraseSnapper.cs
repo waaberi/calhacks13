@@ -6,11 +6,12 @@ namespace SpatialModeling.VoiceCore.Whisper
     /// <summary>What <see cref="PhraseSnapper.Snap"/> made of a transcript.</summary>
     public readonly struct SnapResult
     {
-        public SnapResult(string text, float similarity, bool accepted)
+        public SnapResult(string text, float similarity, bool accepted, bool wordForWord)
         {
             Text = text ?? "";
             Similarity = similarity;
             Accepted = accepted;
+            WordForWord = wordForWord;
         }
 
         /// <summary>The transcript in grammar phrases, for example "add a cone" for "At a cone.".</summary>
@@ -21,6 +22,12 @@ namespace SpatialModeling.VoiceCore.Whisper
 
         /// <summary>Similarity reached the snapper's threshold; otherwise the utterance is treated as chatter.</summary>
         public bool Accepted { get; }
+
+        /// <summary>
+        /// Every word of <see cref="Text"/> is one the recognizer wrote, in its order: at most some words were left
+        /// out ("rotate it ninety degrees quickly"). False when the snap replaced words ("devil" to "bevel"): a guess.
+        /// </summary>
+        public bool WordForWord { get; }
 
         public override string ToString() => Text + " (" + Similarity.ToString("0.00") + (Accepted ? ")" : ", rejected)");
     }
@@ -79,16 +86,33 @@ namespace SpatialModeling.VoiceCore.Whisper
         {
             string text = WithoutRepeats(Normalize(transcript));
             if (text.Length == 0 || phrases.Count == 0)
-                return new SnapResult("", 0f, false);
+                return new SnapResult("", 0f, false, false);
             if (exact.Contains(text))
-                return new SnapResult(text, 1f, true);
+                return new SnapResult(text, 1f, true, true);
 
             (string whole, float wholeSimilarity) = ClosestPhrase(text, 0f);
             (string sequence, float sequenceSimilarity) = Sequence(text);
             bool useSequence = sequenceSimilarity > wholeSimilarity;
             string best = useSequence ? sequence : whole;
             float similarity = useSequence ? sequenceSimilarity : wholeSimilarity;
-            return new SnapResult(best, similarity, best.Length > 0 && similarity >= Threshold);
+            return new SnapResult(best, similarity, best.Length > 0 && similarity >= Threshold, IsSubsequence(best, text));
+        }
+
+        /// <summary>The words of <paramref name="part"/> appear in <paramref name="text"/> in the same order.</summary>
+        static bool IsSubsequence(string part, string text)
+        {
+            if (part.Length == 0)
+                return false;
+            string[] words = text.Split(' ');
+            int at = 0;
+            foreach (string word in part.Split(' '))
+            {
+                while (at < words.Length && words[at] != word)
+                    at++;
+                if (at++ >= words.Length)
+                    return false;
+            }
+            return true;
         }
 
         /// <summary>

@@ -24,7 +24,11 @@ namespace SpatialModeling.VoiceCore.Whisper
         /// <summary>The folder under StreamingAssets that <c>voice/fetch-whisper.sh</c> fills.</summary>
         public const string FolderName = "whisper";
 
-        /// <summary>Models <c>voice/fetch-whisper.sh</c> downloads. base.en is the default (see voice/README.md).</summary>
+        /// <summary>
+        /// Models <c>voice/fetch-whisper.sh</c> downloads. tiny.en is the default: on 1,008 real Speech Commands clips the
+        /// fast path got 962 right with tiny.en and 964 with base.en, and base.en takes about twice as long on the CPU
+        /// (voice/README.md).
+        /// </summary>
         public const string BaseModel = "ggml-base.en.bin", TinyModel = "ggml-tiny.en.bin";
 
         static bool IsWindows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);

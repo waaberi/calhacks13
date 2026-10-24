@@ -134,7 +134,8 @@ namespace SpatialModeling.VoiceCore.Tests
                 List<RecognitionResult> heard = Utter(whisper);
 
                 Assert.Equal("add a cone", Assert.Single(heard).Text);
-                Assert.InRange(heard[0].Confidence, PhraseSnapper.DefaultThreshold, 0.99f);
+                Assert.Equal(WhisperServerRecognizer.DefaultGuessConfidence, heard[0].Confidence); // "at" became "add": a guess
+                Assert.InRange(whisper.LastSnap.Similarity, PhraseSnapper.DefaultThreshold, 0.99f);
                 Assert.Equal("At a cone.", whisper.LastTranscript);
                 Assert.False(whisper.LastStopFailed);
                 string request = Assert.Single(server.Requests);
@@ -144,6 +145,34 @@ namespace SpatialModeling.VoiceCore.Tests
                 Assert.Contains("name=\"file\"; filename=\"utterance.wav\"", request);
                 Assert.Contains("RIFF", request);
                 Assert.Contains("WAVEfmt ", request);
+            }
+        }
+
+        [Theory]
+        [InlineData(" Add a cone, please.", "add a cone", 0.6f, 0.99f)] // words left out, none replaced
+        [InlineData(" Add a cone.", "add a cone", 1f, 1f)]
+        public void WordForWordSnapsKeepTheirSimilarity(string transcript, string expected, float min, float max)
+        {
+            using (var server = new FakeHttpServer { Respond = _ => (200, "{\"text\":\"" + transcript + "\"}") })
+            {
+                var whisper = new WhisperServerRecognizer(server.Port);
+                whisper.SetGrammar(new[] { "add a cone", "undo", "[unk]" });
+                RecognitionResult heard = Assert.Single(Utter(whisper));
+                Assert.Equal(expected, heard.Text);
+                Assert.InRange(heard.Confidence, min, max);
+            }
+        }
+
+        [Fact]
+        public void GuessesMayRunWhenAllowed()
+        {
+            using (var server = new FakeHttpServer { Respond = _ => (200, "{\"text\":\" At a cone.\"}") })
+            {
+                var whisper = new WhisperServerRecognizer(server.Port, guessConfidence: 1f);
+                whisper.SetGrammar(new[] { "add a cone", "undo" });
+                RecognitionResult heard = Assert.Single(Utter(whisper));
+                Assert.False(whisper.LastSnap.WordForWord);
+                Assert.Equal(whisper.LastSnap.Similarity, heard.Confidence);
             }
         }
 

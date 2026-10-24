@@ -32,7 +32,7 @@ namespace SpatialModeling.VoiceCore.Whisper
 
         /// <summary>
         /// The model file in <see cref="WhisperFolder"/> (or a full path). If it is missing, the other model that
-        /// <c>voice/fetch-whisper.sh</c> downloads is used. See voice/README.md for the measurements behind the default.
+        /// <c>voice/fetch-whisper.sh</c> downloads is used. tiny.en: see <see cref="WhisperServer.TinyModel"/>.
         /// </summary>
         public string WhisperModel = WhisperServer.TinyModel;
 
@@ -53,11 +53,15 @@ namespace SpatialModeling.VoiceCore.Whisper
         /// <summary>Whisper's initial prompt; null for <see cref="WhisperServerRecognizer.BlenderPrompt"/>.</summary>
         public string WhisperPrompt;
 
-        /// <summary>Append the grammar's words (object names, choice words) to the prompt.</summary>
+        /// <summary>Append the grammar's words (object names, choice words) to the prompt. Measured with whisper tiny.en
+        /// alone on the TTS corpus: 235 instead of 226 of 270 right through the resolver.</summary>
         public bool PromptWithGrammar = true;
 
         /// <summary>See <see cref="PhraseSnapper.DefaultThreshold"/>.</summary>
         public float SnapThreshold = PhraseSnapper.DefaultThreshold;
+
+        /// <summary>See <see cref="WhisperServerRecognizer.DefaultGuessConfidence"/>; 1 to let guesses run.</summary>
+        public float WhisperGuessConfidence = WhisperServerRecognizer.DefaultGuessConfidence;
 
         /// <summary>See <see cref="FastPathRecognizer.DefaultMinFastConfidence"/>.</summary>
         public float MinFastConfidence = FastPathRecognizer.DefaultMinFastConfidence;
@@ -160,7 +164,7 @@ namespace SpatialModeling.VoiceCore.Whisper
 
         static WhisperServerRecognizer Recognizer(VoiceRecognizerSettings settings, WhisperServer server) =>
             new WhisperServerRecognizer(settings.WhisperPort, settings.WhisperPrompt, settings.PromptWithGrammar,
-                settings.WhisperTimeoutMs, settings.SnapThreshold) { Server = server };
+                settings.WhisperTimeoutMs, settings.SnapThreshold, settings.WhisperGuessConfidence) { Server = server };
 
         static void Stop(WhisperServer server, Task starting)
         {

@@ -24,7 +24,8 @@ namespace SpatialModeling.VoiceCore.Whisper
     /// <see cref="ISpeechRecognizer"/> on a local whisper.cpp <c>whisper-server</c> (see <see cref="WhisperServer"/>):
     /// buffers the push-to-talk audio, POSTs it as a WAV to <c>/inference</c> on <see cref="Stop"/> (VoiceInput's
     /// worker thread waits for the answer), snaps the transcript to the grammar with <see cref="PhraseSnapper"/> and
-    /// raises the snapped phrases with their similarity as confidence. Whisper is trained on real speech, so it hears
+    /// raises the snapped phrases with their similarity as confidence (capped below 0.5 when the snap had to replace
+    /// words, see <see cref="DefaultGuessConfidence"/>). Whisper is trained on real speech, so it hears
     /// real voices far better than Vosk's small model; the snap keeps its output inside what VoiceCore understands.
     /// It talks HTTP over a plain socket because Unity refuses <c>http://</c> in UnityWebRequest
     /// (<c>insecureHttpOption</c> 0), and it has no native code in Unity: if the server is down or slow the
@@ -46,12 +47,21 @@ namespace SpatialModeling.VoiceCore.Whisper
         /// <summary>Whisper keeps at most 224 prompt tokens; this many characters of grammar words stay well under.</summary>
         public const int MaxPromptChars = 600;
 
+        /// <summary>
+        /// The most confidence a snap that replaced words gets: just under VoiceSession's MinConfidence 0.5, so the host
+        /// may only ask about it ("one, two or three?"), never run it. Measured through the resolver on the 290-clip
+        /// TTS corpus and the 5 x 116 degraded clips of the realvoice kit: wrong runs fell from 3 to 1 and from
+        /// 4-6 to 1-4 per 108 commands, with as many commands run or asked right.
+        /// </summary>
+        public const float DefaultGuessConfidence = 0.49f;
+
         readonly string host;
         readonly int port;
         readonly string basePrompt;
         readonly bool promptWithGrammar;
         readonly int timeoutMs;
         readonly float threshold;
+        readonly float guessConfidence;
         readonly List<short> pcm = new List<short>();
         int rate = 16000;
         PhraseSnapper snapper;
@@ -62,9 +72,12 @@ namespace SpatialModeling.VoiceCore.Whisper
         /// <param name="promptWithGrammar">Append the grammar's words to the prompt (object names, choice words).</param>
         /// <param name="timeoutMs">Longest wait for a transcript before the utterance counts as failed.</param>
         /// <param name="threshold">Snap similarity needed; see <see cref="PhraseSnapper.DefaultThreshold"/>.</param>
+        /// <param name="guessConfidence">Cap on the confidence of a snap that replaced words; 1 for none.</param>
         public WhisperServerRecognizer(int port = WhisperServer.DefaultPort, string prompt = null, bool promptWithGrammar = true,
-            int timeoutMs = 4000, float threshold = PhraseSnapper.DefaultThreshold, string host = "127.0.0.1")
+            int timeoutMs = 4000, float threshold = PhraseSnapper.DefaultThreshold, float guessConfidence = DefaultGuessConfidence,
+            string host = "127.0.0.1")
         {
+            this.guessConfidence = guessConfidence;
             this.host = host;
             this.port = port;
             basePrompt = prompt ?? BlenderPrompt;
@@ -158,7 +171,8 @@ namespace SpatialModeling.VoiceCore.Whisper
             }
             LastSnap = snapper.Snap(LastTranscript);
             if (LastSnap.Accepted)
-                Recognized?.Invoke(new RecognitionResult(LastSnap.Text, LastSnap.Similarity));
+                Recognized?.Invoke(new RecognitionResult(LastSnap.Text,
+                    LastSnap.WordForWord ? LastSnap.Similarity : Math.Min(LastSnap.Similarity, guessConfidence)));
         }
 
         public void Dispose()
