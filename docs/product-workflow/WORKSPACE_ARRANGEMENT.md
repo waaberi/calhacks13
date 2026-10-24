@@ -4,6 +4,11 @@ This is the user's new interaction redesign after accepting the P2 menu on
 679fd04. Prior P2 acceptance is preserved. It does not authorize native P3 editing,
 FPS work, or a main merge.
 
+The compiled1713a38 green detected-room grids were physically rejected as inaccurate.
+The current scan/setup repair and its supported on-device/Link split are documented
+in [ROOM_SETUP.md](ROOM_SETUP.md). Old numerical replay results do not establish
+physical fit, and the prior failure is not cleared by the new software checks.
+
 ## Meta room alignment repair
 
 Meta's saved Scene Model is the source of wall, floor and tabletop positions,
@@ -108,9 +113,13 @@ true, so it cannot establish Link spatial-data access. Zero across these queries
 means **no data received**, not a verified missing scan. Do not keep asking the
 human to test level visibility to diagnose automatic detection.
 
-Detected surfaces are visible green grids immediately, with separate desk/floor/wall
-counts. **Show/hide detected** controls their outlines; **Auto detection on/off**
-controls whether automatic surfaces participate in placement assistance.
+The new [Meta environment setup route](ROOM_SETUP.md) supersedes rectangular
+detected-room visualization. Actual Boundary2D polygons and separately queried
+reconstruction meshes are rendered when supplied; no rectangular scan-outline
+fallback is manufactured. Desk/floor/wall counts describe semantic anchors, not an
+independent count of real furniture. **Show/hide detected** controls geometry;
+**Auto detection on/off** controls automatic placement assistance. A separate Quest
+companion opens the real Meta system setup and loads its saved scene through MRUK.
 
 Choose **Desk: adjust / add**, **Floor: adjust / add**, or **Wall: adjust / add**.
 When that kind has a detected surface, its nearest actual pose and dimensions

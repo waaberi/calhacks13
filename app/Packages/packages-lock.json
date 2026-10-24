@@ -6,6 +6,17 @@
       "source": "local",
       "dependencies": {}
     },
+    "com.meta.xr.mrutilitykit": {
+      "version": "file:../ThirdParty/com.meta.xr.mrutilitykit-207.0.1.tgz",
+      "depth": 0,
+      "source": "local-tarball",
+      "dependencies": {
+        "com.unity.ai.navigation": "1.1.4",
+        "com.unity.nuget.newtonsoft-json": "3.0.2",
+        "com.meta.xr.sdk.core": "207.0.1",
+        "com.unity.textmeshpro": "3.0.6"
+      }
+    },
     "com.meta.xr.sdk.core": {
       "version": "207.0.1",
       "depth": 0,
@@ -20,6 +31,15 @@
         "com.unity.xr.hands": "1.7.2"
       },
       "url": "https://npm.developer.oculus.com"
+    },
+    "com.unity.ai.navigation": {
+      "version": "2.0.15",
+      "depth": 1,
+      "source": "registry",
+      "dependencies": {
+        "com.unity.modules.ai": "1.0.0"
+      },
+      "url": "https://packages.unity.com"
     },
     "com.unity.burst": {
       "version": "2.0.0",
@@ -167,6 +187,14 @@
       "dependencies": {
         "com.unity.test-framework": "1.1.33",
         "com.unity.modules.jsonserialize": "1.0.0"
+      }
+    },
+    "com.unity.textmeshpro": {
+      "version": "5.0.0",
+      "depth": 1,
+      "source": "builtin",
+      "dependencies": {
+        "com.unity.ugui": "2.0.0"
       }
     },
     "com.unity.timeline": {

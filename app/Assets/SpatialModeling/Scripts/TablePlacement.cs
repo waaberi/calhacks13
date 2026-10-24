@@ -30,6 +30,7 @@ namespace SpatialModeling
         Pose savedPose;
         float savedSize, savedHeight, savedDistance, savedYaw;
         Text title;
+        WorkspaceRoomSetup roomSetup;
         Material material;
         readonly List<XRInputSubsystem> subsystems = new List<XRInputSubsystem>();
         readonly List<TableAction> buttons = new List<TableAction>();
@@ -223,7 +224,7 @@ namespace SpatialModeling
             if (panel == null) CreatePanel();
             var connection = GetComponent<HostScene>();
             var arrangement=FindFirstObjectByType<WorkspaceArrangement>();
-            title.text = arrangement!=null ? $"Arrange space · {(MenuDocked ? "left hand" : "in space")}\n{arrangement.SurfaceState}\nGrip menu to place it" : $"{(IsPlaced ? "Inspect table" : State == PlacementState.ConfirmTrackingReset ? "Tracking reset — confirm placement" : "Choose table position")}" +
+            title.text = arrangement!=null ? (roomSetup!=null && roomSetup.IsOpen ? roomSetup.Heading : $"Arrange space · {(MenuDocked ? "left hand" : "in space")}\n{arrangement.SurfaceState}\nGrip menu to place it") : $"{(IsPlaced ? "Inspect table" : State == PlacementState.ConfirmTrackingReset ? "Tracking reset — confirm placement" : "Choose table position")}" +
                 $" · {(MenuDocked ? "left hand" : "in space")}\nGrip menu, move, release to place" +
                 $"\nHeight {Height:F2} m · size {Size:F2}× · {connection.ConnectionText}";
             var keyboard = Keyboard.current;
@@ -311,6 +312,7 @@ namespace SpatialModeling
         void CreatePanel()
         {
             if (panel != null) return;
+            if(roomSetup==null) roomSetup=gameObject.AddComponent<WorkspaceRoomSetup>();
             panel = new GameObject("P2 left-hand placeable menu", typeof(RectTransform), typeof(Canvas), typeof(Image)).transform;
             panel.localScale = Vector3.one * MenuScale;
             var canvas = panel.GetComponent<Canvas>();
@@ -344,11 +346,19 @@ namespace SpatialModeling
                 ("Desk: adjust / add",()=>arrangement.Surfaces.BeginLevel("desk")),
                 ("Wall: adjust / add",()=>arrangement.Surfaces.BeginLevel("wall")),
                 ("Floor: adjust / add",()=>arrangement.Surfaces.BeginLevel("floor")),
-                ("Reload room surfaces",arrangement.Surfaces.Reload),
+                ("Environment setup",()=>SetupMenu(true)),
                 ("Auto detection on/off",arrangement.Surfaces.ToggleAutomatic),
                 ("Show/hide detected",arrangement.Surfaces.ToggleDetected),
                 ("Clear manual levels",arrangement.Surfaces.ClearLevels),
                 ("Pin menu here",PinMenu), ("Return to left hand",DockMenu)
+            };
+            if(compact && roomSetup.IsOpen) actions=new (string,Action)[] {
+                ("Load saved room",arrangement.Surfaces.Reload), ("Scan / update on Quest",roomSetup.Scan),
+                ("Show/hide room geometry",arrangement.Surfaces.ToggleDetected), ("Back to arrange",()=>SetupMenu(false)),
+                ("Desk: adjust detected",()=>arrangement.Surfaces.BeginLevel("desk")),
+                ("Wall: adjust detected",()=>arrangement.Surfaces.BeginLevel("wall")),
+                ("Floor: adjust detected",()=>arrangement.Surfaces.BeginLevel("floor")),
+                ("Clear corrections",arrangement.Surfaces.ClearLevels)
             };
             for (int i = 0; i < actions.Length; i++)
             {
@@ -369,6 +379,15 @@ namespace SpatialModeling
                 buttons.Add(action);
             }
             panel.gameObject.SetActive(seeded && (!MenuDocked || menuTracked));
+        }
+
+        void SetupMenu(bool open)
+        {
+            FindFirstObjectByType<WorkspaceInteraction>()?.CancelGrabs();
+            var pose=new Pose(panel.position,panel.rotation);
+            if(open) roomSetup.Open(); else roomSetup.Close();
+            panel.gameObject.SetActive(false); ReleaseObject(panel.gameObject);panel=null;buttons.Clear();
+            CreatePanel();panel.SetPositionAndRotation(pose.position,pose.rotation);
         }
 
         static Text Label(Transform parent, string value, Vector2 position, Vector2 size)

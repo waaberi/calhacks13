@@ -14,6 +14,7 @@ public static class P1Build
         var output = Environment.GetEnvironmentVariable("CALHACKS_P1_BUILD_PATH");
         if (string.IsNullOrEmpty(output)) throw new Exception("Set CALHACKS_P1_BUILD_PATH to an output EXE outside the repository.");
         WorkspaceChecks.Run();
+        RoomSetupChecks.Run();
         // Protect accepted clarity and room visibility while changing interaction.
         // Deliberate future baseline changes must update this gate and physical evidence.
         var pipeline = AssetDatabase.LoadAssetAtPath<UniversalRenderPipelineAsset>("Assets/Settings/PC_RPAsset.asset");
@@ -45,6 +46,7 @@ public static class P1Build
                 ? BuildOptions.Development : BuildOptions.None
         });
         Debug.Log("P1_BUILD_RESULT " + report.summary.result + " errors=" + report.summary.totalErrors);
-        if (report.summary.result != BuildResult.Succeeded) throw new Exception("P1 Windows build failed");
+        if (report.summary.result != BuildResult.Succeeded || report.summary.totalErrors != 0)
+            throw new Exception("P1 Windows build failed or reported build errors");
     }
 }

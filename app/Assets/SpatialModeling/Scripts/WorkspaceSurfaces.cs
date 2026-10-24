@@ -11,7 +11,7 @@ namespace SpatialModeling
 {
     // Scene anchors and controllers use the same tracking origin, exactly once.
     // Levels are session-only; a changed room origin invalidates manual calibration.
-    public sealed class WorkspaceSurfaces : MonoBehaviour
+    public sealed partial class WorkspaceSurfaces : MonoBehaviour
     {
         public struct Surface
         {
@@ -19,6 +19,8 @@ namespace SpatialModeling
             public Guid Id;
             public Pose Pose;
             public Vector2 Size;
+            public Vector2[] Boundary;
+            public string GeometrySource;
             public Vector3 Normal => Pose.rotation * Vector3.forward;
         }
         struct RoomAnchor { public OVRAnchor Anchor; public OVRLocatable Locatable; public Guid Room; public string Kind; }
@@ -44,11 +46,12 @@ namespace SpatialModeling
             public bool plane,volume;
             public Rect planeBounds;
             public Bounds volumeBounds;
+            public Vector2[] boundary;
         }
         public IReadOnlyList<Surface> Surfaces => surfaces;
         public bool AutomaticEnabled { get; private set; } = true;
         public bool ShowDetected { get; private set; } = true;
-        public string State => AutomaticEnabled ? message + "\n" + Counts(detected) + " · levels " + levels.Count
+        public string State => AutomaticEnabled ? message + "\n" + Counts(detected) + " · " + GeometrySummary + " · levels " + levels.Count
             : "Auto detection OFF · levels " + levels.Count;
         public int LevelCount => levels.Count;
         public int DetectedCount => detected.Count;
@@ -92,6 +95,7 @@ namespace SpatialModeling
         {
             foreach (var item in anchors) item.Anchor.Dispose();
             anchors.Clear(); detected.Clear(); surfaces.Clear(); invalidLogged.Clear(); evidenceWritten=false;
+            ClearScanGeometry();
         }
         void TrackingReset(XRInputSubsystem _)
         {
@@ -195,6 +199,7 @@ namespace SpatialModeling
                     }
                     if (!Current()) return;
                     anchors.AddRange(next);
+                    ReadScanGeometry();
                     message = anchors.Count > 0 ? "Saved surfaces loaded" : "No room data received · adjust/add a level";
                     return;
                 }
@@ -237,7 +242,37 @@ namespace SpatialModeling
                     }
                 }
                 if (!Current()) return;
+                // The reconstruction mesh is not guaranteed to be in AnchorContainer.
+                // Query its component explicitly rather than manufacturing a mesh from bounds.
+                try
+                {
+                var meshes = new List<OVRAnchor>();
+                var meshResult = await OVRAnchor.FetchAnchorsAsync(meshes,
+                    new OVRAnchor.FetchOptions { SingleComponentType = typeof(OVRTriangleMesh) });
+                owned.AddRange(meshes);
+                if (!Current()) return;
+                if ((!meshResult.Success || meshes.Count == 0) && OpenXRRuntime.IsExtensionEnabled("XR_FB_spatial_entity_query"))
+                {
+                    meshes = new List<OVRAnchor>();
+#pragma warning disable CS0618
+                    bool meshLegacy = await OVRAnchor.FetchAnchorsAsync<OVRTriangleMesh>(meshes, timeout: 5);
+#pragma warning restore CS0618
+                    owned.AddRange(meshes);
+                    if (!Current()) return;
+                    Debug.Log("WORKSPACE_SCAN mesh compatibility count=" + meshes.Count + " success=" + meshLegacy);
+                }
+                foreach (var mesh in meshes)
+                {
+                    if (next.Exists(a => a.Anchor.Uuid == mesh.Uuid) || !mesh.TryGetComponent<OVRLocatable>(out var local)) continue;
+                    await local.SetEnabledAsync(true);
+                    if (!Current()) return;
+                    if (local.IsEnabled) next.Add(new RoomAnchor { Anchor = mesh, Locatable = local });
+                }
+                }
+                catch(Exception error) {Debug.LogWarning("WORKSPACE_SCAN optional mesh query unavailable " + error.GetType().Name);}
+                if (!Current()) return;
                 anchors.AddRange(next);
+                ReadScanGeometry();
                 message = anchors.Count == 0 ? "Room found · surfaces unavailable · use a level" : "Saved room loaded";
             }
             catch (Exception error)
@@ -283,7 +318,8 @@ namespace SpatialModeling
         public static Vector3 ClosestPoint(Surface surface,Vector3 position)
         {
             var local=Quaternion.Inverse(surface.Pose.rotation)*(position-surface.Pose.position);
-            local=new Vector3(Mathf.Clamp(local.x,-surface.Size.x*.5f,surface.Size.x*.5f),Mathf.Clamp(local.y,-surface.Size.y*.5f,surface.Size.y*.5f),0);
+            var point=ClosestOnBoundary(surface,new Vector2(local.x,local.y));
+            local=new Vector3(point.x,point.y,0);
             return surface.Pose.position+surface.Pose.rotation*local;
         }
         public static bool TryAttachLevel(string kind,Pose desired,IReadOnlyList<Surface> values,out Surface source,out Pose attached,Guid? preferred=null)
@@ -454,7 +490,10 @@ namespace SpatialModeling
                     var world = WorkspaceInteraction.ToWorldPose(Origin, new Pose(tracked.Position.Value,tracked.Rotation.Value));
                     Surface surface;
                     // Furniture may expose both a vertical plane and a volume. Its top face is the desk.
-                    if (kind == "Desk" && item.Anchor.TryGetComponent<OVRBounded3D>(out var volume))
+                    if (kind == "Desk" && item.Anchor.TryGetComponent<OVRBounded2D>(out var topPlane)
+                        && Mathf.Abs(Vector3.Dot(world.rotation*Vector3.forward,Vector3.up))>.9f)
+                        surface=PlaneFromMeta(kind,world,topPlane.BoundingBox,world.position+Vector3.up);
+                    else if (kind == "Desk" && item.Anchor.TryGetComponent<OVRBounded3D>(out var volume))
                         surface = DeskTop(world,volume.BoundingBox);
                     else if (item.Anchor.TryGetComponent<OVRBounded2D>(out var plane))
                     {
@@ -462,12 +501,13 @@ namespace SpatialModeling
                     }
                     else continue;
                     surface.Id=item.Anchor.Uuid;
+                    SetBoundary(ref surface,item,world);
                     if (surface.Size.x <= .01f || surface.Size.y <= .01f) continue;
                     candidates.Add((item.Room,surface));
                     if (kind == "Floor" && Camera.main != null)
                     {
                         var local = Quaternion.Inverse(surface.Pose.rotation)*(Camera.main.transform.position-surface.Pose.position);
-                        if (Mathf.Abs(local.x) <= surface.Size.x*.5f && Mathf.Abs(local.y) <= surface.Size.y*.5f) currentRoom=item.Room;
+                        if (ContainsPoint(surface,new Vector2(local.x,local.y))) currentRoom=item.Room;
                     }
                 }
                 catch (Exception error) { if(invalidLogged.Add(item.Anchor.Uuid)) Debug.LogWarning("WORKSPACE_SURFACES invalid surface " + error.GetType().Name); }
@@ -481,12 +521,14 @@ namespace SpatialModeling
                 if(item.surface.Name=="Desk" && floor.surface.Name!=null && !AboveFloor(item.surface,floor.surface)) continue;
                 detected.Add(item.surface);
             }
+            localizedRoom=currentRoom;
             var counts=Counts(detected);
             if(counts!=lastCounts) { lastCounts=counts; Debug.Log("WORKSPACE_SURFACES localized " + counts); }
             if (!loading && anchors.Count > 0) message = detected.Count > 0 ? "Automatic surfaces · adjust if needed" : "Room not localized · look around or use a level";
             foreach (var level in levels)
                 UpdateLabel(level);
             RebuildSurfaces(); RefreshVisuals();
+            UpdateScanMeshes();
             WriteRoomEvidence();
         }
         public static string ClassifyLabels(string value)
@@ -530,6 +572,7 @@ namespace SpatialModeling
                 if(!item.Locatable.TryGetSceneAnchorPose(out var pose)||!pose.Position.HasValue||!pose.Rotation.HasValue) continue;
                 var entry=new AnchorEvidence {id=item.Anchor.Uuid.ToString(),kind=item.Kind,
                     trackingPose=new Pose(pose.Position.Value,pose.Rotation.Value)};
+                if(scanBoundaries.TryGetValue(item.Anchor.Uuid,out var boundary)) entry.boundary=boundary;
                 try { if(item.Anchor.TryGetComponent<OVRSemanticLabels>(out var semantic))
                     { entry.labels=semantic.Labels;var values=new List<OVRSemanticLabels.Classification>();semantic.GetClassifications(values);entry.classifications=string.Join(",",values); }
                 } catch(Exception) {entry.labels="unavailable";}
@@ -619,8 +662,13 @@ namespace SpatialModeling
             {
                 if(i>=outlines.Count) outlines.Add(MakeLine(transform,detectedMaterial));
                 var surface=detected[i]; var line=outlines[i];
-                line.transform.SetPositionAndRotation(surface.Pose.position,surface.Pose.rotation); DrawGrid(line,surface.Size);
-                line.gameObject.SetActive(AutomaticEnabled && ShowDetected && !IsOverridden(surface));
+                line.transform.SetPositionAndRotation(surface.Pose.position,surface.Pose.rotation);
+                bool polygon=surface.Boundary!=null && surface.Boundary.Length>=3;
+                line.loop=true; line.positionCount=polygon?surface.Boundary.Length:0;
+                if(polygon) for(int p=0;p<surface.Boundary.Length;p++)
+                    line.SetPosition(p,new Vector3(surface.Boundary[p].x,surface.Boundary[p].y,.001f));
+                // A semantic rectangle is useful for contact, but it is NOT a scan outline.
+                line.gameObject.SetActive(polygon && AutomaticEnabled && ShowDetected && !IsOverridden(surface));
             }
             for(int i=detected.Count;i<outlines.Count;i++) outlines[i].gameObject.SetActive(false);
         }

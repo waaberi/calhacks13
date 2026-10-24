@@ -117,6 +117,8 @@ namespace SpatialModeling
             var local=Quaternion.Inverse(surface.Pose.rotation)*(desired.position+desired.rotation*Vector3.Scale(bounds.center,scale)-surface.Pose.position);
             float radius=Vector3.Scale(bounds.extents,scale).magnitude;
             if(Mathf.Abs(local.x)>surface.Size.x*.5f+radius || Mathf.Abs(local.y)>surface.Size.y*.5f+radius) return false;
+            var onShape=WorkspaceSurfaces.ClosestOnBoundary(surface,new Vector2(local.x,local.y));
+            if(Vector2.Distance(onShape,new Vector2(local.x,local.y))>radius) return false;
             float before=MinimumDistance(bounds,previousScale??scale,previous,surface);
             float after=MinimumDistance(bounds,scale,desired,surface);
             // A deep object already behind a surface must be allowed to escape.
