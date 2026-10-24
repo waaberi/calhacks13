@@ -460,6 +460,16 @@ namespace SpatialModeling.VoiceCore.Tests
         // WhisperServer ------------------------------------------------------------------------------------------
 
         [Fact]
+        public void AnswersTellsAListeningPortFromAClosedOne()
+        {
+            using (var running = new FakeHttpServer())
+                Assert.True(WhisperServer.Answers(running.Port, 300));
+            var clock = Stopwatch.StartNew();
+            Assert.False(WhisperServer.Answers(FreePort(), 300));
+            Assert.InRange(clock.ElapsedMilliseconds, 0, 2000);
+        }
+
+        [Fact]
         public void TheCudaBuildIsRecognizedByItsLibrary()
         {
             string dir = Path.Combine(Path.GetTempPath(), "whisper-gpu-" + Guid.NewGuid().ToString("N"));
@@ -519,10 +529,7 @@ namespace SpatialModeling.VoiceCore.Tests
             var server = new WhisperServer(Path.Combine(dir, WhisperServer.ExecutableName), Path.Combine(dir, "m.bin"), running.Port);
             using (var whisper = new WhisperServerRecognizer(running.Port) { Server = server })
             {
-                // The fake answers before EnsureRunning looks (300 ms): on a busy CI runner the first connect was slower
-                // and EnsureRunning tried to start a server of its own (this test failed twice on CI that way).
-                Assert.True(WhisperServer.Answers(running.Port, 5000));
-                server.EnsureRunning();
+                server.EnsureRunning(); // failed on CI when Answers used ConnectAsync().Wait(300) (see Answers)
                 Assert.False(server.NeedsStart);
                 whisper.SetGrammar(new[] { "undo", "redo" });
                 Assert.Equal("undo", Assert.Single(Utter(whisper)).Text);

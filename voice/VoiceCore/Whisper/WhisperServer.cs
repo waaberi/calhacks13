@@ -162,15 +162,34 @@ namespace SpatialModeling.VoiceCore.Whisper
             started.Dispose();
         }
 
-        /// <summary>Whether something accepts TCP connections on 127.0.0.1:<paramref name="port"/>.</summary>
+        /// <summary>
+        /// Whether something accepts TCP connections on 127.0.0.1:<paramref name="port"/>. A non-blocking connect and
+        /// a poll, not ConnectAsync().Wait(): that needs a thread-pool thread to finish, and on a busy machine (CI)
+        /// it missed a server that was listening, so a second one was started.
+        /// </summary>
         public static bool Answers(int port, int timeoutMs)
         {
             try
             {
-                using (var client = new TcpClient())
-                    return client.ConnectAsync("127.0.0.1", port).Wait(timeoutMs) && client.Connected;
+                using (var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
+                {
+                    socket.Blocking = false;
+                    try
+                    {
+                        socket.Connect(System.Net.IPAddress.Loopback, port);
+                        return true;
+                    }
+                    catch (SocketException e) when (e.SocketErrorCode == SocketError.WouldBlock ||
+                                                    e.SocketErrorCode == SocketError.InProgress)
+                    {
+                        // Connecting: wait below.
+                    }
+                    if (!socket.Poll(Math.Max(0, timeoutMs) * 1000, SelectMode.SelectWrite))
+                        return false; // no answer in time (or refused, on Windows: that shows as an error)
+                    return (int)socket.GetSocketOption(SocketOptionLevel.Socket, SocketOptionName.Error) == 0;
+                }
             }
-            catch (Exception e) when (e is SocketException || e is AggregateException)
+            catch (SocketException)
             {
                 return false;
             }
