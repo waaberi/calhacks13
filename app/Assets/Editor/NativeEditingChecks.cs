@@ -47,6 +47,15 @@ public static class NativeEditingChecks
         sent.Clear(); s = Ready(sent);
         s.BeginDraft("object.delete", new JObject(), true); s.Apply(); s.Cancel(); Grant(s, sent);
         Check(sent.Count == 2 && (string)sent[1]["type"] == "lease.release", "Cancel while lease is in flight must release without sending a delete");
+        sent.Clear(); s = Ready(sent); s.BeginDraft("object.delete", new JObject(), true); s.Apply();
+        s.Timeout(); Grant(s, sent);
+        Check(sent.Count == 2 && (string)sent[1]["type"] == "lease.release" && s.OutcomeUnknown, "A late permission after timeout must release without native mutation");
+        sent.Clear(); s = Ready(sent); s.BeginDraft("object.delete", new JObject(), true); s.Apply();
+        var lateRequest = (string)sent[0]["id"]; s.Timeout(); Snapshot(s);
+        s.Receive(Message("lease.granted", new JObject { ["lease"] = new JObject { ["lease_id"] = "77777777777777777777777777777777" } }, lateRequest));
+        Check(sent.Count == 2 && (string)sent[1]["type"] == "lease.release", "Snapshot recovery must not revive a timed-out pending command");
+        sent.Clear(); s = Ready(sent); s.SceneCurrent = false;
+        Check(!s.BeginDraft("object.delete", new JObject(), true) && sent.Count == 0, "Rejected or incomplete rendered scenes must never admit native mutation");
         sent.Clear(); s = Ready(sent); s.BeginDraft("object.rotate", new JObject { ["by"] = new JObject { ["axis"] = "Z", ["angle"] = Math.PI / 2 } }, true); s.Apply(); Grant(s, sent);
         var id = (string)sent[1]["id"];
         s.Receive(Message("result", new JObject { ["request_id"] = "other", ["outcome"] = "applied" }));
