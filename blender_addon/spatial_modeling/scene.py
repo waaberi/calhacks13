@@ -125,22 +125,21 @@ def mesh_arrays(mesh, scale_length=1.0):
             new_index[verts].astype(np.int32),
         )
     if domain == "FACE":
-        face_normals = _read(mesh.polygon_normals, "vector", len(mesh.polygons) * 3, np.float32)
+        normals = _read(mesh.polygon_normals, "vector", len(mesh.polygons) * 3, np.float32)
         tri_faces = _read(mesh.loop_triangle_polygons, "value", n_tris, np.int32)
-        corner_normals = face_normals.reshape(-1, 3)[np.repeat(tri_faces, 3)]
+        owner = np.repeat(tri_faces, 3)  # each corner takes its face's normal
     else:  # CORNER: sharp edges or custom normals
-        all_normals = _read(mesh.corner_normals, "vector", n_corners * 3, np.float32)
-        corner_normals = all_normals.reshape(-1, 3)[tri_corners]
-    corner_normals = _round(corner_normals)
-    keys = np.empty((len(verts), 4), np.float64)  # vertex index (exact in a double) and normal
-    keys[:, 0] = verts
-    keys[:, 1:] = corner_normals
-    _, first, inverse = np.unique(
-        keys.view(np.dtype((np.void, 32))).ravel(), return_index=True, return_inverse=True
-    )
+        normals = _read(mesh.corner_normals, "vector", n_corners * 3, np.float32)
+        owner = tri_corners
+    # Number the distinct normals as they will be sent, then split each vertex by them.
+    rounded = np.ascontiguousarray(_round(normals.reshape(-1, 3)))
+    distinct, normal_of = np.unique(rounded.view(np.dtype((np.void, 24))).ravel(),
+                                    return_inverse=True)
+    keys = verts.astype(np.int64) * len(distinct) + normal_of.ravel()[owner]
+    _, first, inverse = np.unique(keys, return_index=True, return_inverse=True)
     return Mesh(
         _round(co[verts[first]], scale_length).ravel(),
-        corner_normals[first].ravel(),
+        rounded[owner[first]].ravel(),
         inverse.astype(np.int32).ravel(),
     )
 
