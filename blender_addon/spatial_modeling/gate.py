@@ -110,8 +110,9 @@ SHORTCUTS = (
     _key(_OBJECT_MODE, "object.duplicate_move_linked", "new", "D", alt=True),
     _key(_OBJECT_MODE, "object.join", "active", "J", ctrl=True),
     _key(_OBJECT_MODE, "object.parent_set", "active", "P", ctrl=True),
-    _key(_OBJECT_MODE, "object.move_to_collection", "selected", "M"),
-    _key(_OBJECT_MODE, "object.link_to_collection", "selected", "M", shift=True),
+    _key(_OBJECT_MODE, "wm.call_menu", "selected", "M", menu="OBJECT_MT_move_to_collection"),
+    _key(_OBJECT_MODE, "wm.call_menu", "selected", "M", menu="OBJECT_MT_link_to_collection",
+         shift=True),
     *(_key(_OBJECT_MODE, "object.subdivision_set", "selected", n, ctrl=True)
       for n in ("ZERO", "ONE", "TWO", "THREE", "FOUR", "FIVE")),
     _key(_NON_MODAL, "object.mode_set", "active", "TAB"),
