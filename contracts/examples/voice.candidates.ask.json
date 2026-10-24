@@ -32,12 +32,9 @@
       },
       {
         "choice": 3,
-        "say": "Smooth vertices",
-        "operator": "mesh.vertices_smooth",
-        "properties": {
-          "factor": 0.5,
-          "repeat": 5
-        },
+        "say": "Shade auto smooth",
+        "operator": "object.shade_auto_smooth",
+        "properties": {},
         "set": {},
         "needs_target": true
       }

@@ -73,6 +73,15 @@ ARRAY_COUNT = (2, 20)
 MAX_BEVEL_SEGMENTS = 4
 REUSED_MODIFIERS = ("SUBSURF", "ARRAY", "SOLIDIFY", "DECIMATE", "MIRROR", "WIREFRAME", "BEVEL")
 MODE_NAMES = {"EDIT_MESH": "Edit Mode", "SCULPT": "Sculpt Mode", "POSE": "Pose Mode"}
+MIN_SIZE_KEPT = 0.8  # a keep_size result must keep this share of every side of the mesh
+# Where "add a monkey" goes. The app shows Blender at 5x, 1 m in front of the headset
+# (HostScene.cs displayScale, viewingDistance), sized for parts of about 100 mm (the fake
+# bracket): Blender's own 2 m Suzanne at the origin became 13.7 m around the camera. So a voice
+# add is the selection's size, within ADD_SIZE_RANGE (10 cm to 1.25 m in VR), beside it on +X;
+# without one, ADD_SIZE at the 3D cursor; either way moved along +X until it overlaps nothing.
+ADD_SIZE = 0.1  # meters, the new object's longest side without a selection
+ADD_SIZE_RANGE = (0.02, 0.25)
+ADD_GAP = 0.25  # of the new object's size, between it and its neighbour
 
 
 # Numbers: NumberWords.TryRead (voice/VoiceCore/Runtime/NumberWords.cs), zero to 999.999,
@@ -430,14 +439,20 @@ def _origin(s, c, ws):
 
 
 def _intent(id_, op, say, props=None, post=None, fill=None, needs="MESH", macro=False, edit=None,
-            label=None, words_fill=False, edit_only=False, unsupported=None):
+            label=None, words_fill=False, edit_only=False, unsupported=None, hear=(),
+            requires=None, keep_size=False):
     """One intent. say: trigger phrases. needs: "MESH" (a mesh target), "ANY" (any target) or
     None. macro: run in a temporary Edit Mode on the whole mesh. edit: the intent used instead
-    in Edit Mode. unsupported: recognized only to refuse it, with this sentence."""
+    in Edit Mode. unsupported: recognized only to refuse it, with this sentence. hear: whole
+    phrases with numbers in them ("subdivide it twice") that only the recognizer needs: the
+    resolver reads their numbers as slots. requires: words of which one must be said, or the
+    intent is never a candidate ("smooth" alone isn't "smooth the vertices"). keep_size: undo
+    and refuse a result that shrinks the mesh below MIN_SIZE_KEPT."""
     return {"id": id_, "op": op, "say": say, "props": props or {}, "post": post or {},
             "fill": fill, "needs": needs, "macro": macro, "edit": edit,
             "label": label or say[0], "words_fill": words_fill, "edit_only": edit_only,
-            "unsupported": unsupported}
+            "unsupported": unsupported, "hear": list(hear), "requires": requires,
+            "keep_size": keep_size}
 
 
 MOD = "object.modifier_add"
@@ -462,18 +477,24 @@ INTENTS = [
             needs=None, fill=_light, words_fill=True),
     _intent("add_empty", "object.empty_add", ["add an empty", "empty"], needs=None),
     _intent("add_text", "object.text_add", ["add text", "text"], needs=None),
+    # "Make it smooth" means Shade smooth: it changes no geometry and is what people expect.
     _intent("shade_smooth", "object.shade_smooth",
-            ["shade smooth", "smooth shading", "smooth shaded", "shade it smooth"]),
+            ["shade smooth", "smooth shading", "smooth shaded", "shade it smooth", "make it smooth",
+             "smooth it", "smooth the object", "smooth"]),
     _intent("shade_flat", "object.shade_flat",
             ["shade flat", "flat shading", "flat shaded", "faceted"]),
     _intent("shade_auto_smooth", "object.shade_auto_smooth", ["shade auto smooth", "auto smooth"]),
     _intent("subsurf", MOD, ["add a subdivision surface", "subdivision surface", "subdivide",
                              "subdivision", "sub surf", "smoother", "make it smoother",
                              "smooth it out", "subdivision surface modifier"],
-            props={"type": "SUBSURF"}, fill=_levels, label="Subdivision Surface"),
+            props={"type": "SUBSURF"}, fill=_levels, label="Subdivision Surface",
+            hear=["subdivide it", "subdivide it once", "subdivide once", "subdivide it twice",
+                  "subdivide twice", "subdivide it two times", "subdivide two times",
+                  "subdivide level one", "subdivide level two"]),
     _intent("mirror", MOD, ["add a mirror modifier", "mirror", "mirror it", "symmetric",
-                            "symmetry", "mirror modifier"],
-            props={"type": "MIRROR"}, fill=_mirror, label="Mirror"),
+                            "symmetry", "mirror modifier", "add a mirror", "add mirror modifier"],
+            props={"type": "MIRROR"}, fill=_mirror, label="Mirror",
+            hear=["mirror on x", "mirror on y", "mirror on z", "mirror it on x"]),
     _intent("solidify", MOD, ["solidify", "make it thicker", "thicker", "thickness", "thick",
                               "thicken", "hollow", "shell", "solidify modifier"],
             props={"type": "SOLIDIFY"}, fill=_thickness, label="Solidify"),
@@ -521,9 +542,13 @@ INTENTS = [
     _intent("merge_distance", "mesh.remove_doubles",
             ["merge by distance", "remove doubles", "merge vertices", "remove duplicate vertices",
              "merge close vertices", "clean up"], macro=True),
-    # factor defaults to 0 from Python, which does nothing (measured)
+    # Only when the vertices are named: it moves every vertex towards its neighbours, so a
+    # low-poly mesh shrinks (factor 0.5 x 5 took a 2 m cube to 0.26 m). One gentle pass (a cube
+    # keeps 83%), and keep_size refuses anything that shrinks more. factor defaults to 0 from
+    # Python, which does nothing (measured).
     _intent("smooth_vertices", "mesh.vertices_smooth", ["smooth vertices", "smooth the vertices"],
-            props={"factor": 0.5, "repeat": 5}, macro=True),
+            props={"factor": 0.25, "repeat": 1}, macro=True,
+            requires={"vertices", "vertex", "verts"}, keep_size=True),
     _intent("convert_mesh", "object.convert",
             ["convert to mesh", "convert it to a mesh", "apply modifiers"],
             props={"target": "MESH"}, needs="ANY"),
@@ -668,6 +693,9 @@ def resolve(text, confidence=1.0, context=None):
         it = INTENTS[k]
         if mode == "EDIT" and it["edit"]:
             continue  # its Edit Mode variant scores on its own
+        if it["requires"] and not any(stem(w) in it["requires"] or w in it["requires"]
+                                      for w in ws):
+            continue  # named only
         why = None
         if it["edit_only"] and mode != "EDIT":
             s *= 0.9
@@ -811,16 +839,28 @@ CORE_WORDS = [  # VoiceCore's own (Vocabulary.GrammarPhrases) but "to": its comm
     "object", "by", "along", "around", "about", "on", "in", "axis", "please", "and"
 ]
 LEFT_OUT = {"to"}  # sounds like "two"; CommandParser only skips it
+SPOKEN_AS_IS = {"twice", "once", "thrice"}  # words() reads them as numbers; the recognizer hears them
+
+
+def spoken_words(phrase):
+    """A phrase's words as the recognizer hears them: words() but "twice" stays "twice"."""
+    out = []
+    for w in (phrase or "").lower().split():
+        out.extend([w] if w in SPOKEN_AS_IS else words(w))
+    return out
 
 
 def grammar_phrases():
-    """Every phrase the recognizer should know, sorted: intent phrases, slots, numbers, choices."""
+    """Every phrase the recognizer should know, sorted: intent phrases, slots, numbers, choices.
+
+    Whole phrases matter: the app takes Vosk's answer at once only when it is exactly one of
+    them (FastPathRecognizer), so "subdivide it twice" must be here as it is said."""
     phrases = set(ABSORBERS)
     for it in INTENTS:
         if it["unsupported"]:
             continue
-        for p in it["say"]:
-            spoken = [w for w in words(p) if w not in LEFT_OUT]  # "origin geometry"
+        for p in it["say"] + it["hear"]:
+            spoken = [w for w in spoken_words(p) if w not in LEFT_OUT]  # "origin geometry"
             phrases.add(" ".join(spoken))
             if it["op"] == MOD and len(spoken) == 1:
                 phrases.add("make it " + spoken[0])
@@ -951,8 +991,8 @@ class Voice:
         label = _spoken(c["label"])
         if _refusal(c):
             raise commands.Refused("failed", _refusal(c))
-        if c["needs"] is None:
-            return c, None  # the target only told the resolver what the user meant
+        if c["needs"] is None:  # the target only told the resolver what the user meant,
+            return dict(c, anchor=target_id), None  # and where an add goes (beside it)
         if obj is None:
             raise commands.Refused("failed", f"{label} needs an object. Select one, then say "
                                    "it again.")
@@ -974,7 +1014,10 @@ class Voice:
 
         from . import edits, scene
 
+        given = obj
         c, obj = self.choose(obj, args)
+        # An add goes beside the object selected when it was said (or now), if it is shown.
+        anchor = (self.sync.find_object(c["anchor"]) if c.get("anchor") else None) or given
         label = _spoken(c["label"])
         if obj is not None and not obj.visible_get():
             raise commands.Refused("failed", f"{obj.name} is hidden in host Blender.")
@@ -985,12 +1028,23 @@ class Voice:
         selection = edits._selection()
         before = {o.session_uid for o in layer.objects}
         weight = _weight(bpy, scene, [obj] if obj is not None else [])
+        size = _mesh_size(obj) if BY_ID[c["intent"]]["keep_size"] else None
+        if obj is not None or anchor is None or not anchor.visible_get():
+            anchor = None
         try:
-            changed, revert = _execute(bpy, c, obj, label)
+            changed, revert = _execute(bpy, c, obj, label, anchor)
         finally:
             edits._restore_selection(selection)  # the host desktop's, not the command's
         created = [o for o in layer.objects if o.session_uid not in before]
         heavy = _too_heavy(bpy, scene, ([obj] if obj is not None else []) + created, weight)
+        shrunk = _shrunk(size, _mesh_size(obj)) if size else None
+        if shrunk:
+            name = obj.name  # Undo reloads the objects: obj is gone after it
+            _undo(bpy, f"Voice: {label} (shrank it, undone)")
+            edits._restore_selection(selection)
+            self.sync.flush()
+            raise commands.Refused("failed", f"That would shrink {name} to {shrunk} of its "
+                                   "size, so I undid it.")
         if heavy:
             name = (created or [obj])[0].name
             if revert is not None:
@@ -1045,14 +1099,28 @@ def _select_only(bpy, obj):
         layer.objects.active = obj
 
 
-def _execute(bpy, c, obj, label):
-    """Run candidate c on obj (or nothing, for an add).
+def _execute(bpy, c, obj, label, anchor=None):
+    """Run candidate c on obj (or nothing, for an add: then beside anchor, see ADD_SIZE).
 
     Returns (a note for the summary or None, a function that takes a modifier change back
     exactly, or None for other operations).
     """
     module, name = c["op"].split(".")
     operator = getattr(getattr(bpy.ops, module), name)
+    adding = obj is None and c["needs"] is None
+    if adding:
+        layer = bpy.context.view_layer
+        before = {o.session_uid for o in layer.objects}
+        boxes = [b for b in (_world_box(o) for o in layer.objects if o.visible_get()) if b]
+        anchor_box = _world_box(anchor) if anchor is not None else None
+        size = (max(ADD_SIZE_RANGE[0], min(max(_sides(anchor_box)), ADD_SIZE_RANGE[1]))
+                if anchor_box else ADD_SIZE)
+        start = tuple(bpy.context.scene.cursor.location)
+        if anchor_box:
+            low, high = anchor_box
+            start = (high[0] + size * (ADD_GAP + 0.5), (low[1] + high[1]) / 2,
+                     (low[2] + high[2]) / 2)
+        c = dict(c, props=dict(c["props"], location=add_location(start, size, boxes)))
     _select_only(bpy, obj)
     reused = None
     with _override(bpy, obj):
@@ -1078,6 +1146,10 @@ def _execute(bpy, c, obj, label):
             raise commands.Refused("failed", f"Blender couldn't run {label} here: {e}") from None
     if "FINISHED" not in result:
         raise commands.Refused("failed", f"Blender didn't run {label}.")
+    if adding:
+        for o in bpy.context.view_layer.objects:
+            if o.session_uid not in before:
+                _fit(bpy, o, size)
     if c["op"] != MOD:
         return None, None
     modifier = reused or next((m for m in obj.modifiers if m.name not in names), None)
@@ -1095,6 +1167,76 @@ def _execute(bpy, c, obj, label):
                 _set(modifier, key, value)
 
     return ("changed the existing one" if reused else None), revert
+
+
+def add_location(start, size, boxes):
+    """Where a new object of longest side size goes: start, moved along +X past every box
+    (low, high corners) it would overlap, with ADD_GAP. Pure, for the tests."""
+    x, y, z = start
+    half = size / 2
+    for _ in range(len(boxes) + 1):
+        hit = [b for b in boxes if all(b[0][i] - half < (x, y, z)[i] < b[1][i] + half
+                                       for i in range(3))]
+        if not hit:
+            break
+        x = max(b[1][0] for b in hit) + size * (ADD_GAP + 0.5)
+    return (x, y, z)
+
+
+def _sides(box):
+    return [box[1][i] - box[0][i] for i in range(3)]
+
+
+def _world_box(obj):
+    """obj's world-space bounding box (low, high), or None without geometry."""
+    if obj is None or obj.type not in ("MESH", "CURVE", "SURFACE", "FONT", "META"):
+        return None
+    corners = [obj.matrix_world @ _vector(c) for c in obj.bound_box]
+    low = tuple(min(p[i] for p in corners) for i in range(3))
+    high = tuple(max(p[i] for p in corners) for i in range(3))
+    return (low, high) if max(_sides((low, high))) > 0 else None
+
+
+def _vector(c):
+    from mathutils import Vector
+
+    return Vector(c)
+
+
+def _fit(bpy, obj, size):
+    """Scale a new object's geometry (not its transform) so its longest side is size."""
+    from mathutils import Matrix
+
+    if obj.type == "MESH":
+        sides = _mesh_size(obj)
+        if sides and max(sides) > 0:
+            obj.data.transform(Matrix.Scale(size / max(sides), 4))
+            obj.data.update()
+    elif obj.type == "FONT":
+        bpy.context.view_layer.update()
+        if max(obj.dimensions) > 0:
+            obj.data.size *= size / max(obj.dimensions)
+    elif obj.type == "EMPTY":
+        obj.empty_display_size = size / 2
+    elif obj.type == "CAMERA":
+        obj.data.display_size = size
+
+
+def _mesh_size(obj):
+    """The sides of obj's mesh's local bounding box, or None."""
+    if obj is None or obj.type != "MESH" or not len(obj.data.vertices):
+        return None
+    co = [0.0] * (3 * len(obj.data.vertices))
+    obj.data.vertices.foreach_get("co", co)
+    return [max(co[i::3]) - min(co[i::3]) for i in range(3)]
+
+
+def _shrunk(before, after):
+    """"40%" if a side of the mesh kept less than MIN_SIZE_KEPT of its length, else None."""
+    if not before or not after:
+        return None
+    kept = min((a / b for a, b in zip(after, before, strict=True) if b > 1e-6), default=1.0)
+    return f"{kept:.0%}" if kept < MIN_SIZE_KEPT else None
 
 
 def _value(value):

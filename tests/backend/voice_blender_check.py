@@ -114,7 +114,12 @@ TESTS = [
     ("recalculate normals", "mesh.normals_make_consistent", {}, {}, flip),
     ("flip normals", "mesh.flip_normals", {}, {}, None),
     ("merge by distance", "mesh.remove_doubles", {}, {}, None),
-    ("smooth vertices", "mesh.vertices_smooth", {"factor": 0.5}, {}, None),
+    ("smooth vertices", "mesh.vertices_smooth", {"factor": 0.25, "repeat": 1}, {}, None),
+    ("smooth the vertices", "mesh.vertices_smooth", {"factor": 0.25}, {}, None),
+    ("make it smooth", "object.shade_smooth", {}, {}, None),
+    ("smooth the object", "object.shade_smooth", {}, {}, None),
+    ("subdivide it twice", MOD, {"type": "SUBSURF"}, {"levels": 2, "render_levels": 2}, None),
+    ("add a mirror", MOD, {"type": "MIRROR"}, {"use_axis": [True, False, False]}, None),
     ("convert to mesh", "object.convert", {"target": "MESH"}, {}, mirror),
 ]
 
@@ -259,6 +264,7 @@ def one_operation(talia, other, commander, test):
     suzanne = bc.by_id(target["id"])
     if operator.startswith("mesh.primitive") or operator.endswith("_add") and operator != MOD:
         assert len(receipt["created"]) == 1 and bc.by_id(receipt["created"][0]) is not None
+        placed_beside(bc.by_id(receipt["created"][0]), suzanne, text)
     if operator == MOD:
         found = [m for m in suzanne.modifiers if m.type == props["type"]]
         assert len(found) == 1, (text, [m.type for m in suzanne.modifiers])  # reused, not stacked
@@ -277,6 +283,61 @@ def one_operation(talia, other, commander, test):
     assert bc.selection() == kept
     bc.log(f"ok {text!r}: {receipt['summary']} ({took * 1000:.0f} ms)")
     return took, triangles
+
+
+def placed_beside(new, target, text):
+    """A voice add is the target's size, within ADD_SIZE_RANGE, and overlaps nothing."""
+    vo = bc.mod("voice_ops")
+    bpy.context.view_layer.update()
+    box, near = vo._world_box(new), vo._world_box(target)
+    if box is None:  # a camera, light or empty: only its place
+        assert new.location.x > near[1][0], (text, tuple(new.location))
+        return
+    longest = max(vo._sides(box))
+    assert math.isclose(longest, vo.ADD_SIZE_RANGE[1], rel_tol=0.02), (text, longest)
+    assert box[0][0] > near[1][0], (text, box, near)  # beside it on +X, not inside
+    assert tuple(new.scale) == (1.0, 1.0, 1.0), (text, tuple(new.scale))
+
+
+def add_without_selection(talia, other, commander):
+    """No target: ADD_SIZE at the 3D cursor, moved past the Suzanne that is there."""
+    vo = bc.mod("voice_ops")
+    suzanne = fresh()
+    yield from drained(talia, other)
+    msg = protocol.message("voice.resolve", {"text": "add a cube", "confidence": 0.9})
+    _, reply = yield from bc.ask(talia, msg)
+    answer = reply["payload"]
+    assert answer["decision"] == "run", answer
+    receipt, _ = yield from commander.send(voice_run(commander, answer, None))
+    assert receipt["outcome"] == "applied", receipt
+    yield from watched(other, "the add without a selection")
+    cube = bc.by_id(receipt["created"][0])
+    bpy.context.view_layer.update()
+    box, near = vo._world_box(cube), vo._world_box(suzanne)
+    assert math.isclose(max(vo._sides(box)), vo.ADD_SIZE, rel_tol=0.02), box
+    assert box[0][0] > near[1][0], (box, near)
+    bc.log(f"ok 'add a cube' without a selection: {cube.name} at {tuple(cube.location)}")
+
+
+def refused_shrink(talia, other, commander):
+    """Smooth the vertices of a plane: its corners would keep 75%, so it is undone."""
+    for obj in list(bpy.data.objects):
+        if obj.name not in ("Camera", "Light"):
+            bpy.data.objects.remove(obj)
+    with bpy.context.temp_override(**view3d()):
+        bpy.ops.mesh.primitive_plane_add()
+    plane = bpy.context.view_layer.objects.active
+    select_only(bpy.data.objects["Camera"])
+    bpy.ops.ed.undo_push(message="Voice check: plane")
+    target = target_of(plane)
+    yield from drained(talia, other)
+    answer = yield from resolve(talia, "smooth the vertices", target)
+    assert answer["decision"] == "run", answer
+    kept, before = bc.selection(), state()
+    receipt, updates = yield from commander.send(voice_run(commander, answer, target))
+    assert receipt["outcome"] == "rejected" and "shrink" in receipt["error"]["message"], receipt
+    assert updates == [] and state() == before and bc.selection() == kept
+    bc.log(f"ok refused: {receipt['error']['message']}")
 
 
 def heavy_grid(flat):
@@ -330,6 +391,9 @@ def checks():
     times.sort()
     bc.log(f"{len(TESTS)} voice operations ran through commands.py; voice.run round trip "
            f"median {times[len(times) // 2] * 1000:.0f} ms, max {times[-1] * 1000:.0f} ms")
+
+    yield from add_without_selection(talia, other, commander)
+    yield from refused_shrink(talia, other, commander)
 
     # Too heavy: Suzanne at level 2 (15,744 triangles) times five is 78,720.
     suzanne = fresh()

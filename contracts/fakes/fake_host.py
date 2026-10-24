@@ -418,8 +418,7 @@ VOICE_ASK = [
     _voice_candidate("Subdivision Surface, level 1", "object.modifier_add", {"type": "SUBSURF"},
                      {"levels": 1, "render_levels": 1}, True),
     _voice_candidate("Shade smooth", "object.shade_smooth", {}, {}, True),
-    _voice_candidate("Smooth vertices", "mesh.vertices_smooth", {"factor": 0.5, "repeat": 5}, {},
-                     True),
+    _voice_candidate("Shade auto smooth", "object.shade_auto_smooth", {}, {}, True),
 ]
 GRAMMAR_EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "voice.grammar.json"
 

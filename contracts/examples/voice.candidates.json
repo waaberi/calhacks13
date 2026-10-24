@@ -28,15 +28,10 @@
       },
       {
         "choice": 2,
-        "say": "Subdivision Surface, level 1",
-        "operator": "object.modifier_add",
-        "properties": {
-          "type": "SUBSURF"
-        },
-        "set": {
-          "levels": 1,
-          "render_levels": 1
-        },
+        "say": "Shade smooth",
+        "operator": "object.shade_smooth",
+        "properties": {},
+        "set": {},
         "needs_target": true
       }
     ]

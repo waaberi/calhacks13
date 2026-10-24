@@ -140,6 +140,104 @@ def test_candidates_never_include_what_cant_run():
             assert c["op"] not in unsupported, (text, c)
 
 
+# What the Unity run showed (24 Oct): "subdivide it twice", "make it smooth" and "smooth the
+# object" weren't grammar phrases, so Vosk couldn't take them whole and Whisper's text snapped
+# to something else; generic smoothing offered Smooth vertices, which shrank a 2 m cube to 0.26 m.
+
+WHOLE_PHRASES = ["subdivide it twice", "subdivide twice", "subdivide it once", "subdivide once",
+                 "subdivide it two times", "subdivide two times", "subdivide level two",
+                 "make it smooth", "smooth the object", "smooth it", "smooth",
+                 "add a mirror modifier", "add a mirror", "add mirror modifier", "mirror on x",
+                 "add a monkey", "shade smooth", "make it thicker", "bevel the edges",
+                 "smooth the vertices"]
+
+
+@pytest.mark.parametrize("text", WHOLE_PHRASES)
+def test_demo_phrases_are_whole_grammar_phrases(text):
+    """The app takes Vosk's answer at once only when it is exactly one grammar phrase."""
+    assert text in voice_ops.GRAMMAR
+
+
+def test_the_grammar_says_twice_as_it_is_said():
+    assert voice_ops.spoken_words("subdivide it twice") == ["subdivide", "it", "twice"]
+    assert "subdivide it two times" in voice_ops.GRAMMAR  # both are said
+    assert voice_ops.words("subdivide it twice")[-2:] == ["two", "times"]  # the resolver's
+
+
+@pytest.mark.parametrize(("text", "level"), [
+    ("subdivide it twice", 2), ("subdivide twice", 2), ("subdivide it two times", 2),
+    ("subdivide two times", 2), ("subdivide it once", 1), ("subdivide once", 1),
+    ("subdivide it", 1), ("subdivide level two", 2),
+])
+def test_subdivide_twice_is_level_two(text, level):
+    r = resolve(text)
+    assert r["decision"] == "run", r
+    top = r["candidates"][0]
+    assert top["props"] == {"type": "SUBSURF"}
+    assert top["post"] == {"levels": level, "render_levels": level}
+
+
+def test_every_heard_phrase_runs_its_intent():
+    for it in voice_ops.INTENTS:
+        for text in it["hear"]:
+            r = resolve(text)
+            assert r["decision"] == "run" and r["candidates"][0]["intent"] == it["id"], (text, r)
+
+
+@pytest.mark.parametrize("text", ["make it smooth", "smooth the object", "smooth it", "smooth"])
+def test_make_it_smooth_runs_shade_smooth(text):
+    r = resolve(text)
+    assert r["decision"] == "run", r
+    assert r["candidates"][0]["op"] == "object.shade_smooth"
+
+
+@pytest.mark.parametrize("text", ["add a mirror modifier", "add a mirror", "add mirror modifier",
+                                  "mirror modifier", "it a mirror modifier"])
+def test_mirror_phrasings_run(text):
+    """'it a mirror modifier' is what Vosk heard for Piper's 'add a mirror modifier'."""
+    r = resolve(text)
+    assert r["decision"] == "run", r
+    assert r["candidates"][0]["props"] == {"type": "MIRROR"}
+
+
+@pytest.mark.parametrize("text", ["make it smooth", "smooth it", "smooth the object", "smooth",
+                                  "smoothen it", "make it smoother", "smoother the object",
+                                  "smooth it out", "make it look smooth", "smooth the edges"])
+def test_smooth_vertices_is_never_offered_for_generic_smoothing(text):
+    assert all(c["op"] != "mesh.vertices_smooth" for c in resolve(text)["candidates"]), text
+
+
+@pytest.mark.parametrize("text", ["smooth the vertices", "smooth vertices"])
+def test_smooth_vertices_runs_when_named_and_gently(text):
+    r = resolve(text)
+    assert r["decision"] == "run", r
+    top = r["candidates"][0]
+    assert top["op"] == "mesh.vertices_smooth"
+    assert top["props"]["factor"] <= 0.25 and top["props"]["repeat"] == 1
+    assert voice_ops.BY_ID["smooth_vertices"]["keep_size"]
+
+
+def test_a_mesh_that_shrinks_too_much_is_refused():
+    assert voice_ops._shrunk([2.0, 2.0, 2.0], [0.263, 0.263, 0.263]) == "13%"
+    assert voice_ops._shrunk([2.0, 2.0, 0.0], [1.5, 1.5, 0.0]) == "75%"  # flat: Z is ignored
+    assert voice_ops._shrunk([2.0, 2.0, 2.0], [1.667, 1.667, 1.667]) is None  # a cube, 1 pass
+    assert voice_ops._shrunk(None, [1.0, 1.0, 1.0]) is None
+
+
+def test_an_add_goes_beside_what_is_there():
+    cube = ((-1.0, -1.0, -1.0), (1.0, 1.0, 1.0))
+    next_to = ((1.0, -0.1, -0.1), (1.2, 0.1, 0.1))
+    far = ((5.0, 5.0, 5.0), (6.0, 6.0, 6.0))
+    assert voice_ops.add_location((0.0, 0.0, 0.0), 0.1, []) == (0.0, 0.0, 0.0)
+    assert voice_ops.add_location((0.0, 0.0, 0.0), 0.1, [far]) == (0.0, 0.0, 0.0)
+    x, y, z = voice_ops.add_location((0.0, 0.0, 0.0), 0.1, [cube])
+    assert (y, z) == (0.0, 0.0) and x == pytest.approx(1.0 + 0.1 * (voice_ops.ADD_GAP + 0.5))
+    x, _, _ = voice_ops.add_location((0.0, 0.0, 0.0), 0.1, [cube, next_to])
+    assert x == pytest.approx(1.2 + 0.1 * (voice_ops.ADD_GAP + 0.5))  # past both
+    low, high = voice_ops.ADD_SIZE_RANGE
+    assert low <= voice_ops.ADD_SIZE <= high <= 0.25  # 1.25 m on the app's 5x table at most
+
+
 def test_without_a_mesh_target_mesh_operations_only_ask():
     r = resolve("shade smooth", context={"mode": "OBJECT", "active_type": None})
     assert r["decision"] != "run"
@@ -308,7 +406,7 @@ def test_an_add_needs_no_target():
 def test_an_ask_runs_the_chosen_candidate():
     with voice_hosting() as host, host.vr() as talia:
         attach(host)
-        answer = ask(talia, "smooth it", target={"id": SHAFT, "generation": 0})
+        answer = ask(talia, "smoothen it", target={"id": SHAFT, "generation": 0})
         assert answer["decision"] == "ask"
         assert [c["choice"] for c in answer["candidates"]] == [1, 2, 3]
         receipt = talia.run("voice.run", {"id": SHAFT, "generation": 0},
@@ -465,7 +563,7 @@ def test_the_fake_host_answers_voice_like_the_contract():
         assert receipt["summary"] == "Voice: Array, 5 copies along Z on Shaft"
         again = run({"id": SHAFT, "generation": receipt["revision"]}, answer["resolution"], 1)
         assert again["error"]["code"] == "not_found"  # single use
-        answer = send("voice.resolve", {"text": "smooth it", "confidence": 0.9})["payload"]
+        answer = send("voice.resolve", {"text": "smoothen it", "confidence": 0.9})["payload"]
         assert answer["decision"] == "ask" and len(answer["candidates"]) == 3
         assert run(None, answer["resolution"], 2)["error"]["code"] == "failed"  # no target
         answer = send("voice.resolve", {"text": "add a monkey", "confidence": 0.9})["payload"]
