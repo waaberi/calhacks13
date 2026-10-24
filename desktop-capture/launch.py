@@ -211,7 +211,9 @@ def main():
             )
         time.sleep(0.25)
     record["capture_status_at_launch"] = status
-    record["capture_selection_at_launch"] = capture_status("/selection")
+    selection = capture_status("/selection")
+    verify_existing_selection(args.window, selection)
+    record["capture_selection_at_launch"] = selection
     player_log = session / "player.log"
     player = spawn(
         [
