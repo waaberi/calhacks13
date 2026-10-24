@@ -20,6 +20,32 @@ namespace SpatialModeling.VoiceCore
         public override string ToString() => Text + " (" + Confidence.ToString("0.00") + ")";
     }
 
+    /// <summary>Why a push-to-talk utterance ended without any <see cref="RecognitionResult"/>
+    /// (<see cref="VoiceInput.TryGetNoResult"/>, then <see cref="VoiceSession.NothingRecognized"/>).</summary>
+    public enum NoResultReason
+    {
+        /// <summary>Nothing to hear: silence or noise, such as an accidental press. Never spoken; the UI may show a short
+        /// "Didn't catch that". The default for a recognizer without <see cref="IReportsNoResult"/>.</summary>
+        Silence,
+
+        /// <summary>Speech the recognizer couldn't turn into any phrase (Whisper's transcript snapped onto none). The
+        /// session says <see cref="Prompt.LowConfidence"/> ("Sorry, I didn't catch that.").</summary>
+        NotUnderstood,
+    }
+
+    /// <summary>
+    /// Optional for an <see cref="ISpeechRecognizer"/>: says why <see cref="ISpeechRecognizer.Stop"/> raised no
+    /// <see cref="ISpeechRecognizer.Recognized"/>. Raise <see cref="NoResult"/> from <c>Stop</c>, at most once per
+    /// utterance and only when it raises no result. Only what can't be silence should be
+    /// <see cref="NoResultReason.NotUnderstood"/>: a silent press must not speak (drop Whisper's silence hallucinations
+    /// such as "you" as <see cref="NoResultReason.Silence"/>). <see cref="VoiceInput"/> reports every utterance without a
+    /// result, as Silence when the recognizer doesn't say otherwise.
+    /// </summary>
+    public interface IReportsNoResult
+    {
+        event Action<NoResultReason> NoResult;
+    }
+
     /// <summary>
     /// A speech recognizer behind VoiceCore. The Vosk implementation takes PCM from the Unity microphone;
     /// a recognizer that captures audio itself (Windows speech) ignores <see cref="AcceptAudio"/>.
@@ -41,7 +67,8 @@ namespace SpatialModeling.VoiceCore
         /// <summary>Feeds 16-bit mono PCM samples captured since the last call.</summary>
         void AcceptAudio(short[] samples, int count);
 
-        /// <summary>Ends the utterance, e.g. when push-to-talk is released, and raises the final result if any.</summary>
+        /// <summary>Ends the utterance, e.g. when push-to-talk is released, and raises the final result if any. Raise
+        /// nothing for silence (see <see cref="IReportsNoResult"/> to tell speech that matched nothing apart).</summary>
         void Stop();
     }
 

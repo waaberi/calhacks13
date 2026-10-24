@@ -30,6 +30,7 @@ namespace SpatialModeling.VoiceCore
         readonly int postrollMs;
         readonly BlockingCollection<Action> work = new BlockingCollection<Action>();
         readonly ConcurrentQueue<RecognitionResult> results = new ConcurrentQueue<RecognitionResult>();
+        readonly ConcurrentQueue<NoResultReason> noResults = new ConcurrentQueue<NoResultReason>();
         readonly ConcurrentQueue<float[]> spare = new ConcurrentQueue<float[]>();
         readonly Thread worker;
         bool paused, talking;
@@ -44,6 +45,8 @@ namespace SpatialModeling.VoiceCore
         readonly short[] ring; // the pre-roll, at the recognizer rate; empty without one
         int ringStart, ringCount;
         bool listening;
+        bool heard;                 // this utterance gave a result
+        NoResultReason? reported;   // the recognizer's IReportsNoResult during Stop
 
         /// <param name="createRecognizer">Makes the recognizer on the worker thread, for example
         /// <c>() =&gt; VoskSpeechRecognizer.Load(modelPath)</c>.</param>
@@ -111,6 +114,7 @@ namespace SpatialModeling.VoiceCore
                     converter?.Reset(); // with a pre-roll the converter runs on one continuous stream
                 recognizer.Start(recognizerRate);
                 listening = true;
+                heard = false;
                 FeedPreroll();
             });
         }
@@ -168,6 +172,14 @@ namespace SpatialModeling.VoiceCore
         /// <summary>The next final result, in order. Pass it to <see cref="VoiceSession.Hear"/>.</summary>
         public bool TryGetResult(out RecognitionResult result) => results.TryDequeue(out result);
 
+        /// <summary>
+        /// A push-to-talk utterance that ended without any result, with the recognizer's reason
+        /// (<see cref="IReportsNoResult"/>; <see cref="NoResultReason.Silence"/> when it gives none). Pass it to
+        /// <see cref="VoiceSession.NothingRecognized"/> after this frame's <see cref="TryGetResult"/>s. An open microphone
+        /// (never stopped) gets none.
+        /// </summary>
+        public bool TryGetNoResult(out NoResultReason reason) => noResults.TryDequeue(out reason);
+
         /// <summary>Stops the worker and disposes the recognizer.</summary>
         public void Dispose()
         {
@@ -200,7 +212,10 @@ namespace SpatialModeling.VoiceCore
                 if (!listening)
                     return;
                 listening = false;
+                reported = null;
                 recognizer.Stop();
+                if (!heard)
+                    noResults.Enqueue(reported ?? NoResultReason.Silence);
             });
         }
 
@@ -268,7 +283,13 @@ namespace SpatialModeling.VoiceCore
             try
             {
                 recognizer = createRecognizer() ?? throw new InvalidOperationException("No recognizer");
-                recognizer.Recognized += results.Enqueue;
+                recognizer.Recognized += result =>
+                {
+                    heard = true;
+                    results.Enqueue(result);
+                };
+                if (recognizer is IReportsNoResult reporter)
+                    reporter.NoResult += reason => reported = reason;
                 ready = true;
             }
             catch (Exception e)
