@@ -96,7 +96,7 @@ namespace SpatialModeling
             finally
             {
                 foreach (var anchor in fetched)
-                    if (!anchors.Exists(a => a.Anchor.Handle == anchor.Handle)) anchor.Dispose();
+                    if (!anchors.Exists(a => a.Anchor.Equals(anchor))) anchor.Dispose();
                 loading = false;
             }
         }

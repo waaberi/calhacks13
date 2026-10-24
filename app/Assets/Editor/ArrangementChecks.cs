@@ -21,6 +21,10 @@ public static class ArrangementChecks
         Check(Mathf.Abs(stopped.position.x-desired.position.x)<.0001f,"contact stop preserves user's motion parallel to desk");
         Check(WorkspaceArrangement.Assist(bounds,Vector3.one,before,new Pose(new Vector3(0,.86f,0),Quaternion.Euler(15,12,8)),desk,false,out var near,out _),"near surface offers an alignment guide");
         Near(near.position,new Vector3(0,.86f,0),"near contact never attracts object down onto the desk");
+        var cube=new Bounds(Vector3.zero,Vector3.one*.2f);
+        var scalingPose=new Pose(new Vector3(0,.9f,0),Quaternion.identity);
+        Check(WorkspaceArrangement.Assist(cube,Vector3.one*2,scalingPose,scalingPose,desk,false,out var enlarged,out _,Vector3.one),"two-hand enlargement respects previous geometry at contact");
+        Check(WorkspaceArrangement.MinimumDistance(cube,Vector3.one*2,enlarged,desk)>=.0029f,"enlarging a model does not bury it in the desk");
         var wall=new WorkspaceSurfaces.Surface {Name="Wall",Pose=new Pose(Vector3.forward,Quaternion.LookRotation(Vector3.back,Vector3.up)),Size=new Vector2(3,3)};
         before=new Pose(new Vector3(0,0,.4f),Quaternion.identity);
         desired=new Pose(new Vector3(.1f,0,2),Quaternion.Euler(0,38,0));

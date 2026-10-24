@@ -55,6 +55,7 @@ namespace SpatialModeling
             public Pose previousHandPose;
             public float depth;
             public Quaternion rotationOffset=Quaternion.identity;
+            public Vector3 rotationAxis=Vector3.up;
             public bool turnLatched, stickDown, freePlacement, alignRequested;
             public Color color;
             public void Dispose()
@@ -222,7 +223,7 @@ namespace SpatialModeling
                     if(arrangement!=null && !h.turnLatched && Mathf.Abs(axis.x)>.7f)
                     {
                         h.turnLatched=true;
-                        h.rotationOffset=Quaternion.AngleAxis(Mathf.Sign(axis.x)*15,arrangement.RotationAxis)*h.rotationOffset;
+                        h.rotationOffset=Quaternion.AngleAxis(Mathf.Sign(axis.x)*15,h.rotationAxis)*h.rotationOffset;
                     }
                     if (Mathf.Abs(axis.y) > 0.2f) h.depth = Mathf.Clamp(h.depth + axis.y * Time.unscaledDeltaTime, -0.5f, 2f);
                     if (arrangement==null && h.target == screen.Placement && Mathf.Abs(axis.x) > 0.2f)
@@ -386,6 +387,12 @@ namespace SpatialModeling
                 var pose = FollowRay(new Pose(h.stableAim.position, h.stableAim.rotation), h.rayRelative, h.depth);
                 pose.rotation=h.rotationOffset*pose.rotation;
                 if(arrangement!=null) pose=arrangement.Apply(h.target,new Pose(h.target.position,h.target.rotation),pose,h.alignRequested,h.freePlacement);
+                if(arrangement!=null) h.rotationAxis=arrangement.RotationAxis;
+                if(h.alignRequested)
+                {
+                    h.rayRelative=RelativeRayPose(new Pose(h.stableAim.position,h.stableAim.rotation),pose);
+                    h.depth=0; h.rotationOffset=Quaternion.identity;
+                }
                 h.alignRequested=false;
                 h.largestDisplayStep = Mathf.Max(h.largestDisplayStep, Vector3.Distance(h.target.position, pose.position));
                 h.target.SetPositionAndRotation(pose.position, pose.rotation);
@@ -415,6 +422,7 @@ namespace SpatialModeling
             hand.part = part;
             hand.depth = 0f;
             hand.rotationOffset=Quaternion.identity;
+            hand.rotationAxis=Vector3.up;
             hand.freePlacement=hand.alignRequested=hand.turnLatched=false;
             hand.rayRelative = RelativeRayPose(pose, new Pose(target.position, target.rotation));
             hand.localContact = target.InverseTransformPoint(contact);
@@ -467,9 +475,15 @@ namespace SpatialModeling
             float ratio=left.part!=null ? 1f : Mathf.Clamp(vector.magnitude/pairVector.magnitude,.25f,4f);
             var turn=frame*Quaternion.Inverse(pairFrame);
             var pose=new Pose(midpoint+turn*(pairOffset*ratio),turn*pairRotation);
+            var previousScale=pairTarget.lossyScale;
             pairTarget.localScale=pairScale*ratio;
             if(arrangement!=null) pose=arrangement.Apply(pairTarget,new Pose(pairTarget.position,pairTarget.rotation),pose,
-                left.alignRequested||right.alignRequested,left.freePlacement||right.freePlacement);
+                left.alignRequested||right.alignRequested,left.freePlacement||right.freePlacement,previousScale);
+            if(left.alignRequested||right.alignRequested)
+            {
+                pairVector=vector; pairFrame=frame; pairRotation=pose.rotation;
+                pairOffset=pose.position-midpoint; pairScale=pairTarget.localScale;
+            }
             left.alignRequested=right.alignRequested=false;
             pairTarget.SetPositionAndRotation(pose.position,pose.rotation);
             left.part?.RememberArrangement(); right.part?.RememberArrangement();

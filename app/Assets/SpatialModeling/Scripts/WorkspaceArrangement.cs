@@ -111,14 +111,14 @@ namespace SpatialModeling
             return minimum;
         }
         public static bool Assist(Bounds bounds,Vector3 scale,Pose previous,Pose desired,
-            WorkspaceSurfaces.Surface surface,bool align,out Pose result,out Pose suggested)
+            WorkspaceSurfaces.Surface surface,bool align,out Pose result,out Pose suggested,Vector3? previousScale=null)
         {
             result=desired; suggested=desired;
             var normal=surface.Normal;
             var local=Quaternion.Inverse(surface.Pose.rotation)*(desired.position+desired.rotation*Vector3.Scale(bounds.center,scale)-surface.Pose.position);
             float radius=Vector3.Scale(bounds.extents,scale).magnitude;
             if(Mathf.Abs(local.x)>surface.Size.x*.5f+radius || Mathf.Abs(local.y)>surface.Size.y*.5f+radius) return false;
-            float before=MinimumDistance(bounds,scale,previous,surface);
+            float before=MinimumDistance(bounds,previousScale??scale,previous,surface);
             float after=MinimumDistance(bounds,scale,desired,surface);
             // A deep object already behind a surface must be allowed to escape.
             if(before<-.02f || after>.14f) return false;
@@ -131,12 +131,12 @@ namespace SpatialModeling
             else if(after<.003f) result.position+=normal*(.003f-after); // Contact stop only; never auto-rotate or attract.
             return true;
         }
-        public Pose Apply(Transform target,Pose previous,Pose desired,bool align,bool bypass)
+        public Pose Apply(Transform target,Pose previous,Pose desired,bool align,bool bypass,Vector3? previousScale=null)
         {
             if(!AssistEnabled || bypass || Surfaces==null) { HideGuide(); return desired; }
             var bounds=LocalBounds(target);
             foreach(var surface in Surfaces.Surfaces)
-                if(Assist(bounds,target.lossyScale,previous,desired,surface,align,out var assisted,out var suggested))
+                if(Assist(bounds,target.lossyScale,previous,desired,surface,align,out var assisted,out var suggested,previousScale))
                 {
                     RotationAxis=surface.Normal;
                     DrawGuide(surface,bounds,target.lossyScale,suggested);
