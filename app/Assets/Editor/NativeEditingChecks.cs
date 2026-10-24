@@ -68,5 +68,13 @@ public static class NativeEditingChecks
         s.BeginDraft("object.delete", new JObject(), true);
         Check(!s.Apply() && sent.Count == 0 && s.Notice.Contains("Actual participant"), "Known conflicts must show actual owner and send no write");
         s.Select(Target); Check(s.SelectedId == Target && sent.Count == 0, "Selection must remain lock-free during conflicts");
+        sent.Clear(); s = Ready(sent);
+        Check(!s.BeginDraft("sketch.constrain", new JObject(), true) && sent.Count == 0, "Sketch tools must not target a generic object");
+        string sketchId = "99999999999999999999999999999999";
+        s.Sketches[sketchId] = new JObject { ["id"] = sketchId, ["name"] = "Native sketch", ["generation"] = 7 };
+        s.Select(sketchId);
+        Check(!s.BeginDraft("object.delete", new JObject(), true) && sent.Count == 0, "Generic object tools must not mutate a hidden sketch carrier");
+        Check(s.BeginDraft("sketch.constrain", new JObject(), true) && (long)s.Draft["target"]["generation"] == 7,
+            "Sketch drafts must capture the selected sketch generation");
     }
 }
