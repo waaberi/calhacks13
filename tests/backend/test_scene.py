@@ -542,6 +542,24 @@ def test_the_interface_for_commands(host):
     assert bpy.context.active_object[sync.ID_PROPERTY] == created  # in the Undo step pushed next
 
 
+def test_an_unreadable_mesh_does_not_stop_the_others(host, monkeypatch):
+    broken = box("Broken", (1, 1, 1))
+    box("Fine", (1, 1, 1))
+    snapshot()
+    real = sync.scene.evaluated_mesh
+
+    def evaluated_mesh(obj, *args):
+        if obj.name == "Broken":
+            raise ValueError("odd geometry")
+        return real(obj, *args)
+
+    monkeypatch.setattr(sync.scene, "evaluated_mesh", evaluated_mesh)
+    broken.modifiers.new("Bevel", "BEVEL")
+    bpy.data.objects["Fine"].location.x = 1
+    u = update(host)
+    assert [o["name"] for o in u["objects"]] == ["Fine"]  # Broken keeps its last mesh
+
+
 def test_stopped_sync_is_inert(host):
     sync.stop()
     assert sync.flush() == 0 and sync.generation("0" * 32) is None

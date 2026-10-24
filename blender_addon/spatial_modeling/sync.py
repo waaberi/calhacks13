@@ -272,7 +272,12 @@ def _flush(st):
             or obj.session_uid in dirty
             or (data is not None and data.session_uid in dirty)
         )
-        mesh = scene.evaluated_mesh(obj, depsgraph, scale) if stale else old.mesh
+        mesh = old.mesh if old is not None else None
+        if stale:
+            try:
+                mesh = scene.evaluated_mesh(obj, depsgraph, scale)
+            except Exception:  # one odd object must not stop the sync of all the others
+                log.exception("could not read %s's mesh; clients keep the last one", obj.name)
         current[oid] = _Entry(record, mesh, old.generation if old else 0, obj.session_uid)
 
     if not st.started:  # what the file had when the server started is revision 0
