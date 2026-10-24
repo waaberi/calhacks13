@@ -675,9 +675,13 @@ def test_stall_after_stops_answering_until_stall_for_ends(monkeypatch):
         wait_until(lambda: not a.not_responding, timeout=6)
         assert a.sock is not None  # stalled, never closed
         assert any("responding again" in line for line in a.output)
-        pings = {m["id"] for m in proxy.messages(0, "up", pongs=True) if m["type"] == "ping"}
-        pongs = {m["re"] for m in proxy.messages(0, "down", pongs=True) if m["type"] == "pong"}
-        assert len(pings) >= 5 and len(pings - pongs) <= 1  # the held pongs came after the stall
+        # The host answers the pings it queued during the stall all at once, and the first pong
+        # already clears "not responding", so wait for the rest to pass the proxy.
+        def ids(way, kind, key):
+            return {m[key] for m in proxy.messages(0, way, pongs=True) if m["type"] == kind}
+
+        wait_until(lambda: len(ids("up", "ping", "id") - ids("down", "pong", "re")) <= 1, timeout=3)
+        assert len(ids("up", "ping", "id")) >= 5  # the held pongs came after the stall
         result(a.run("move Shaft 10mm 0 0"))
     proxy.assert_all_valid()
 
