@@ -661,6 +661,54 @@ def test_drop_after_closes_and_a_reconnect_gets_a_fresh_snapshot(monkeypatch):
     proxy.assert_all_valid()
 
 
+def test_lose_drops_the_result_then_receipt_query_finds_it(monkeypatch):
+    monkeypatch.setattr(fake_client, "RECONNECT_EVERY", 0.1)
+    with proxied() as (host, proxy), joined(proxy.port) as a:  # no --reconnect: lose rejoins
+        first = a.welcome
+        receipts = a.run("lose move Shaft 10mm 0 0")
+        lost = a.last_command
+        assert fake_client.succeeded(receipts), receipts
+        (receipt,) = receipts["payload"]["receipts"]
+        assert receipt["request_id"] == lost["id"] and receipt["outcome"] == "applied"
+        assert receipt["actor"]["actor_id"] == first["actor_id"] != a.welcome["actor_id"]
+        assert receipts["payload"]["missing"] == receipts["payload"]["unknown"] == []
+        # Nothing is replayed on the new connection; its snapshot has the move
+        assert not any(m["type"] == "result" for m in proxy.messages(1, "down"))
+        assert a.document["revision"] == 1 and a.objects[SHAFT]["generation"] == 1
+        # The same request again, old actor_id and all, isn't applied twice
+        assert result(a.run("again")) == receipt and host.scene.revision == 1
+        assert any("asked for the receipts of 1 command(s)" in line for line in a.output)
+        result(a.run("move Shaft 10mm 0 0"))  # edits resume
+    proxy.assert_all_valid()
+
+
+def test_query_after_a_host_restart_says_unknown(monkeypatch):
+    monkeypatch.setattr(fake_client, "RECONNECT_EVERY", 0.1)
+    with contextlib.ExitStack() as before_restart:
+        first = before_restart.enter_context(running_host())
+        proxy = Proxy(first.port)
+        try:
+            with joined(proxy.port, reconnect=True) as a:
+                moved = result(a.run("move Shaft 10mm 0 0"))
+                old = a.welcome
+                with running_host() as second:  # a restarted host: new host_epoch, no receipts
+                    proxy.upstream = second.port
+                    before_restart.close()  # stops the first host; the client reconnects
+                    wait_until(lambda: a.connected and a.welcome is not old)
+                    assert a.welcome["host_epoch"] != old["host_epoch"]
+                    receipts = a.run(f"query {moved['request_id'][:8]}")
+                    assert receipts["payload"] == {
+                        "receipts": [], "missing": [], "unknown": [moved["request_id"]]}
+                    assert not fake_client.succeeded(receipts)
+                    assert any("unknown (sent before the host restarted" in line
+                               for line in a.output)
+                    sent = [m for m in proxy.messages(1, "up") if m["type"] == "receipt.query"]
+                    assert sent[0]["payload"]["host_epoch"] == old["host_epoch"]
+            proxy.assert_all_valid()
+        finally:
+            proxy.close()
+
+
 def test_stall_after_stops_answering_until_stall_for_ends(monkeypatch):
     monkeypatch.setattr(fake_client, "PING_EVERY", 0.2)
     monkeypatch.setattr(fake_client, "NOT_RESPONDING_AFTER", 0.6)

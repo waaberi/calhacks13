@@ -237,7 +237,7 @@ class Peer(Client):
         host_epoch = host_epoch or self.welcome["host_epoch"]
         msg = protocol.message("receipt.query", {"host_epoch": host_epoch,
                                                  "request_ids": list(request_ids)})
-        before, reply = self.ask(msg)
+        _, reply = self.ask(msg)
         assert reply["type"] == "receipts" and reply["re"] == msg["id"], reply
         return reply["payload"]
 
@@ -271,7 +271,7 @@ class Host:
 
 @contextlib.contextmanager
 def hosting(editor=None, lan_port=False, **session_args):
-    """A session with commands, drained by a thread like Blender's timer."""
+    """A session with commands, drained and polled by a thread like Blender's timer."""
     editor = editor or FakeEditor()
     extra = []
     if lan_port:
@@ -287,6 +287,7 @@ def hosting(editor=None, lan_port=False, **session_args):
     def pump():
         while not stop.is_set():
             srv.drain()
+            cmds.poll()  # as host.py's timer: retry reconciling while writes are stopped
             time.sleep(0.002)
 
     thread = threading.Thread(target=pump, daemon=True)

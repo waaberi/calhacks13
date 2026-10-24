@@ -7,6 +7,8 @@ debugging; nothing it shows counts as acceptance evidence (PHASE_PLAN.md).
     python3 contracts/fakes/fake_client.py                          # watch everything
     python3 contracts/fakes/fake_client.py "move Shaft 10mm 0 0" --exit
     python3 contracts/fakes/fake_client.py --help                   # every shortcut
+    python3 contracts/fakes/fake_client.py --check "lose move Shaft 10mm 0 0" --exit
+                                    # lost acknowledgement: reconnect, then receipt.query
 
 It works against contracts/fakes/fake_host.py and the real Host-role add-on. It
 does the handshake from contracts/README.md, pings every 2 s, prints a summary
@@ -265,6 +267,7 @@ class FakeClient:
         self.querying = {}  # asked about with receipt.query; no edits until the answer
         self.sent_under = {}  # every command we sent
         self.rejoin_once = False  # `lose`: reconnect after this drop even without --reconnect
+        self.dropping = None  # `lose`: the socket we hung up; what still arrives on it is lost
         self.user_pings = set()
         self.last_command = None
         self.last_heard = time.monotonic()
@@ -397,6 +400,8 @@ class FakeClient:
             again = ((self.reconnect or self.rejoin_once) and not self.stopping
                      and self.refused is None)
             self.rejoin_once = False
+            if sock is self.dropping:
+                self.dropping = None
             self.finished = not again
             self.connected = False
             self.lock.notify_all()
@@ -428,6 +433,8 @@ class FakeClient:
     # Messages from the host
 
     def _receive(self, sock, line):
+        if sock is self.dropping:
+            return  # `lose`: the answer is lost on the way
         try:
             msg = json.loads(line)
         except ValueError:
@@ -522,15 +529,15 @@ class FakeClient:
             else:
                 self.out("same document; the fresh snapshot replaces the stale scene")
         if self.unknown:  # ask, never resend; one receipt.query per host_epoch they were sent under
-            epochs = {}
+            epochs, count = {}, len(self.unknown)
             for rid, epoch in sorted(self.unknown.items()):
                 epochs.setdefault(epoch, []).append(rid)
             for epoch, ids in epochs.items():
                 for i in range(0, len(ids), 100):
                     self._query(self.sock, epoch, ids[i:i + 100])
             when = "before the host restarted" if set(epochs) != {p["host_epoch"]} else "earlier"
-            self.out(f"asked for the receipts of {len(self.unknown)} command(s) with unknown "
-                     f"outcome, sent {when}")
+            self.out(f"asked for the receipts of {count} command(s) with unknown outcome, "
+                     f"sent {when}")
 
     def _on_update(self, p):
         self.document = p["document"]
@@ -815,10 +822,11 @@ class FakeClient:
             self.pending[msg["id"]] = self.sent_under[msg["id"]] = epoch
             self.last_command = msg
             self.rejoin_once = True
+            self.dropping = sock
         self.out(f"> {text} (then dropping the connection before the result)")
         self._send(sock, msg)
         try:
-            sock.shutdown(socket.SHUT_RDWR)  # the reader sees the close and reconnects
+            sock.shutdown(socket.SHUT_WR)  # the host closes too; then the reader reconnects
         except OSError:
             pass
         if not wait:
@@ -836,10 +844,8 @@ class FakeClient:
                 self.pending.keys() | self.unknown.keys() | self.querying.keys()))
             self.lock.wait_for(settled, WAIT + RECONNECT_EVERY)
             answer = next((m for m in self.replies.values() if answers(m)), None)
-            early = self.replies.get(rid)
         if answer is None:
-            self.out(f"no receipts for {rid[:8]} after reconnecting"
-                     + (" (its result came before the drop)" if early else ""))
+            self.out(f"no receipts for {rid[:8]} after reconnecting")
         return answer
 
     def _resend(self, msg, wait):
