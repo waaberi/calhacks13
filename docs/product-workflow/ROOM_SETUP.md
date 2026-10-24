@@ -22,20 +22,34 @@ comparisons: repeated AppSpaceChange events exhausted native reference spaces
 (`xrCreateReferenceSpace: XR_ERROR_LIMIT_REACHED`). It has been removed; the exact
 cause of that churn is not established. Logs and the failed artifact are retained.
 
-The narrow replacement follows SDK207 `RoomMeshAnchor`'s camera-based
-`OVRPose.ToWorldSpacePose(Camera.main)` mapping for both mesh and semantic anchors.
-It retains the SDK's paired scene-pose/mesh handedness conversion, the existing
-camera, controls and saved room. Optional local room evidence records the measured
-rotation/translation difference from the former camera-parent assumption. This
-is a candidate mapping correction; physical fit is still failed until verified.
-
 An opt-in `CALHACKS_ROOM_SPACE_PROBE` export compares each existing anchor through
 direct `xrLocateSpace` in Unity's actual AppSpace against Core's native
 Floor/Eye/Stage-origin wrapper. It creates no reference spaces and changes no
 tracking state. The mesh API uses the OpenXR shim while Core's locatable wrapper
 uses the native origin-based path; equality of head poses alone does not prove
-that these paths locate scene anchors in the same reference space. A disagreement
-is a hypothesis until measured, not a reason for a guessed180degree correction.
+that these paths locate scene anchors in the same reference space.
+
+The live three-sample probe **confirmed the missing origin conversion**. All11
+anchors' native Floor poses differed substantially from direct localization in
+Unity's current AppSpace. The SDK's `GetTrackingTransformRelativePose(FloorLevel)`
+premultiplied with those scene poses matches the independent direct poses across
+all33 observations within0.253mm. Mesh handedness and head/camera poses were already
+correct. This is a common reference-space mismatch, not a bad scan or a mesh-only
+180degree rotation.
+
+The repair uses `WorldAnchor = CurrentAppWorld * OriginToApp * SceneAnchor` for
+both mesh and semantic surfaces. `CurrentAppWorld` is the accepted TrackedPoseDriver's
+camera-parent frame, shared with head/controllers; `OriginToApp` is the public
+SDK relative-origin getter, converted with ordinary `ToOVRPose()` and recomputed
+each LateUpdate. It is neither inverted nor given another scene Y180 conversion.
+The unnecessary asynchronous SDK camera/head subtraction from `fdbb1d6` is removed.
+Camera, controls, mesh vertices and saved scan remain on their accepted paths.
+
+`RoomSpaceReplayChecks` runs the production composition against all33 independent
+native observations in both captured and rotated/translated world frames, including
+UUID-matched actual boundary points. Omitted, inverted and doubled corrections must
+all fail. Raw room captures remain local. Physical acceptance of the corrected
+binary is still required; identifying and replaying the cause does not grant it.
 
 ## Current-room eligibility and demo relocation
 

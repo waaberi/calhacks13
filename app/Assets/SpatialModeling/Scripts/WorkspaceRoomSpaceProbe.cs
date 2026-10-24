@@ -34,6 +34,7 @@ namespace SpatialModeling
             public bool xrActive, headTracked, inputPresenceKnown, inputPresent, metaPresent, vrFocused;
             public bool allowRecentering;
             public Pose cameraWorld, unityHead, metaHead, sceneTrackingWorld, rawTrackingTransform;
+            public Pose currentAppSpaceWorld,originReferenceToAppSpace;
             public Pose eyeToCurrent, floorToCurrent, stageToCurrent;
             public bool worldLockOffsetAvailable, worldLockOffsetActive;
             public Pose worldLockOffsetRaw, worldLockOffsetUnity;
@@ -49,6 +50,7 @@ namespace SpatialModeling
             public RoomSpaceProbePose directAppSpace;
             public bool wrapperDirectComparable;
             public float wrapperDirectMetres, wrapperDirectDegrees;
+            public float correctedWorldMetres,correctedWorldDegrees;
         }
         [Serializable] sealed class RoomSpaceProbePose
         {
@@ -112,6 +114,7 @@ namespace SpatialModeling
                     unityHead = new Pose(position, rotation),
                     metaHead = ProbePose(OVRPlugin.GetNodePose(OVRPlugin.Node.Head, OVRPlugin.Step.Render)),
                     sceneTrackingWorld = sceneTrackingWorld,
+                    currentAppSpaceWorld=currentAppSpaceWorld,originReferenceToAppSpace=originReferenceToAppSpace,
                     rawTrackingTransform = ProbePose(OVRPlugin.GetTrackingTransformRawPose()),
                     eyeToCurrent = ProbePose(OVRPlugin.GetTrackingTransformRelativePose(OVRPlugin.TrackingOrigin.EyeLevel)),
                     floorToCurrent = ProbePose(OVRPlugin.GetTrackingTransformRelativePose(OVRPlugin.TrackingOrigin.FloorLevel)),
@@ -178,6 +181,10 @@ namespace SpatialModeling
                     {
                         entry.wrapperDirectMetres = Vector3.Distance(entry.wrapperScene.position, entry.directAppSpace.sceneUnity.position);
                         entry.wrapperDirectDegrees = Quaternion.Angle(entry.wrapperScene.rotation, entry.directAppSpace.sceneUnity.rotation);
+                        var corrected=SceneToWorld(sceneTrackingWorld,entry.wrapperScene);
+                        var expected=SceneToWorld(currentAppSpaceWorld,entry.directAppSpace.sceneUnity);
+                        entry.correctedWorldMetres=Vector3.Distance(corrected.position,expected.position);
+                        entry.correctedWorldDegrees=Quaternion.Angle(corrected.rotation,expected.rotation);
                     }
                     sample.anchors.Add(entry);
                 }

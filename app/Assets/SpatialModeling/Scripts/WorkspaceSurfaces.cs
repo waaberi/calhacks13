@@ -38,6 +38,7 @@ namespace SpatialModeling
         {
             public string trackingOrigin;
             public Pose metaHead, unityHead, cameraWorld, originWorld, sceneTrackingWorld;
+            public Pose currentAppSpaceWorld, originReferenceToAppSpace;
             public float parentToScenePosition, parentToSceneAngle;
             public List<AnchorEvidence> anchors=new List<AnchorEvidence>();
         }
@@ -67,14 +68,23 @@ namespace SpatialModeling
         Material levelMaterial, detectedMaterial, contrastMaterial;
         Transform Origin => Camera.main != null ? Camera.main.transform.parent : null;
         Pose sceneTrackingWorld;
+        Pose currentAppSpaceWorld,originReferenceToAppSpace;
 
-        // Match Meta's RoomMeshAnchor.ToWorldSpacePose(Camera.main). The camera's
-        // parent is not necessarily the SDK's current tracking reference space.
-        static Pose SceneTrackingWorld(Camera camera)
+        // The accepted TrackedPoseDriver, head and controllers use Unity AppSpace.
+        // OVRLocatable's native-origin poses need Origin -> AppSpace first. Live
+        // xrLocateSpace comparisons verified this direction for every room anchor.
+        // Recompute after recenter; never bake this correction into the saved scan.
+        void UpdateSceneTrackingFrame()
         {
-            var world=OVRPose.identity.ToWorldSpacePose(camera);
-            return new Pose(world.position,world.orientation);
+            currentAppSpaceWorld=Origin!=null?new Pose(Origin.position,Origin.rotation):Pose.identity;
+            var relative=OVRPlugin.initialized
+                ? OVRPlugin.GetTrackingTransformRelativePose(OVRPlugin.GetTrackingOriginType()).ToOVRPose()
+                : OVRPose.identity;
+            originReferenceToAppSpace=new Pose(relative.position,relative.orientation);
+            sceneTrackingWorld=ComposeRoomTrackingFrame(currentAppSpaceWorld,originReferenceToAppSpace);
         }
+        public static Pose ComposeRoomTrackingFrame(Pose currentAppWorld,Pose originToApp)
+            => SceneToWorld(currentAppWorld,originToApp);
         public static Pose SceneToWorld(Pose trackingWorld,Pose local)
             => new Pose(trackingWorld.position+trackingWorld.rotation*local.position,
                 trackingWorld.rotation*local.rotation);
@@ -484,7 +494,7 @@ namespace SpatialModeling
         }
         void LateUpdate()
         {
-            sceneTrackingWorld=Camera.main!=null?SceneTrackingWorld(Camera.main):Pose.identity;
+            UpdateSceneTrackingFrame();
             if(pendingLevel!=null)
             {
                 var host=FindFirstObjectByType<HostScene>();
@@ -601,7 +611,8 @@ namespace SpatialModeling
                 metaHead=new Pose(meta.position,meta.orientation),unityHead=new Pose(position,rotation),
                 cameraWorld=new Pose(Camera.main.transform.position,Camera.main.transform.rotation),
                 originWorld=Origin!=null?new Pose(Origin.position,Origin.rotation):Pose.identity,
-                sceneTrackingWorld=sceneTrackingWorld };
+                sceneTrackingWorld=sceneTrackingWorld,currentAppSpaceWorld=currentAppSpaceWorld,
+                originReferenceToAppSpace=originReferenceToAppSpace };
             data.parentToScenePosition=Vector3.Distance(data.originWorld.position,sceneTrackingWorld.position);
             data.parentToSceneAngle=Quaternion.Angle(data.originWorld.rotation,sceneTrackingWorld.rotation);
             foreach(var item in anchors)
