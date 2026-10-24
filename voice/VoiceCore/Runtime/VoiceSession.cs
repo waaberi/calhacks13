@@ -322,8 +322,9 @@ namespace SpatialModeling.VoiceCore
         /// <item>ask: the turn says <see cref="Prompt.AskChoice"/>; show <see cref="Choice"/> and switch the grammar;</item>
         /// <item>reject: the words are handled as without a host.</item>
         /// </list>
-        /// A run of words heard below <see cref="VoiceSessionOptions.MinConfidence"/> becomes a question. A pending command
-        /// is dropped for a run or a question. Answers to older words, or after <see cref="VoiceSessionOptions.HostTimeout"/>,
+        /// A run of words heard below <see cref="VoiceSessionOptions.MinConfidence"/> becomes a question, and so does a run of
+        /// words with one of VoiceCore's shapes but no command verb ("selected cylinder" for "select the cylinder"). A
+        /// pending command is dropped for a run or a question. Answers to older words, or after <see cref="VoiceSessionOptions.HostTimeout"/>,
         /// are ignored.
         /// </summary>
         public VoiceTurn HostAnswered(string re, VoiceCandidates answer)
@@ -348,7 +349,7 @@ namespace SpatialModeling.VoiceCore
                 pending = null; // the host understood a new command
                 turn.Prompts.Add(Prompt.ReplacedPending);
             }
-            if (answer.Decision == VoiceDecision.Run && !asked.Request.LowConfidence)
+            if (answer.Decision == VoiceDecision.Run && !asked.Request.LowConfidence && !asked.ShapeWithoutVerb)
             {
                 RunCandidate(answer.Resolution, candidates[0], asked.Target, turn);
                 return turn.Build();
@@ -459,7 +460,12 @@ namespace SpatialModeling.VoiceCore
         {
             SceneObject target = CommandParser.NamedObject(result.Text, objects) ?? FromContext(CommandKind.Move);
             var request = new VoiceResolve(result.Text, result.Confidence, target, result.Confidence < options.MinConfidence);
-            resolving = new Resolving(request, result, target, clock());
+            // One of VoiceCore's own shapes without its verb is a core command that lost its verb ("selected cylinder",
+            // "on cube"): it could be select, add or delete, so the host may only ask. On TTS with today's grammar the
+            // host otherwise ran "add a cylinder" for "select the cylinder" 3 times out of 15.
+            ParsedUtterance parsed = CommandParser.Parse(result.Text, objects); // without the pending kind, so shapes count
+            bool shapeWithoutVerb = parsed.Verb == null && parsed.Shape.HasValue;
+            resolving = new Resolving(request, result, target, clock()) { ShapeWithoutVerb = shapeWithoutVerb };
             turn.Resolve = request;
         }
 
@@ -782,6 +788,7 @@ namespace SpatialModeling.VoiceCore
             public readonly SceneObject Target;
             public readonly DateTime SentAt;
             public string MessageId;
+            public bool ShapeWithoutVerb; // a run of these words only asks
         }
 
         /// <summary>A command being assembled, with the number and unit as spoken.</summary>

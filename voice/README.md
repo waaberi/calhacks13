@@ -90,7 +90,9 @@ Which words go to the host (`VoiceSession.Hear`), in order:
 3. Undo, redo and cancel never go to the host.
 4. To the host: no command verb ("shade smooth", "a monkey" when "add" was lost), words VoiceCore doesn't know after
    the verb ("add a monkey", "select all"), or "apply" with more words ("apply the scale"). Below `MinConfidence`
-   they still go, marked low confidence, and the host may only ask: Vosk gives "two" about 0.5.
+   they still go, marked low confidence, and the host may only ask: Vosk gives "two" about 0.5. Words with one of
+   VoiceCore's shapes but no verb ("selected cylinder" for "select the cylinder", "on cube" for "add a cube") also only
+   ask: on TTS the host otherwise ran "add a cylinder" for "select the cylinder" 3 times out of 15.
 5. Everything else stays on VoiceCore's path, as before. While a command waits for a field, answers keep priority:
    only words without a verb that can't fill it go to the host, and none while it waits for its object (unknown words
    are then a name, as before). The pending command is dropped only when the host runs or asks.

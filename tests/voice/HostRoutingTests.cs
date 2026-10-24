@@ -204,6 +204,24 @@ namespace SpatialModeling.VoiceCore.Tests
             Assert.Null(command.TargetId);
         }
 
+        [Theory]
+        [InlineData("selected cylinder")] // Vosk's "select the cylinder": the host would add one
+        [InlineData("on cube")]           // "add a cube"
+        public void ARunOfACoreShapeWithoutItsVerbOnlyAsks(string text)
+        {
+            var asking = new Asking(Cube);
+            Assert.NotNull(asking.Say(text).Resolve);
+            var cylinder = new VoiceCandidate(1, "Cylinder", "mesh.primitive_cylinder_add");
+            VoiceTurn turn = asking.Answer(VoiceDecision.Run, cylinder);
+            Assert.Null(turn.Command);
+            Assert.Equal(new[] { "ask_choice" }, Prompts(turn));
+            Assert.Equal(new[] { "1. Cylinder" }, asking.Session.Choice.Candidates.Select(c => c.ToString()));
+
+            asking.Session.Cancel();
+            Assert.NotNull(asking.Say("a monkey").Resolve); // no shape of VoiceCore's: still runs at once
+            Assert.Equal(CommandKind.Run, asking.Answer(VoiceDecision.Run, Monkey).Command?.Kind);
+        }
+
         [Fact]
         public void AnAskDecisionAsksAndSwitchesToTheChoiceGrammar()
         {
