@@ -8,6 +8,7 @@ import os
 import socket
 import threading
 import time
+import traceback
 from collections import deque
 from ctypes import wintypes as W
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -202,7 +203,8 @@ class LatestFrame:
             if generation != self.generation:
                 return
             self.jpeg = None
-            self.status.update(state=state, fps=0.0, message=message)
+            # Messages can carry exception text; the status schema allows 1024 characters.
+            self.status.update(state=state, fps=0.0, message=message[:1024])
 
     def publish(self, generation, image, title, fps, captured_ms):
         output = io.BytesIO()
@@ -255,6 +257,22 @@ def owned_capture_pixels(frame):
     return frame.frame_buffer.copy()
 
 
+def measured_frame_rate(times, now):
+    # Two publications can share a clock reading (time.monotonic() ticks every
+    # 15.6 ms on Windows before Python 3.13). A zero span must not divide by zero.
+    span = now - times[0] if times else 0
+    return (len(times) - 1) / span if len(times) > 1 and span > 0 else 0
+
+
+def stop_capture(control):
+    # windows-capture's stop() joins the native thread and re-raises whatever
+    # ended it as a plain Exception. That must not end the capture loop.
+    try:
+        control.stop()
+    except Exception as exc:  # noqa: BLE001
+        print(f"CAPTURE_STOP_ERROR {type(exc).__name__}: {exc}", flush=True)
+
+
 def capture_loop(api, latest, stop, fps):
     previous = None
     while not stop.is_set():
@@ -266,7 +284,7 @@ def capture_loop(api, latest, stop, fps):
             try:
                 image, title = api.capture(selected)
                 finished = time.monotonic()
-                measured = 1 / (finished - previous) if previous else 0
+                measured = 1 / (finished - previous) if previous and finished > previous else 0
                 previous = finished
                 latest.publish(generation, image, title, measured, captured_ms)
             except WindowUnavailable as exc:
@@ -301,49 +319,58 @@ def graphics_capture_loop(api, latest, stop, fps):
                 raw_ready.clear()
             if item is None:
                 continue
-            generation, selected, pixels, captured_ms, item_session = item
-            item = None
-            with latest.lock:
-                if generation != latest.generation or item_session != session[0]:
-                    continue
-            height, width = pixels.shape[:2]
-            scale = min(1.0, 3840 / width, 2400 / height)
-            if scale < 1:
-                pixels = cv2.resize(
-                    pixels, (int(width * scale), int(height * scale)), interpolation=cv2.INTER_AREA
-                )
-                height, width = pixels.shape[:2]
+            generation = item[0]
             try:
-                ok, encoded = cv2.imencode(
-                    ".jpg",
-                    pixels,
-                    [
-                        cv2.IMWRITE_JPEG_QUALITY,
-                        95,
-                        cv2.IMWRITE_JPEG_SAMPLING_FACTOR,
-                        cv2.IMWRITE_JPEG_SAMPLING_FACTOR_444,
-                    ],
-                )
-            except cv2.error as exc:
-                latest.fail(generation, "error", f"JPEG encode failed: {exc}")
-                continue
-            current = api.identity(selected["hwnd"])
-            if item_session != session[0] or not ok or not current or current["pid"] != selected["pid"]:
-                continue
-            if api.u.IsIconic(selected["hwnd"]):
-                continue
-            now = time.monotonic()
-            with encoded_lock:
-                encoded_times.append(now)
-                while encoded_times and now - encoded_times[0] > 1:
-                    encoded_times.popleft()
-                measured = (
-                    (len(encoded_times) - 1) / (now - encoded_times[0]) if len(encoded_times) > 1 else 0
-                )
-                if not latest.publish_jpeg(
-                    generation, encoded.tobytes(), width, height, current["title"], measured, captured_ms
-                ):
-                    encoded_times.pop()
+                encode_and_publish(*item)
+            except Exception as exc:  # noqa: BLE001
+                # This is the only encoder: if it died, /frame would stay 503 until restart.
+                traceback.print_exc()
+                latest.fail(generation, "error", f"Capture encoder failed: {type(exc).__name__}")
+            item = None
+
+    def encode_and_publish(generation, selected, pixels, captured_ms, item_session):
+        with latest.lock:
+            if generation != latest.generation or item_session != session[0]:
+                return
+        if pixels.ndim != 3 or not pixels.shape[0] or not pixels.shape[1]:
+            latest.fail(generation, "error", "Capture returned an empty pixel frame.")
+            return
+        height, width = pixels.shape[:2]
+        scale = min(1.0, 3840 / width, 2400 / height)
+        if scale < 1:
+            pixels = cv2.resize(
+                pixels, (int(width * scale), int(height * scale)), interpolation=cv2.INTER_AREA
+            )
+            height, width = pixels.shape[:2]
+        try:
+            ok, encoded = cv2.imencode(
+                ".jpg",
+                pixels,
+                [
+                    cv2.IMWRITE_JPEG_QUALITY,
+                    95,
+                    cv2.IMWRITE_JPEG_SAMPLING_FACTOR,
+                    cv2.IMWRITE_JPEG_SAMPLING_FACTOR_444,
+                ],
+            )
+        except cv2.error as exc:
+            latest.fail(generation, "error", f"JPEG encode failed: {exc}")
+            return
+        current = api.identity(selected["hwnd"])
+        if item_session != session[0] or not ok or not current or current["pid"] != selected["pid"]:
+            return
+        if api.u.IsIconic(selected["hwnd"]):
+            return
+        now = time.monotonic()
+        with encoded_lock:
+            encoded_times.append(now)
+            while encoded_times and now - encoded_times[0] > 1:
+                encoded_times.popleft()
+            measured = measured_frame_rate(encoded_times, now)
+            if not latest.publish_jpeg(
+                generation, encoded.tobytes(), width, height, current["title"], measured, captured_ms
+            ):
+                encoded_times.pop()
 
     threading.Thread(target=encode_newest, daemon=True, name="Latest JPEG encoder").start()
 
@@ -407,7 +434,7 @@ def graphics_capture_loop(api, latest, stop, fps):
                 selected, generation = latest.selected, latest.generation
             if active_generation != generation:
                 if control is not None:
-                    control.stop()
+                    stop_capture(control)
                 control, _capture = None, None
                 active_generation = generation
             if not selected:
@@ -435,19 +462,19 @@ def graphics_capture_loop(api, latest, stop, fps):
                     raw_slot[0] = None
                 # Keep the last image only within its existing3s freshness lease.
                 # A quick static-window refresh must not blank/flicker the panel.
-                control.stop()
+                stop_capture(control)
                 control, _capture = None, None
                 print("CAPTURE_RECOVERY no_new_callback; reopening selected window", flush=True)
             if control is None or control.is_finished():
                 try:
                     _capture, control = start(selected, generation)
-                except (OSError, RuntimeError, ValueError) as exc:
+                except Exception as exc:  # noqa: BLE001 -- windows-capture raises plain Exception.
                     latest.fail(generation, "error", f"Graphics capture failed: {exc}")
                     stop.wait(1)
                     continue
     finally:
         if control is not None:
-            control.stop()
+            stop_capture(control)
 
 
 def make_server(latest, port):

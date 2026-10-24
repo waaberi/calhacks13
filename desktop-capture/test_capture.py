@@ -2,13 +2,31 @@
 
 import http.client
 import json
+import sys
 import threading
 import time
+import types
 import unittest
-from contextlib import closing
+from collections import deque
+from contextlib import closing, contextmanager
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from capture_helper import LatestFrame, capture_refresh_due, make_server, owned_capture_pixels
+from capture_helper import (
+    LatestFrame,
+    capture_refresh_due,
+    graphics_capture_loop,
+    make_server,
+    measured_frame_rate,
+    owned_capture_pixels,
+)
 from PIL import Image
+
+try:
+    import cv2  # noqa: F401 -- graphics_capture_loop imports it.
+    import numpy as np
+except ImportError:
+    np = None
 
 
 class CaptureContractTests(unittest.TestCase):
@@ -125,6 +143,133 @@ class CaptureContractTests(unittest.TestCase):
         self.assertTrue(queued.flags.c_contiguous)
         self.assertFalse(np.shares_memory(queued, pixels))
         self.assertEqual(int(queued.max()), 0)
+
+    def test_rate_measurement_tolerates_coincident_clock_readings(self):
+        self.assertEqual(measured_frame_rate(deque(), 5.0), 0)
+        self.assertEqual(measured_frame_rate(deque([5.0, 5.0]), 5.0), 0)
+        self.assertEqual(measured_frame_rate(deque([5.0, 5.5, 6.0]), 6.0), 2.0)
+
+
+class FakeControl:
+    def __init__(self, fail_stop):
+        self.finished = False
+        self.fail_stop = fail_stop
+
+    def stop(self):
+        self.finished = True
+        if self.fail_stop:
+            # What windows-capture 2.0.1 raises when the native thread ended with an error.
+            raise Exception("Failed to stop the capture thread: frame handler error")  # noqa: TRY002
+
+    def is_finished(self):
+        return self.finished
+
+
+class FakeCapture:
+    def __init__(self, harness, **settings):
+        self.harness, self.settings, self.callbacks = harness, settings, {}
+
+    def event(self, handler):
+        self.callbacks[handler.__name__] = handler
+        return handler
+
+    def start_free_threaded(self):
+        if self.harness.start_failures:
+            self.harness.start_failures -= 1
+            raise Exception("Failed to find window: closed while starting")  # noqa: TRY002
+        control = FakeControl(self.harness.fail_stop)
+        self.harness.captures.append((self, control))
+        return control
+
+
+class FakeApi:
+    u = SimpleNamespace(IsIconic=lambda hwnd: False)
+
+    def identity(self, hwnd):
+        return {"hwnd": hwnd, "pid": 7, "title": f"Blender {hwnd}"}
+
+
+@unittest.skipIf(np is None, "needs numpy and OpenCV")
+class GraphicsWorkerTests(unittest.TestCase):
+    """The real graphics capture/encoder threads, with a fake windows_capture module."""
+
+    def setUp(self):
+        self.thread_errors = []
+        hook = patch("threading.excepthook", lambda args: self.thread_errors.append(args.exc_value))
+        hook.start()
+        self.addCleanup(hook.stop)
+
+    @contextmanager
+    def workers(self, start_failures=0, fail_stop=False):
+        latest = LatestFrame()
+        latest.select({"hwnd": 101, "pid": 7, "title": "Blender 101"})
+        harness = SimpleNamespace(captures=[], start_failures=start_failures, fail_stop=fail_stop)
+        module = types.ModuleType("windows_capture")
+        module.WindowsCapture = lambda **settings: FakeCapture(harness, **settings)
+        stop = threading.Event()
+        with patch.dict(sys.modules, {"windows_capture": module}):
+            loop = threading.Thread(
+                target=graphics_capture_loop, args=(FakeApi(), latest, stop, 60), daemon=True
+            )
+            loop.start()
+            try:
+                yield harness, latest, loop
+            finally:
+                stop.set()
+                loop.join(2)
+        self.assertEqual(self.thread_errors, [])
+
+    def wait_until(self, predicate, timeout=3):
+        until = time.perf_counter() + timeout  # One test pins time.monotonic().
+        while not predicate() and time.perf_counter() < until:
+            time.sleep(0.005)
+        self.assertTrue(predicate(), "capture threads did not reach the expected state")
+
+    def arrive(self, capture, pixels):
+        time.sleep(0.005)  # Distinct X-Captured-At milliseconds.
+        capture.callbacks["on_frame_arrived"](
+            SimpleNamespace(frame_buffer=pixels), SimpleNamespace(stop=lambda: None)
+        )
+
+    def test_empty_native_frame_reports_error_then_next_frame_recovers(self):
+        with self.workers() as (harness, latest, _):
+            self.wait_until(lambda: harness.captures)
+            capture = harness.captures[0][0]
+            self.arrive(capture, np.empty((0, 12, 4), np.uint8))
+            self.wait_until(lambda: latest.snapshot()[0]["state"] == "error")
+            self.assertIsNone(latest.snapshot()[1])
+            self.arrive(capture, np.full((8, 12, 4), 64, np.uint8))
+            self.wait_until(lambda: latest.snapshot()[1] is not None)
+            self.assertEqual(latest.snapshot()[0]["state"], "capturing")
+
+    def test_publications_at_one_clock_reading_keep_the_encoder_running(self):
+        # time.monotonic() ticks every 15.6 ms on Windows before Python 3.13.
+        clock = patch("capture_helper.time.monotonic", return_value=1000.0)
+        with clock, self.workers() as (harness, latest, _):
+            self.wait_until(lambda: harness.captures)
+            capture = harness.captures[0][0]
+            for frame in (1, 2, 3):
+                self.arrive(capture, np.full((8, 12, 4), 40 * frame, np.uint8))
+                self.wait_until(lambda frame=frame: latest.snapshot()[0]["frame"] == frame)
+
+    def test_capture_start_error_is_reported_and_retried(self):
+        with self.workers(start_failures=1) as (harness, latest, loop):
+            self.wait_until(lambda: latest.snapshot()[0]["message"].startswith("Graphics capture"))
+            self.wait_until(lambda: harness.captures)
+            self.arrive(harness.captures[0][0], np.full((8, 12, 4), 64, np.uint8))
+            self.wait_until(lambda: latest.snapshot()[1] is not None)
+            self.assertTrue(loop.is_alive())
+
+    def test_reselection_survives_a_capture_that_ended_with_an_error(self):
+        with self.workers(fail_stop=True) as (harness, latest, loop):
+            self.wait_until(lambda: harness.captures)
+            latest.select({"hwnd": 202, "pid": 7, "title": "Blender 202"})
+            self.wait_until(lambda: len(harness.captures) == 2)
+            capture = harness.captures[1][0]
+            self.assertEqual(capture.settings["window_hwnd"], 202)
+            self.arrive(capture, np.full((8, 12, 4), 64, np.uint8))
+            self.wait_until(lambda: latest.snapshot()[0]["window"] == "Blender 202")
+            self.assertTrue(loop.is_alive())
 
 
 if __name__ == "__main__":
