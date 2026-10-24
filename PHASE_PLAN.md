@@ -141,7 +141,7 @@ Status is tracked on the project board with GitHub's standard columns: Backlog, 
 
 Keep the Quest on Talia's PC. Reserve an initial 45–60-minute wireless/app test, then focused 20–30-minute ready-to-test slots with a named behavior and exact build. Others continue independently. Prefer builds on Lee Jae-yeon's PC if capable; otherwise book Talia's machine separately so builds or automation do not interrupt a native/headset test.
 
-Every task ID below becomes an issue on the [project board](https://github.com/users/waaberi/projects/3), assigned to its owner, with Phase, Priority and Task ID fields. Issues for a phase are created when its work starts. Short IDs M1 and M2 remain stable tracking codes for Lee Jae-yeon and Jihyeon respectively.
+Each issue on the [project board](https://github.com/users/waaberi/projects/3) is one unit of work: the task IDs one person can finish in one branch, listed as checkboxes, with the owner as assignee and Phase, Priority and Task ID fields. Work stays in separate issues when others are blocked on part of it or it spans owners or subsystems. Each phase's physical checks are checkboxes in its team-test issue. Issues for a phase are created when its work starts. Short IDs M1 and M2 remain stable tracking codes for Lee Jae-yeon and Jihyeon respectively.
 
 Reserve roughly 4–7 joint hours for hardware and integration across the weekend, including the final 90–120-minute rehearsal. Aim for ready-to-test slots about every two hours, with one wearer and one desktop observer. Use an owner/start/end queue for the host PC. Keep the final 4–6 hours focused on integration and release; these reserves overlap the testing windows and must not be added twice.
 
