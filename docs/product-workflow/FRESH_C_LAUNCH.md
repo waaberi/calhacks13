@@ -44,6 +44,16 @@ project ZIP is then unpacked and enabled as a plain private package using normal
 project registration/Host lifecycle. Global extension dependency reconciliation
 and preference saving are not used.
 
+The fresh private bootstrap sets its transient `view.show_splash` preference false
+before the GUI event loop and before opening the working copy. It restores the
+original value on its owned stop/error path and never saves preferences. Blender
+5.2.2 rejects `--no-splash`; that unsupported CLI option is not used. This source
+guard prevents startup splash configuration, not a proven useful-viewport image.
+The ordinary launch check must inspect the actual native capture for a clear,
+properly framed model/sketch without overlays; fresh pixels alone are insufficient.
+Because `load_ui=False` preserves the new session layout, a saved starter's viewport
+layout is not a substitute for that check.
+
 The bootstrap verifies actual CAD/native-solver module paths and versions, project
 source file hashes, working-copy path, process identity and listener. Before the
 picker or Player, the launcher independently obtains a real native welcome,

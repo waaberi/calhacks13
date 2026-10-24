@@ -19,6 +19,8 @@ from fresh_c import (
     write_json,
 )
 
+_splash_original = None
+
 
 def inside(path, parent):
     return Path(path).resolve().is_relative_to(Path(parent).resolve())
@@ -34,9 +36,7 @@ def unpack(archive_path, destination):
             target.write_bytes(data)
 
 
-def start(config, expected_port=8765, before_register=None):
-    """Listener injection is an owned native-test hook, never a production CLI option."""
-    import bpy
+def private_resources(config):
     if "--factory-startup" not in sys.argv:
         raise RuntimeError("Fresh C requires a new factory-startup Blender")
     session = Path(config["session"]).resolve()
@@ -46,6 +46,30 @@ def start(config, expected_port=8765, before_register=None):
     for key in ("BLENDER_USER_CONFIG", "BLENDER_USER_SCRIPTS", "BLENDER_USER_DATAFILES"):
         if not os.environ.get(key) or not inside(os.environ[key], resources):
             raise RuntimeError("Blender user path is outside the private C resources")
+    return session, resources
+
+
+def suppress_private_startup_splash(config):
+    """Run before the GUI loop; this private-process preference is never saved."""
+    import bpy
+    global _splash_original
+    private_resources(config)  # Refuse a nonisolated invocation before changing anything.
+    if _splash_original is None:
+        _splash_original = bpy.context.preferences.view.show_splash
+    bpy.context.preferences.view.show_splash = False
+
+
+def restore_private_startup_splash():
+    import bpy
+    if _splash_original is not None:
+        bpy.context.preferences.view.show_splash = _splash_original
+
+
+def start(config, expected_port=8765, before_register=None):
+    """Listener injection is an owned native-test hook, never a production CLI option."""
+    import bpy
+    session, resources = private_resources(config)
+    suppress_private_startup_splash(config)
     if bpy.app.version != (5, 2, 2) or sys.version_info[:2] != (3, 13):
         raise RuntimeError("Fresh C requires the pinned Blender5.2.2/Python3.13")
     working, addon, cad = (Path(config[key]).resolve() for key in ("working_copy", "addon", "cad_extension"))
@@ -74,6 +98,8 @@ def start(config, expected_port=8765, before_register=None):
         raise RuntimeError("Pinned private native slvs/CAD registration did not load")
     # Register native constraint property groups before loading editable sketches.
     bpy.ops.wm.open_mainfile(filepath=str(working), load_ui=False)
+    if bpy.context.preferences.view.show_splash:
+        raise RuntimeError("Private C startup splash suppression was not retained")
     addon_dir = resources / "private-addons" / "spatial_modeling"
     unpack(addon, addon_dir)
     for name, digest in identity["files"].items():
@@ -111,11 +137,13 @@ def start(config, expected_port=8765, before_register=None):
              "cad_module": str(Path(cad_module.__file__).resolve()),
              "slvs_module": str(Path(slvs.__file__).resolve()),
              "slvs_native": str(Path(native_slvs.__file__).resolve()),
+             "startup_splash_enabled": bpy.context.preferences.view.show_splash,
              "host_epoch": host._session.host_epoch, "document": sync.describe()}
     write_json(session / "c-ready.json", ready)
     def stop_requested():
         if (session / "stop.signal").exists():
             host.stop()
+            restore_private_startup_splash()
             write_json(session / "c-stopped.json", {"pid": os.getpid(), "reason": "owned session stop.signal"})
             bpy.ops.wm.quit_blender()
             return None
@@ -133,6 +161,9 @@ def main():
     config = json.loads(args.config.read_text(encoding="utf-8"))
     if Path(config["session"]).resolve() != args.config.resolve().parent:
         raise RuntimeError("C bootstrap config/session mismatch")
+    # The initialize timer runs after GUI startup. Suppress the splash now, before
+    # registering that timer; doing it only inside start() is too late for capture.
+    suppress_private_startup_splash(config)
 
     def initialize():
         try:
@@ -143,6 +174,7 @@ def main():
             package = sys.modules.get("spatial_modeling.host")
             if package is not None:
                 package.stop()
+            restore_private_startup_splash()
             bpy.ops.wm.quit_blender()
 
     bpy.app.timers.register(initialize, first_interval=.5)
