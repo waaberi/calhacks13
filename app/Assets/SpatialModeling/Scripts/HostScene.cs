@@ -1,273 +1,198 @@
-using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Diagnostics;
-using System.IO;
-using System.Net.Sockets;
-using System.Text;
-using System.Threading;
-using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
-using Debug = UnityEngine.Debug;
+using UnityEngine.Rendering;
 
 namespace SpatialModeling
 {
     // P0 (#11): connects to the host add-on (or the fake host), draws the scene it sends,
-    // and shows a clear message when the connection stops.
+    // and shows the connection state from the contract's table (contracts/README.md, Connecting).
     public class HostScene : MonoBehaviour
     {
         [Header("Host connection (localhost only)")]
         [SerializeField] string host = "127.0.0.1";
         [SerializeField] int port = 8765;
-        [SerializeField] string userName = "Jihyeon";
+        [Tooltip("Shown to the other participants. Empty: \"VR user\".")]
+        [SerializeField] string userName = "";
 
         [Header("Display only. Never changes the native model.")]
         [SerializeField] Vector3 rootPosition = new Vector3(0f, 1f, 1.5f);
         [SerializeField] float displayScale = 5f;
+        [Tooltip("URP Lit material shared by every object; each object's color is set per renderer.")]
+        [SerializeField] Material objectMaterial;
 
-        enum Status { Connecting, Connected, NotResponding, Disconnected }
+        enum Status { Connecting, Connected, NotResponding, Disconnected, VersionMismatch }
 
-        readonly ConcurrentQueue<JObject> inbox = new ConcurrentQueue<JObject>();
+        const long NotRespondingMs = 6000;
+        static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
+
         readonly Dictionary<string, GameObject> objects = new Dictionary<string, GameObject>();
-        readonly object writeLock = new object();
-        readonly Stopwatch clock = Stopwatch.StartNew();
-
-        Thread thread;
-        volatile bool running;
-        volatile bool socketUp;
-        volatile NetworkStream stream;
-        volatile TcpClient client;
-        volatile string lastError = "";
-        long lastReceiveMs;
-        string appVersion;
+        HostLink link;
         Transform root;
-        bool everConnected, gotSnapshot;
+        MaterialPropertyBlock block;
+        Material fallbackMaterial;
+        GUIStyle style;
+
+        bool opened;        // a socket has opened at least once
+        bool connected;     // welcome and snapshot have arrived on this connection
+        bool haveScene;     // we are showing a scene, current or stale
+        string socketError = "", hostError = "", hostErrorCode = "", documentName = "";
         long revision;
-        float nextPing;
         Status status = Status.Connecting;
 
         void Awake()
         {
-            appVersion = Application.version;
             root = new GameObject("HostSceneRoot").transform;
             root.position = rootPosition;
             root.localScale = Vector3.one * displayScale;
+            block = new MaterialPropertyBlock();
         }
 
         void OnEnable()
         {
-            running = true;
-            thread = new Thread(Loop) { IsBackground = true };
-            thread.Start();
+            var name = string.IsNullOrWhiteSpace(userName) ? "VR user" : userName.Trim();
+            link = new HostLink(host, port, new JObject
+            {
+                ["role"] = "vr",
+                ["name"] = name,
+                ["app"] = new JObject { ["name"] = "SpatialModeling", ["version"] = Application.version }
+            });
         }
 
         void OnDisable()
         {
-            running = false;
-            try { client?.Close(); } catch { }
+            link?.Stop();   // its thread exits and posts nothing more, so a re-enable can't run two
+            link = null;
+            connected = false;
+        }
+
+        void OnDestroy()
+        {
+            ClearScene();
+            if (fallbackMaterial != null) Destroy(fallbackMaterial);
         }
 
         void Update()
         {
-            while (inbox.TryDequeue(out var msg)) Handle(msg);
+            if (link == null) return;
+            while (link.Events.TryDequeue(out var e)) Handle(e);
 
-            if (socketUp) everConnected = true;
-            long silence = clock.ElapsedMilliseconds - Interlocked.Read(ref lastReceiveMs);
-            if (!socketUp) status = everConnected ? Status.Disconnected : Status.Connecting;
-            else if (!gotSnapshot) status = Status.Connecting;
-            else if (silence > 6000) status = Status.NotResponding;
-            else status = Status.Connected;
-
-            if (socketUp && Time.unscaledTime >= nextPing)
-            {
-                nextPing = Time.unscaledTime + 2f;
-                Send(Make("ping", new JObject()));
-            }
+            if (link.SocketOpen && link.SilenceMs > NotRespondingMs) status = Status.NotResponding;
+            else if (link.SocketOpen) status = connected ? Status.Connected : Status.Connecting;
+            else if (hostErrorCode == "unsupported_version") status = Status.VersionMismatch;
+            else status = opened || haveScene ? Status.Disconnected : Status.Connecting;
         }
 
         void OnGUI()
         {
+            string stale = haveScene ? "\nShowing the last scene (stale). Edits are disabled." : "";
+            string reason = hostError.Length > 0 ? hostError : socketError;
             string text;
             switch (status)
             {
-                case Status.Connected: text = $"Connected - revision {revision}"; break;
+                case Status.Connected: text = $"Connected to {documentName} - revision {revision}"; break;
                 case Status.NotResponding: text = "Blender is not responding. Edits are disabled."; break;
-                case Status.Disconnected: text = $"Disconnected. Showing the last scene (stale). Reconnecting...\n{lastError}"; break;
-                default: text = $"Connecting to Blender at {host}:{port} ...\n{lastError}"; break;
+                case Status.VersionMismatch: text = $"This app and the Blender add-on don't match.\n{hostError}"; break;
+                case Status.Disconnected: text = $"Disconnected. Reconnecting...{stale}\n{reason}"; break;
+                default: text = $"Connecting to Blender at {host}:{port} ...{stale}\n{(link != null && link.SocketOpen ? "" : reason)}"; break;
             }
-            var style = new GUIStyle(GUI.skin.label) { fontSize = 26 };
+            if (style == null) style = new GUIStyle(GUI.skin.label) { fontSize = 26 };
             style.normal.textColor = status == Status.Connected ? Color.white : new Color(1f, 0.6f, 0.2f);
-            GUI.Label(new Rect(20, 20, 1400, 140), text, style);
+            GUI.Label(new Rect(20, 20, 1400, 200), text, style);
         }
 
-        // ---------- network thread ----------
-
-        void Loop()
+        void Handle(HostEvent e)
         {
-            while (running)
+            switch (e.Kind)
             {
-                try
-                {
-                    using (var c = new TcpClient())
+                case HostEventKind.Opened: opened = true; socketError = ""; break;
+                case HostEventKind.Closed: connected = false; socketError = e.Text; break;
+                case HostEventKind.Welcome: hostError = hostErrorCode = ""; documentName = e.Text; break;
+                case HostEventKind.Error:
+                    hostErrorCode = e.Code;
+                    hostError = $"{e.Text} ({e.Code})";
+                    Debug.LogWarning("Host error: " + hostError);
+                    break;
+                case HostEventKind.Warning: Debug.LogWarning("HostScene: " + e.Text); break;
+                case HostEventKind.Scene:
+                    if (e.Snapshot) ClearScene();
+                    if (e.Revision.HasValue) revision = e.Revision.Value;
+                    foreach (var id in e.Removed) Remove(id);
+                    foreach (var r in e.Objects)
                     {
-                        client = c;
-                        c.Connect(host, port);
-                        c.NoDelay = true;
-                        var ns = c.GetStream();
-                        stream = ns;
-                        Interlocked.Exchange(ref lastReceiveMs, clock.ElapsedMilliseconds);
-                        socketUp = true;
-                        Send(Make("hello", new JObject
-                        {
-                            ["role"] = "vr",
-                            ["name"] = userName,
-                            ["app"] = new JObject { ["name"] = "SpatialModeling", ["version"] = appVersion }
-                        }));
-                        using (var reader = new StreamReader(ns, new UTF8Encoding(false)))
-                        {
-                            string line;
-                            while (running && (line = reader.ReadLine()) != null)
-                            {
-                                Interlocked.Exchange(ref lastReceiveMs, clock.ElapsedMilliseconds);
-                                if (line.Length == 0) continue;
-                                try { inbox.Enqueue(JObject.Parse(line)); } catch (JsonException) { }
-                            }
-                        }
-                        lastError = "The host closed the connection.";
+                        try { ApplyObject(r); }
+                        catch (System.Exception ex) { Debug.LogWarning($"HostScene: couldn't draw {r.Id}: {ex.Message}"); }
                     }
-                }
-                catch (Exception e) { lastError = e.Message; }
-
-                socketUp = false;
-                stream = null;
-                inbox.Enqueue(new JObject { ["type"] = "_closed" });
-                for (int i = 0; i < 20 && running; i++) Thread.Sleep(100); // retry every 2 s
-            }
-        }
-
-        static JObject Make(string type, JObject payload) => new JObject
-        {
-            ["v"] = 1,
-            ["type"] = type,
-            ["id"] = Guid.NewGuid().ToString("N"),
-            ["payload"] = payload
-        };
-
-        void Send(JObject msg)
-        {
-            var s = stream;
-            if (s == null) return;
-            var bytes = Encoding.UTF8.GetBytes(msg.ToString(Formatting.None) + "\n");
-            lock (writeLock) { try { s.Write(bytes, 0, bytes.Length); } catch { } }
-        }
-
-        // ---------- main thread: apply messages ----------
-
-        void Handle(JObject msg)
-        {
-            string type = (string)msg["type"];
-            var p = msg["payload"] as JObject;
-            switch (type)
-            {
-                case "_closed": gotSnapshot = false; break;
-                case "welcome": lastError = ""; break;
-                case "scene.snapshot": ClearScene(); ApplyPayload(p); gotSnapshot = true; break;
-                case "scene.update": ApplyPayload(p); break;
-                case "error":
-                    lastError = $"{(string)p?["code"]}: {(string)p?["message"]}";
-                    Debug.LogWarning("Host error " + lastError);
+                    if (e.Snapshot) connected = haveScene = true;
                     break;
             }
         }
 
-        void ApplyPayload(JObject p)
+        // ---------- drawing ----------
+
+        Material ObjectMaterial
         {
-            if (p == null) return;
-            if (p["document"] is JObject d) revision = (long?)d["revision"] ?? revision;
-            if (p["removed"] is JArray removed) foreach (var r in removed) Remove((string)r);
-            if (p["objects"] is JArray arr) foreach (var o in arr) ApplyObject((JObject)o);
+            get
+            {
+                if (objectMaterial != null) return objectMaterial;
+                if (fallbackMaterial == null)
+                {
+                    Debug.LogError("HostScene: assign Object Material (URP Lit). Players don't include a default material.");
+                    var shader = Shader.Find("Universal Render Pipeline/Lit");
+                    if (shader != null) fallbackMaterial = new Material(shader);
+                }
+                return fallbackMaterial;
+            }
         }
 
-        void ApplyObject(JObject o)
+        void ApplyObject(ObjectRecord r)
         {
-            string id = (string)o["id"];
-            if (string.IsNullOrEmpty(id)) return;
-
-            if (!objects.TryGetValue(id, out var go))
+            if (!objects.TryGetValue(r.Id, out var go))
             {
-                go = GameObject.CreatePrimitive(PrimitiveType.Cube); // gives us the default URP material
-                Destroy(go.GetComponent<Collider>());                // selection colliders come in P2
-                go.GetComponent<MeshFilter>().sharedMesh = null;
+                go = new GameObject(r.Id, typeof(MeshFilter), typeof(MeshRenderer));   // selection colliders come in P2
                 go.transform.SetParent(root, false);
-                objects[id] = go;
+                go.GetComponent<MeshRenderer>().sharedMaterial = ObjectMaterial;
+                objects[r.Id] = go;
             }
-            go.name = (string)o["name"] ?? id;
-            go.SetActive((bool?)o["visible"] ?? true);
+            go.name = r.Name;
+            go.SetActive(r.Visible);
 
             // Wire transforms are world space, so objects stay flat under the display root.
-            if (o["transform"] is JObject t)
+            if (r.HasTransform)
             {
-                var loc = (JArray)t["location"]; var rot = (JArray)t["rotation"]; var sc = (JArray)t["scale"];
-                go.transform.localPosition = ToUnity((float)loc[0], (float)loc[1], (float)loc[2]);
-                // Blender quaternion is [w, x, y, z]; Y and Z swap, so the vector part flips sign.
-                go.transform.localRotation = new Quaternion(-(float)rot[1], -(float)rot[3], -(float)rot[2], (float)rot[0]);
-                go.transform.localScale = new Vector3((float)sc[0], (float)sc[2], (float)sc[1]);
+                go.transform.localPosition = r.Position;
+                go.transform.localRotation = r.Rotation;
+                go.transform.localScale = r.Scale;
             }
 
             var mf = go.GetComponent<MeshFilter>();
             var mr = go.GetComponent<MeshRenderer>();
-            if (o["mesh"] is JObject m)
+            if (r.HasMesh)
             {
                 if (mf.sharedMesh != null) Destroy(mf.sharedMesh);
-                mf.sharedMesh = BuildMesh(m, go.name);
-                mr.enabled = true;
-            }
-            else if (o["mesh"] != null && o["mesh"].Type == JTokenType.Null)
-            {
-                if (mf.sharedMesh != null) Destroy(mf.sharedMesh);
-                mf.sharedMesh = null;   // camera, light, empty: nothing to draw
-                mr.enabled = false;
+                mf.sharedMesh = r.Mesh != null ? BuildMesh(r.Mesh, r.Name) : null;
+                mr.enabled = r.Mesh != null;
             }
 
-            if (o["color"] is JArray c && c.Count >= 3)
-                mr.material.color = new Color((float)c[0], (float)c[1], (float)c[2], c.Count > 3 ? (float)c[3] : 1f).gamma;
+            if (r.Color.HasValue)
+            {
+                // The wire color is linear; a vector reaches the shader unconverted.
+                var c = r.Color.Value;
+                if (QualitySettings.activeColorSpace == ColorSpace.Gamma) c = c.gamma;
+                block.Clear();
+                block.SetVector(BaseColorId, c);
+                mr.SetPropertyBlock(block);
+            }
+            else mr.SetPropertyBlock(null);   // no material: the shared material's own color
         }
 
-        // The one place that converts Blender (right-handed, Z up) to Unity (left-handed, Y up).
-        // Matches "Blender to Unity" in contracts/README.md (#38). Change only here.
-        static Vector3 ToUnity(float x, float y, float z) => new Vector3(x, z, y);
-
-        static Mesh BuildMesh(JObject m, string name)
+        static Mesh BuildMesh(MeshData d, string name)
         {
-            var pos = (JArray)m["positions"];
-            var nor = m["normals"] as JArray;
-            var idx = (JArray)m["indices"];
-            int n = pos.Count / 3;
-
-            var verts = new Vector3[n];
-            for (int i = 0; i < n; i++)
-                verts[i] = ToUnity((float)pos[3 * i], (float)pos[3 * i + 1], (float)pos[3 * i + 2]);
-
-            var tris = new int[idx.Count];
-            for (int i = 0; i + 2 < tris.Length; i += 3)   // swap two corners: the axis swap reverses the winding
-            {
-                tris[i] = (int)idx[i];
-                tris[i + 1] = (int)idx[i + 2];
-                tris[i + 2] = (int)idx[i + 1];
-            }
-
             var mesh = new Mesh { name = name };
-            if (n > 65535) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
-            mesh.vertices = verts;
-            mesh.triangles = tris;
-            if (nor != null && nor.Count == pos.Count)
-            {
-                var norms = new Vector3[n];
-                for (int i = 0; i < n; i++)
-                    norms[i] = ToUnity((float)nor[3 * i], (float)nor[3 * i + 1], (float)nor[3 * i + 2]);
-                mesh.normals = norms;
-            }
+            if (d.Positions.Length > 65535) mesh.indexFormat = IndexFormat.UInt32;
+            mesh.vertices = d.Positions;
+            mesh.triangles = d.Indices;
+            if (d.Normals != null) mesh.normals = d.Normals;
             else mesh.RecalculateNormals();
             mesh.RecalculateBounds();
             return mesh;
