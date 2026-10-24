@@ -20,6 +20,7 @@ namespace SpatialModeling
         public string Notice { get; private set; } = "Waiting for Blender snapshot";
         public string Mode { get; set; } = "exclusive";
         public bool Ready { get; private set; }
+        public bool SceneCurrent { get; set; } = true; // Bridge binds this to HostScene's accepted render state.
         public bool CanEdit { get; private set; }
         public bool SketchAvailable { get; private set; }
         public bool Busy => acquireId != null || commandId != null;
@@ -31,6 +32,7 @@ namespace SpatialModeling
         JObject identity, pendingCommand;
         string acquireId, commandId, leaseId;
         bool cancelAcquire;
+        readonly HashSet<string> cancelledAcquisitions = new HashSet<string>();
         public JObject Selected => Objects.TryGetValue(SelectedId, out var o) ? o : Sketches.TryGetValue(SelectedId, out var s) ? s : null;
 
         public void Disconnect(string reason)
@@ -40,6 +42,7 @@ namespace SpatialModeling
             Draft = null;
             acquireId = commandId = leaseId = null;
             pendingCommand = null;
+            cancelledAcquisitions.Clear(); // A disconnected actor's permissions are released by the host.
             Leases = new JArray();
             Notice = "Connection lost. " + (OutcomeUnknown ? "Last edit outcome unknown; wait for a fresh snapshot. " : "Edits disabled. ") + reason;
             Changed?.Invoke();
@@ -98,10 +101,18 @@ namespace SpatialModeling
                     Leases = (JArray)(p["leases"]?.DeepClone() ?? new JArray());
                     break;
                 case "lease.granted":
+                    if (cancelledAcquisitions.Remove((string)message["re"] ?? ""))
+                    {
+                        var lateId = (string)p["lease"]?["lease_id"];
+                        if (lateId != null) Send?.Invoke(Envelope("lease.release", new JObject { ["lease_id"] = lateId }));
+                        if ((string)message["re"] == acquireId) { acquireId = null; pendingCommand = null; }
+                        break;
+                    }
                     if ((string)message["re"] != acquireId) break;
                     acquireId = null;
                     leaseId = (string)p["lease"]?["lease_id"];
-                    if (cancelAcquire) { Release(); pendingCommand = null; Notice = "Cancelled before native mutation"; break; }
+                    if (cancelAcquire || OutcomeUnknown || !Ready || !SceneCurrent || pendingCommand == null)
+                    { Release(); pendingCommand = null; Notice = "Cancelled before native mutation"; break; }
                     if (string.IsNullOrEmpty(leaseId)) { Fail("Host granted no usable permission"); break; }
                     pendingCommand["payload"]["lease"] = leaseId;
                     commandId = (string)pendingCommand["id"];
@@ -158,7 +169,7 @@ namespace SpatialModeling
 
         public bool BeginDraft(string op, JObject args, bool targeted)
         {
-            if (!Ready || !CanEdit || OutcomeUnknown || Busy) return Reject("Wait for a current editable scene and the previous receipt");
+            if (!Ready || !SceneCurrent || !CanEdit || OutcomeUnknown || Busy) return Reject("Wait for a current editable scene and the previous receipt");
             if (targeted && Selected == null) return Reject("Select the native target first");
             var p = (JObject)identity.DeepClone();
             p["base_revision"] = Revision; p["source"] = "ui"; p["op"] = op; p["args"] = args.DeepClone();
@@ -171,7 +182,7 @@ namespace SpatialModeling
 
         public bool Apply()
         {
-            if (!Ready || !CanEdit || OutcomeUnknown || Busy || Draft == null) return Reject("No ready native draft to apply");
+            if (!Ready || !SceneCurrent || !CanEdit || OutcomeUnknown || Busy || Draft == null) return Reject("No ready native draft to apply");
             string target = (string)Draft["target"]?["id"];
             string owner = ConflictOwner(target);
             if (owner != null) return Reject(owner + " owns this edit. Inspection remains available.");
@@ -201,6 +212,7 @@ namespace SpatialModeling
 
         public void Timeout()
         {
+            if (acquireId != null) { cancelledAcquisitions.Add(acquireId); cancelAcquire = true; pendingCommand = null; }
             if (Busy) Freeze("No native acknowledgement. Outcome unknown; reconnect before editing. The request will not be repeated.");
             Changed?.Invoke();
         }

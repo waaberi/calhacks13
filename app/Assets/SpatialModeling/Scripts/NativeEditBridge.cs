@@ -22,13 +22,16 @@ namespace SpatialModeling
 
         void OnHostEvent(HostEvent e)
         {
+            Session.SceneCurrent = scene.IsCurrent;
             if (e.Kind == HostEventKind.Closed) { connected = false; Session.Disconnect(e.Text); }
+            if (e.Kind == HostEventKind.InvalidScene) { Session.Disconnect("Native scene was rejected; waiting for a valid reconnect snapshot"); return; }
             if (e.RawMessage != null) Session.Receive(e.RawMessage);
         }
 
         void Update()
         {
             if (scene == null) return;
+            Session.SceneCurrent = scene.IsCurrent;
             bool alive = scene.Link != null && scene.Link.SocketOpen && scene.Link.SilenceMs <= 6000;
             if (!alive && connected) Session.Disconnect("Blender is not responding");
             connected = alive;
