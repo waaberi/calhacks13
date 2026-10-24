@@ -6,10 +6,14 @@ supported native edit. Viewing, navigation, selection and the table are never
 blocked, and while nobody else holds a lease Blender behaves exactly as without
 the add-on.
 
-Blender has no hook that runs before an operator or a property change: its
-handlers (depsgraph, msgbus, undo) all run after, and built-in operators can't be
-replaced or given another poll from Python. So the gate stands in front of the
-input that starts an edit, and asks host.blocked() what that edit would change:
+Blender exposes no general cancellable mutation hook to this add-on. In
+particular, undo_pre is a notification, not a permission veto; msgbus and scene
+observers report changes rather than authorize them. Built-in operators do not
+consult this gate when called directly. The gate therefore stands in front of
+supported inputs and asks host.blocked() what an edit would change. It is not a
+boundary against unrestricted in-process Python. See
+docs/product-workflow/NATIVE_LOCK_BOUNDARY.md for the four failed routes and
+architecture alternatives.
 
 1. Shortcuts. SHORTCUTS puts an add-on keymap item on each of Blender's own
    editing keys. Blender tries add-on items first. Gate's poll is false unless
@@ -30,9 +34,9 @@ input that starts an edit, and asks host.blocked() what that edit would change:
    lets everything else through, and everything while another modal operator
    (a transform, say) runs in that window. It ends itself when no lease is held.
    While it runs, Blender postpones its autosave, as for any modal operator.
-3. Edit Mode entered on a blocked object by a route that isn't gated (the mode
-   menu, the pie) is left again at the next timer tick, before anything in Edit
-   Mode could change the object's data.
+3. Edit Mode entered on a blocked object by an ungated route (the mode menu,
+   the pie) is left again at the next timer tick. This is recovery: it cannot
+   prevent a script from editing data before that tick.
 
 Everything else isn't gated: the header menus, F3 search, the Python console,
 scripts, other add-ons, the Outliner's renaming and drag and drop, and edits
