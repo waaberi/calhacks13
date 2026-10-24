@@ -1,0 +1,36 @@
+# Team uses Windows, macOS and Linux: store text with LF in the repo and let
+# Git pick the right line ending on checkout.
+* text=auto
+
+# Scripts that only run correctly with a specific line ending
+*.sh   text eol=lf
+*.ps1  text eol=crlf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# Binary files: never normalize, diff or text-merge
+*.blend   binary
+*.fbx     binary
+*.glb     binary
+*.stl     binary
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.psd     binary
+*.tga     binary
+*.exr     binary
+*.hdr     binary
+*.wav     binary
+*.ogg     binary
+*.mp3     binary
+*.mp4     binary
+*.ttf     binary
+*.otf     binary
+*.dll     binary
+*.so      binary
+*.dylib   binary
+*.exe     binary
+*.zip     binary
+*.onnx    binary
+# Unity writes lighting data as binary even in Force Text mode
+LightingData.asset binary

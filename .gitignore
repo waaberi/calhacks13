@@ -1,0 +1,95 @@
+# ---------------------------------------------------------------------------
+# Secrets and machine-specific settings: never commit these.
+# Put per-machine paths/tokens in *.local.* files or .env (see CONTRIBUTING.md).
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.local.json
+*.local.toml
+*.local.yaml
+*.local.yml
+*.pem
+*.key
+*.pfx
+*.p12
+secrets/
+
+# ---------------------------------------------------------------------------
+# OS and editor files
+# ---------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+.idea/
+.vs/
+.vscode/
+
+# ---------------------------------------------------------------------------
+# Unity (the project lives in app/)
+# ---------------------------------------------------------------------------
+/app/[Ll]ibrary/
+/app/[Tt]emp/
+/app/[Oo]bj/
+/app/[Bb]uild/
+/app/[Bb]uilds/
+/app/[Ll]ogs/
+/app/[Uu]ser[Ss]ettings/
+/app/[Mm]emoryCaptures/
+/app/[Rr]ecordings/
+/app/Assets/Plugins/Editor/JetBrains*
+/app/.utmp/
+/app/*.csproj
+/app/*.sln
+/app/*.slnx
+/app/*.user
+/app/*.pidb
+/app/*.pdb
+/app/*.mdb
+/app/*.opendb
+/app/*.VC.db
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+sysinfo.txt
+crashlytics-build.properties
+*.apk
+*.aab
+*.unitypackage
+
+# ---------------------------------------------------------------------------
+# Python (host service, Blender add-ons, tests)
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# ---------------------------------------------------------------------------
+# .NET (VoiceCore tests)
+# ---------------------------------------------------------------------------
+[Bb]in/
+[Oo]bj/
+TestResults/
+*.user
+
+# ---------------------------------------------------------------------------
+# Blender backup saves (foo.blend1, foo.blend2, ...)
+# ---------------------------------------------------------------------------
+*.blend[0-9]*
+
+# ---------------------------------------------------------------------------
+# Build outputs, downloads and logs.
+# Release packages go to GitHub Releases, not Git. Large downloads such as
+# speech models are fetched by a script with a pinned version and checksum.
+# ---------------------------------------------------------------------------
+/dist/
+/build/
+/downloads/
+/.cache/
+*.log

@@ -1,0 +1,9 @@
+# Python lint settings for host/, blender_addon/, tests/ and CI scripts.
+# Blender 5.2.x bundles Python 3.13, so target that version.
+target-version = "py313"
+line-length = 100
+extend-exclude = ["app"]
+
+[lint]
+# Ruff's default rules (pyflakes plus core pycodestyle errors) keep CI quiet
+# enough for the event while still catching real mistakes.

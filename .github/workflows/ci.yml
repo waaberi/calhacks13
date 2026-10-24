@@ -1,0 +1,79 @@
+name: CI
+
+# Fast feedback on every PR and on main. These checks are informational (not
+# required to merge) so a flaky job never blocks the team during the event.
+# Unity builds, Blender, Quest and Windows-native tests run on real machines.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.13" # matches the Python bundled with Blender 5.2.x
+
+jobs:
+  hygiene:
+    name: Repo hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Case clashes, Unity .meta files, secrets, large files
+        run: python .github/scripts/check_repo.py
+
+  python:
+    name: Python lint, contracts and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Ruff
+        run: ruff check --output-format=github .
+      - name: Contract schemas and samples
+        run: python .github/scripts/validate_contracts.py
+      - name: Pytest
+        run: |
+          if git ls-files 'tests/*test_*.py' 'tests/*_test.py' | grep -q .; then
+            pytest tests
+          else
+            echo "No Python tests yet; skipping."
+          fi
+
+  voicecore:
+    name: VoiceCore .NET tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Find test projects
+        id: find
+        run: |
+          if git ls-files 'tests/voice/*.csproj' | grep -q .; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No .NET test project in tests/voice yet; skipping."
+          fi
+      - if: steps.find.outputs.found == 'true'
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "10.0.x"
+      - if: steps.find.outputs.found == 'true'
+        run: dotnet test tests/voice

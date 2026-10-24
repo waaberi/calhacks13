@@ -1,0 +1,33 @@
+# Auto-requests reviews from the owner of each area (ownership table in PHASE_PLAN.md).
+# Reviews are not required to merge; this only routes notifications.
+# The last matching line wins, so nested exceptions come after their parent folder.
+# TODO: replace each <...> placeholder with a GitHub username and uncomment the line.
+
+# Waaberi owns root Git/CI configuration and anything not listed below.
+*                                               @waaberi
+/contracts/                                     @waaberi
+/host/                                          @waaberi
+/blender_addon/spatial_modeling/                @waaberi
+/voice-spec/                                    @waaberi
+/tests/backend/                                 @waaberi
+/tests/voice/                                   @waaberi
+
+# Lee Jae-yeon
+# /desktop-capture/                             @<lee-jae-yeon>
+# /blender_addon/spatial_modeling/sketch/       @<lee-jae-yeon>
+# /blender_addon/spatial_modeling/remote_client/ @<lee-jae-yeon>
+# /tests/protocol/                              @<lee-jae-yeon>
+# /tests/security/                              @<lee-jae-yeon>
+# /scripts/windows-release/                     @<lee-jae-yeon>
+
+# Jihyeon
+# /app/                                         @<jihyeon>
+
+# Talia
+# /samples/mechanical/                          @<talia>
+# /acceptance/native-reference/                 @<talia>
+# /docs/product-workflow/                       @<talia>
+# /docs/demo/                                   @<talia>
+
+# Waaberi's VoiceCore inside Jihyeon's app/ (must stay after the /app/ line)
+/app/Assets/SpatialModeling/Scripts/VoiceCore/  @waaberi
