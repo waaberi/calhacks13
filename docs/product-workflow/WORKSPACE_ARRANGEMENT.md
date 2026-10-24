@@ -4,6 +4,49 @@ This is the user's new interaction redesign after accepting the P2 menu on
 679fd04. Prior P2 acceptance is preserved. It does not authorize native P3 editing,
 FPS work, or a main merge.
 
+## Meta room alignment repair
+
+Meta's saved Scene Model is the source of wall, floor and tabletop positions,
+orientations and bounds. Do not substitute the startup-facing direction for an
+available scene anchor. The user's actual captured room is used by the optional
+`CALHACKS_ROOM_REPLAY` verification gate; keep that raw room evidence local.
+
+The real capture exposed the missing-desk bug: SDK207's `GetClassifications`
+explicitly no longer upgrades legacy DESK to TABLE, while its `Labels` getter
+does. Normalize both names. The reference room has four such annotations;
+three are tabletop surfaces, and one is almost coplanar with the floor. Exclude
+that floor-height patch from desk selection using the actual same-room floor.
+This recovers real desk bounds and headings instead of showing a guessed desk.
+
+An adjusting guide within30cm of a matching finite Meta surface adopts that
+surface's position and orientation. At adjacent/overlapping annotations, retain
+the chosen source unless another is at least2.5cm nearer. This prevents switching
+between overlapping tabletops. Wall guides can move onto perpendicular walls.
+Automatic orientation/contact changes rebase both one-hand and two-hand holding,
+so the next frame cannot restore an obsolete pickup orientation. Stick click
+selects free adjustment; automatic attraction is bypassed but desk/floor remain
+horizontal and walls upright. Model contact behavior remains unchanged.
+
+When a desk is genuinely unscanned, its manual fallback is a circular horizontal
+height level. It has no guessed rectangular desk-edge heading. A detected desk
+uses its actual rectangular bounds. Label/handle contrast and world stationarity
+are retained. The circular fallback is not reported as an automatically detected
+desk.
+
+The captured Meta and Unity head poses agreed within0.03mm in the recorded sample.
+The repair therefore preserves the existing tracking origin. Replay verifies all
+four actual wall corner sets against the SDK's anchor-plus-Rect convention, each
+real guide's attachment/orientation, tabletop volume tops, and horizontal desk
+constraints. A replay failure exposed overlapping-desk selection before source
+preference was added; its failed log is retained. Software agreement with Meta
+data is separate from human acceptance of the scan's fit to physical walls.
+
+Optional room diagnostics run after placement/visual updates, once per load.
+An advertised component can still have unreadable bounds; capture skips those
+fields and cannot interrupt the frame. The initial diagnostic assumed readable
+bounds and failed in the live Player; that failure and its correction are retained.
+No raw room layout or precise machine/user data belongs in public issue evidence.
+
 ## Modes and controls
 
 The top-left of the Blender preview's app-owned frame says **Arrange space**.
@@ -77,8 +120,9 @@ available, a manual amber grid appears along the settled workspace forward.
 Repeated selection keeps the existing correction instead of resetting it.
 Point at its
 grid or central label, hold grip, aim/move it into place, and release. Desk/floor
-levels remain horizontal; wall levels remain vertical. Stick left/right changes
-yaw, up/down changes distance; two hands resize. The grid stays visible and stationary
+levels remain horizontal; wall levels remain vertical. Automatic guide placement
+adopts nearby matching Meta surfaces. Stick click enables free adjustment, where
+left/right changes yaw; up/down changes distance and two hands resize. The guide stays visible and stationary
 after release, ready to regrab. No controller-touch marking or hidden trigger capture
 is involved. An adjusted level overrides its automatic source, so that
 inaccurate anchor cannot fight the correction. Clear manual levels restores those
@@ -137,3 +181,6 @@ P1/P2 movement/controller/readiness/native/render/freshness gates stay in force.
 Software checks do not establish physical room-scan availability or exact headset
 alignment. The accepted old P2 binary remains a rollback. This redesign needs
 focused new-feature observation, not repeated testing of the old accepted menu.
+For this repair, the actual room was received and replayed; physical acceptance
+of the replacement remains distinct from that software verification. Do not
+request another scan or repeat an old menu test as an alignment diagnostic.
