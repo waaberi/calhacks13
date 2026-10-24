@@ -88,10 +88,12 @@ namespace SpatialModeling
         }
         IEnumerator Receipt(string step, bool reject = false)
         {
+            string expected = session.LastSubmittedId;
             double until = Time.realtimeSinceStartupAsDouble + 15;
             while (session.Busy && !session.OutcomeUnknown && Time.realtimeSinceStartupAsDouble < until) yield return null;
             ((JArray)report["steps"]).Add(new JObject { ["step"] = step, ["receipt"] = session.LastReceipt?.DeepClone() }); Write();
-            if (session.Busy || session.OutcomeUnknown || (string)session.LastReceipt?["outcome"] != (reject ? "rejected" : "applied")) Fail(step + ": " + session.Notice);
+            if (session.Busy || session.OutcomeUnknown || expected == null || (string)session.LastReceipt?["request_id"] != expected
+                || (string)session.LastReceipt?["outcome"] != (reject ? "rejected" : "applied")) Fail(step + ": " + session.Notice);
         }
         bool Extent(string sketch, double width, double height)
         {
