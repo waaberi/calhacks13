@@ -1,0 +1,6 @@
+{
+    "name": "SpatialModeling.VoiceCore.Whisper",
+    "rootNamespace": "SpatialModeling.VoiceCore.Whisper",
+    "references": ["SpatialModeling.VoiceCore", "SpatialModeling.VoiceCore.Vosk"],
+    "noEngineReferences": true
+}

@@ -43,13 +43,15 @@ Undo/Redo) is remembered until the next file load and given back.
 Change observation: depsgraph_update_post marks the scene as changed and notes
 whose geometry changed; undo_post and redo_post mark everything, since Undo
 replaces data-blocks. A flush looks every object up again, diffs its record
-(name, parent, visibility, transform, color) with what clients have, and
-re-evaluates only meshes that may have changed, comparing them by digest. An
-update leaves out `mesh` when the mesh didn't change. poll() flushes at most
-every MIN_INTERVAL, and waits COST_FACTOR times as long as the last flush took,
-so a drag in Blender streams small updates and a heavy mesh can't stall
-Blender. It also diffs every RESCAN_INTERVAL as a safety net. A flush that
-finds nothing different sends nothing, so our own writes (the IDs) can't loop.
+(name, parent, visibility, transform, color) and the collections holding it
+with what clients have, and re-evaluates only meshes that may have changed,
+comparing them by digest. An update leaves out `mesh` when the mesh didn't
+change; one after a move to another collection only has a new generation,
+since the wire has no collections. poll() flushes at most every MIN_INTERVAL,
+and waits COST_FACTOR times as long as the last flush took, so a drag in
+Blender streams small updates and a heavy mesh can't stall Blender. It also
+diffs every RESCAN_INTERVAL as a safety net. A flush that finds nothing
+different sends nothing, so our own writes (the IDs) can't loop.
 """
 
 import json
@@ -81,13 +83,14 @@ _assigned = {}  # session_uid -> the ID we gave that object; cleared when a file
 class _Entry:
     """One object as clients have it."""
 
-    __slots__ = ("generation", "mesh", "record", "uid")
+    __slots__ = ("collections", "generation", "mesh", "record", "uid")
 
-    def __init__(self, record, mesh, generation, uid):
+    def __init__(self, record, mesh, generation, uid, collections=frozenset()):
         self.record = record  # scene.record(): everything but generation and mesh
         self.mesh = mesh  # scene.Mesh or None
         self.generation = generation
         self.uid = uid  # the object's session_uid when we last saw it
+        self.collections = collections  # session_uids of the scene's collections holding it
 
     def wire(self, with_mesh):
         """The object in scene.snapshot.schema.json's order; `mesh` only if with_mesh."""
@@ -223,22 +226,30 @@ def _fit(payload):
     """Make the payload fit in one line by sending the biggest meshes as null. Rare.
 
     The contract limits a line to 16 MiB (roughly 90,000 triangles in a
-    snapshot). Each object left without its mesh is logged.
+    snapshot). Each object left without its mesh is logged. Each mesh is
+    encoded once and the payload's size kept as a sum: encoding the whole
+    payload again after each null froze Blender for a minute on 200 objects.
     """
     objects = payload["objects"]
     if _estimate(objects) <= FIT_BYTES:
         return payload
-    while _size(payload) > FIT_BYTES:
-        meshes = [o for o in objects if o.get("mesh")]
-        if not meshes:
-            break  # protocol.encode will refuse it
-        biggest = max(meshes, key=lambda o: len(o["mesh"]["positions"]) + len(o["mesh"]["indices"]))
+    meshes = [o for o in objects if o.get("mesh")]
+    sizes = [_size(o["mesh"]) for o in meshes]
+    bare = [dict(o, mesh=None) if o.get("mesh") else o for o in objects]
+    total = _size(dict(payload, objects=bare)) + sum(sizes) - 4 * len(sizes)  # "null" is 4 bytes
+    order = sorted(range(len(meshes)), reverse=True,  # biggest first; ties in object order
+                   key=lambda i: len(meshes[i]["mesh"]["positions"]) + len(meshes[i]["mesh"]["indices"]))
+    for i in order:
+        if total <= FIT_BYTES:
+            break
+        biggest = meshes[i]
         text = (f"Spatial Modeling: {biggest['name']}'s mesh ({len(biggest['mesh']['indices']) // 3} "
                 "triangles) is too large to send; clients get it without a mesh")
         print(text)
         log.warning(text)
         biggest["mesh"] = None
-    return payload
+        total -= sizes[i] - 4
+    return payload  # still too big without any mesh: protocol.encode will refuse it
 
 
 def _snapshot_payload(st, doc):
@@ -248,6 +259,22 @@ def _snapshot_payload(st, doc):
 
 def _document_state(doc):
     return doc["name"], doc["dirty"]
+
+
+def _memberships(scn):
+    """{object session_uid: frozenset of the session_uids of the scene's collections holding it}.
+
+    Not sent: the wire has no collections. A move to another collection (the
+    Outliner's drag and drop) still changes the object, so it gets a new
+    generation, and gate.py sees it (#80). Collections by session_uid, so
+    renaming one changes nothing.
+    """
+    holders = {}
+    for coll in (scn.collection, *scn.collection.children_recursive):
+        uid = coll.session_uid
+        for obj in coll.objects:
+            holders.setdefault(obj.session_uid, set()).add(uid)
+    return {k: frozenset(v) for k, v in holders.items()}
 
 
 def _flush(st):
@@ -264,6 +291,7 @@ def _flush(st):
 
     ids = _identify(st, view_layer.objects)
     id_of = {obj.session_uid: oid for oid, obj in ids}
+    memberships = _memberships(scn)
     current = {}
     for oid, obj in ids:
         parent = obj.parent
@@ -284,7 +312,8 @@ def _flush(st):
                 mesh = scene.evaluated_mesh(obj, depsgraph, scale)
             except Exception:  # one odd object must not stop the sync of all the others
                 log.exception("could not read %s's mesh; clients keep the last one", obj.name)
-        current[oid] = _Entry(record, mesh, old.generation if old else 0, obj.session_uid)
+        current[oid] = _Entry(record, mesh, old.generation if old else 0, obj.session_uid,
+                              memberships.get(obj.session_uid, frozenset()))
 
     if not st.started:  # what the file had when the server started is revision 0
         st.objects, st.units, st.started = current, units, True
@@ -298,7 +327,7 @@ def _flush(st):
             changed.append((oid, True))
             continue
         new_mesh = not _same_mesh(old.mesh, entry.mesh)
-        if new_mesh or entry.record != old.record:
+        if new_mesh or entry.record != old.record or entry.collections != old.collections:
             changed.append((oid, new_mesh))
     removed = [oid for oid in st.objects if oid not in current]
     if resnapshot or changed or removed:

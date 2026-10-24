@@ -1,0 +1,21 @@
+{
+  "v": 1,
+  "type": "result",
+  "id": "4c5d6e7f8a9b40c1d2e3f4a5b6c7d8e9",
+  "re": "9f8e7d6c5b4a43219f8e7d6c5b4a4321",
+  "payload": {
+    "request_id": "9f8e7d6c5b4a43219f8e7d6c5b4a4321",
+    "op": "voice.run",
+    "target": "fd7bd4ddae444528a4fedbc562fe018b",
+    "actor": {
+      "actor_id": "be10cd89a4e841e7b708ae9cdbefeb77",
+      "name": "Talia",
+      "role": "vr"
+    },
+    "source": "voice",
+    "outcome": "applied",
+    "revision": 42,
+    "summary": "Voice: Array, 5 copies along Z on Shaft",
+    "at": 1792875603200
+  }
+}

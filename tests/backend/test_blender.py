@@ -22,6 +22,7 @@ from test_contracts import REGISTRY, SCHEMAS
 
 CHECK = Path(__file__).with_name("blender_check.py")
 GATE_CHECK = Path(__file__).with_name("gate_check.py")
+VOICE_CHECK = Path(__file__).with_name("voice_blender_check.py")
 SENT = {"welcome", "scene.snapshot", "scene.update", "session.update", "error", "pong", "result",
         "activity", "receipts", "lease.granted"}
 
@@ -73,3 +74,12 @@ def test_gate_in_gui_blender(tmp_path):
                "--python", str(GATE_CHECK)], tmp_path, timeout=300,
               sent={"welcome", "scene.snapshot", "scene.update", "session.update", "result",
                     "lease.granted"})
+
+
+@pytest.mark.skipif(not os.environ.get("BLENDER"), reason="set BLENDER=/path/to/blender")
+def test_voice_in_gui_blender(tmp_path):
+    """Every voice operation through commands.py, Undo, selection and the mesh budget."""
+    run_check([os.environ["BLENDER"], "--factory-startup", "--python", str(VOICE_CHECK)],
+              tmp_path, timeout=600,
+              sent={"welcome", "scene.snapshot", "scene.update", "session.update", "pong",
+                    "result", "activity", "voice.candidates"})
