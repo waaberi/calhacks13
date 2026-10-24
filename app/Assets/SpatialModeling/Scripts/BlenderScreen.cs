@@ -173,7 +173,8 @@ namespace SpatialModeling
             if (Visible && Magnification > 1f && (interaction == null || !interaction.IsHolding)
                 && !(PreviewInteraction.Current?.CapturesScroll ?? false))
             {
-                var axis = panAction.ReadValue<Vector2>();
+                var axis = PreviewInteraction.BlocksDesktopShortcuts && panAction.activeControl?.device is Keyboard
+                    ? Vector2.zero : panAction.ReadValue<Vector2>();
                 if (axis.sqrMagnitude > 0.04f) pan += axis * (0.3f * Time.unscaledDeltaTime);
             }
             var crop = CropFor(Magnification, pan);
