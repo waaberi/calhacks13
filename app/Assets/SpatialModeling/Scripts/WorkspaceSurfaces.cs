@@ -530,6 +530,7 @@ namespace SpatialModeling
             RebuildSurfaces(); RefreshVisuals();
             UpdateScanMeshes();
             WriteRoomEvidence();
+            StartReferenceAuditOnce();
         }
         public static string ClassifyLabels(string value)
         {

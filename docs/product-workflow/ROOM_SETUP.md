@@ -4,6 +4,26 @@ The previous compiled `1713a38` green-grid candidate **failed physical room fit*
 It reduced semantic bounds to rectangles. Matching those rectangles against the
 same SDK data did not verify physical alignment. That failure remains authoritative.
 
+On returning to the original room, the independent on-device companion loaded the
+actual reconstruction mesh and the user confirmed **aligned and stable**. The PC
+`376f0f9` candidate then received ten polygons and one mesh, but **physically failed**:
+the user reported geometry behind them, and a private captured view shows incorrect
+registration. The failed PC Player was closed normally. Matching all eleven anchor
+UUIDs requires accounting for native-log versus managed Guid byte order; after that
+normalization both apps read the same saved anchors. This excludes a different saved
+anchor set as the explanation, but does not yet diagnose the PC transform failure.
+
+`CALHACKS_ROOM_REFERENCE_AUDIT` enables an optional local diagnostic export. It uses
+SDK207's documented `OVRCameraRig.disableEyeAnchorCameras` mode: the accepted main
+camera continues rendering, all SDK reference-eye cameras remain disabled, and
+MRUK world-locking acts only on the separate reference rig. The diagnostic compares
+Core scene poses, the official camera-based conversion, and MRUK poses mapped from
+that reference rig into the existing camera origin. It records actual camera/stereo
+and tracking-reference transforms plus mesh fingerprints. It hides the failed room
+overlay during this diagnostic and does not invoke capture, move native geometry,
+replace the main rig, or claim a repair. A bounded export failure cannot interrupt
+placement. No new user exercises or rescan until an actual cause is verified.
+
 ## Supported route
 
 Meta Space Setup is a system-owned, on-headset experience. Windows Quest Link can
