@@ -114,14 +114,180 @@ namespace SpatialModeling.VoiceCore.Tests
             return port;
         }
 
-        static List<RecognitionResult> Utter(WhisperServerRecognizer whisper, int samples = 16000)
+        static List<RecognitionResult> Utter(WhisperServerRecognizer whisper, int samples = 16000, bool silent = false)
         {
             var heard = new List<RecognitionResult>();
             whisper.Recognized += heard.Add;
             whisper.Start(16000);
-            whisper.AcceptAudio(new short[samples], samples);
+            whisper.AcceptAudio(silent ? new short[samples] : Tone(samples), samples);
             whisper.Stop();
             return heard;
+        }
+
+        /// <summary>A 200 Hz tone, RMS about 1,400 (-27 dBFS): loud enough for the speech gate, like a voice.</summary>
+        static short[] Tone(int samples, float amplitude = 2000f)
+        {
+            var tone = new short[samples];
+            for (int i = 0; i < samples; i++)
+                tone[i] = (short)(amplitude * Math.Sin(2 * Math.PI * 200 * i / 16000.0));
+            return tone;
+        }
+
+        static string Reply(string text) => "{\"text\":\"" + text + "\"}";
+
+        /// <summary>A stand-in for Vosk in the fast path: raises <see cref="OnStop"/> at Stop.</summary>
+        sealed class FakeVosk : ISpeechRecognizer
+        {
+            public readonly List<RecognitionResult> OnStop = new List<RecognitionResult>();
+            public event Action<RecognitionResult> Recognized;
+            public void SetGrammar(IReadOnlyList<string> phrases) { }
+            public void Start(int sampleRate) { }
+            public void AcceptAudio(short[] samples, int count) { }
+
+            public void Stop()
+            {
+                foreach (RecognitionResult r in OnStop)
+                    Recognized?.Invoke(r);
+            }
+
+            public void Dispose() { }
+        }
+
+        static readonly string[] Commands = { "add a cone", "undo", "you", "[unk]" };
+
+        [Fact]
+        public void ASilentPressIsNotSentAndRaisesNothing()
+        {
+            using (var server = new FakeHttpServer { Respond = _ => (200, Reply(" you")) })
+            {
+                var whisper = new WhisperServerRecognizer(server.Port);
+                whisper.SetGrammar(Commands);
+                Assert.Empty(Utter(whisper, silent: true)); // a second of digital silence, like the Unity run's press
+                Assert.True(whisper.LastWasSilence);
+                Assert.False(whisper.LastStopFailed);
+                Assert.Empty(server.Requests);
+            }
+        }
+
+        [Fact]
+        public void AQuietRoomIsSilenceButQuietSpeechIsSent()
+        {
+            using (var server = new FakeHttpServer { Respond = _ => (200, Reply(" Undo.")) })
+            {
+                var whisper = new WhisperServerRecognizer(server.Port);
+                whisper.SetGrammar(Commands);
+                var heard = new List<RecognitionResult>();
+                whisper.Recognized += heard.Add;
+
+                whisper.Start(16000);
+                whisper.AcceptAudio(Tone(16000, amplitude: 40f), 16000); // RMS 28, -61 dBFS: room noise
+                whisper.Stop();
+                Assert.Empty(heard);
+                Assert.Empty(server.Requests);
+
+                whisper.Start(16000);
+                whisper.AcceptAudio(Tone(16000, amplitude: 300f), 16000); // RMS 212: quieter than any real clip measured
+                whisper.Stop();
+                Assert.Equal("undo", Assert.Single(heard).Text);
+                Assert.Single(server.Requests);
+            }
+        }
+
+        [Fact]
+        public void TheSpeechGateNeedsThreeLoudFrames()
+        {
+            var samples = new short[16000];
+            Array.Copy(Tone(960), 0, samples, 4800, 960); // two 30 ms frames of sound
+            Assert.False(WhisperServerRecognizer.HasSpeech(samples, 16000, WhisperServerRecognizer.DefaultMinSpeechRms));
+            Array.Copy(Tone(1440), 0, samples, 4800, 1440); // three
+            Assert.True(WhisperServerRecognizer.HasSpeech(samples, 16000, WhisperServerRecognizer.DefaultMinSpeechRms));
+            Assert.True(WhisperServerRecognizer.HasSpeech(new short[16000], 16000, 0f)); // 0 turns the gate off
+        }
+
+        [Theory]
+        [InlineData(" you")]
+        [InlineData(" You.")]
+        [InlineData(" Thank you.")]
+        [InlineData(" Thanks for watching!")]
+        [InlineData(" Bye.")]
+        [InlineData("[BLANK_AUDIO]")]
+        [InlineData(" (wind blowing)")]
+        [InlineData(" Um.")]
+        public void SilenceHallucinationsRaiseNothing(string transcript)
+        {
+            Assert.True(WhisperServerRecognizer.IsSilenceHallucination(transcript));
+            using (var server = new FakeHttpServer { Respond = _ => (200, Reply(transcript)) })
+            {
+                var whisper = new WhisperServerRecognizer(server.Port);
+                whisper.SetGrammar(Commands); // "you" is a grammar word, as in the host's grammar
+                Assert.Empty(Utter(whisper));
+                Assert.True(whisper.LastWasHallucination);
+                Assert.True(whisper.LastWasSilence);
+            }
+        }
+
+        [Theory]
+        [InlineData(" Undo.")]
+        [InlineData(" Add a cone.")]
+        [InlineData(" You add a cone.")]
+        [InlineData(" Thank you, add a cone.")]
+        [InlineData("")]
+        public void CommandsAreNotHallucinations(string transcript) =>
+            Assert.False(WhisperServerRecognizer.IsSilenceHallucination(transcript));
+
+        [Fact]
+        public void TheFastPathDropsAHallucinationVoskDidntHear()
+        {
+            using (var server = new FakeHttpServer { Respond = _ => (200, Reply(" you")) })
+            {
+                var vosk = new FakeVosk();
+                var hybrid = new FastPathRecognizer(vosk, new WhisperServerRecognizer(server.Port));
+                hybrid.SetGrammar(Commands);
+                var heard = new List<RecognitionResult>();
+                hybrid.Recognized += heard.Add;
+
+                hybrid.Start(16000);
+                hybrid.AcceptAudio(Tone(16000), 16000); // noise loud enough for the gate; Vosk heard no words
+                hybrid.Stop();
+                Assert.Empty(heard);
+                Assert.Equal(FastPathOutcome.Silence, hybrid.LastOutcome);
+
+                vosk.OnStop.Add(new RecognitionResult("you", 0.7f)); // Vosk heard speech too: "you" is what was said
+                hybrid.Start(16000);
+                hybrid.AcceptAudio(Tone(16000), 16000);
+                hybrid.Stop();
+                Assert.Equal("you", Assert.Single(heard).Text);
+                Assert.Equal(FastPathOutcome.Slow, hybrid.LastOutcome);
+            }
+        }
+
+        [Fact]
+        public void TheFastPathSaysNothingForASilentPressAndNoResultForChatter()
+        {
+            string reply = " you";
+            using (var server = new FakeHttpServer { Respond = _ => (200, Reply(reply)) })
+            {
+                var vosk = new FakeVosk();
+                vosk.OnStop.Add(new RecognitionResult("undo", 0.4f));
+                var hybrid = new FastPathRecognizer(vosk, new WhisperServerRecognizer(server.Port));
+                hybrid.SetGrammar(Commands);
+                var heard = new List<RecognitionResult>();
+                hybrid.Recognized += heard.Add;
+
+                hybrid.Start(16000);
+                hybrid.AcceptAudio(new short[16000], 16000); // silence: Whisper isn't asked, Vosk's guess doesn't go out
+                hybrid.Stop();
+                Assert.Empty(heard);
+                Assert.Equal(FastPathOutcome.Silence, hybrid.LastOutcome);
+                Assert.Empty(server.Requests);
+
+                reply = " This is our project.";
+                hybrid.Start(16000);
+                hybrid.AcceptAudio(Tone(16000), 16000);
+                hybrid.Stop();
+                Assert.True(WhisperServerRecognizer.IsNoResult(Assert.Single(heard)));
+                Assert.Equal(FastPathOutcome.Slow, hybrid.LastOutcome);
+            }
         }
 
         [Fact]
@@ -177,13 +343,18 @@ namespace SpatialModeling.VoiceCore.Tests
         }
 
         [Fact]
-        public void ChatterRaisesNothing()
+        public void ChatterRaisesNoResult()
         {
             using (var server = new FakeHttpServer { Respond = _ => (200, "{\"text\":\" This is our project.\"}") })
             {
                 var whisper = new WhisperServerRecognizer(server.Port);
                 whisper.SetGrammar(new[] { "add a cone", "undo", "[unk]" });
-                Assert.Empty(Utter(whisper));
+                RecognitionResult heard = Assert.Single(Utter(whisper)); // speech, but no command: "didn't catch that"
+                Assert.True(WhisperServerRecognizer.IsNoResult(heard));
+                Assert.Equal("", heard.Text);
+                Assert.Equal(0f, heard.Confidence);
+                Assert.Empty(new VoiceSession().Hear(heard).Prompts); // a session that doesn't look for it ignores it
+                Assert.False(whisper.LastWasSilence);
                 Assert.False(whisper.LastStopFailed);
                 Assert.False(whisper.LastSnap.Accepted);
             }
@@ -287,6 +458,27 @@ namespace SpatialModeling.VoiceCore.Tests
         }
 
         // WhisperServer ------------------------------------------------------------------------------------------
+
+        [Fact]
+        public void TheCudaBuildIsRecognizedByItsLibrary()
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "whisper-gpu-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            try
+            {
+                string exe = Path.Combine(dir, "whisper-server.exe");
+                File.WriteAllText(exe, "");
+                Assert.False(WhisperServer.HasGpuBuild(exe)); // the CPU build: -ng, whatever the PC has
+                File.WriteAllText(Path.Combine(dir, "ggml-cuda.dll"), "");
+                Assert.True(WhisperServer.HasGpuBuild(exe)); // fetch-whisper.sh --cuda
+                Assert.False(WhisperServer.HasGpuBuild(null));
+                Assert.Null(new VoiceRecognizerSettings().WhisperUseGpu); // auto: the GPU only with the CUDA build
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
 
         [Fact]
         public void AMissingExecutableIsReported()

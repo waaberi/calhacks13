@@ -13,6 +13,9 @@ namespace SpatialModeling.VoiceCore.Whisper
     /// top-1 vs 151 for Vosk alone, 0/20 and 0/48 chatter accepted, and 65% of utterances on the fast path.
     /// Needs push-to-talk: results come out at <see cref="Stop"/>, so with an open microphone (Start once, never
     /// Stop) use Vosk alone.
+    /// No speech raises nothing: Whisper's speech gate drops a silent press, and a silence hallucination ("you",
+    /// "thank you") is dropped here unless Vosk heard something too. Speech that is no command raises
+    /// <see cref="WhisperServerRecognizer.NoResult"/> (see there).
     /// </summary>
     public sealed class FastPathRecognizer : ISpeechRecognizer
     {
@@ -34,6 +37,8 @@ namespace SpatialModeling.VoiceCore.Whisper
             this.minFastConfidence = minFastConfidence;
             fast.Recognized += fastResults.Add;
             slow.Recognized += slowResults.Add;
+            if (slow is WhisperServerRecognizer whisper)
+                whisper.DropSilenceHallucinations = false; // dropped in Stop, unless Vosk heard speech too
         }
 
         public event Action<RecognitionResult> Recognized;
@@ -88,6 +93,14 @@ namespace SpatialModeling.VoiceCore.Whisper
                 Raise(fastResults);
                 return;
             }
+            if (slow is WhisperServerRecognizer whisper &&
+                (whisper.LastWasSilence || (whisper.LastWasHallucination && fastResults.Count == 0)))
+            {
+                LastOutcome = FastPathOutcome.Silence; // an accidental press: say nothing
+                slowResults.Clear();
+                Raise(slowResults);
+                return;
+            }
             LastOutcome = FastPathOutcome.Slow;
             Raise(slowResults);
         }
@@ -121,5 +134,8 @@ namespace SpatialModeling.VoiceCore.Whisper
 
         /// <summary>The slow recognizer failed; the fast recognizer's results went out instead.</summary>
         SlowFailed,
+
+        /// <summary>No speech: too quiet for Whisper, or a silence hallucination Vosk didn't back up. Nothing went out.</summary>
+        Silence,
     }
 }

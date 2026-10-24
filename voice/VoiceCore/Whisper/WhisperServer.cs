@@ -43,6 +43,18 @@ namespace SpatialModeling.VoiceCore.Whisper
 
         static bool IsWindows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
 
+        /// <summary>
+        /// The folder of <paramref name="executable"/> holds a CUDA build of whisper.cpp (ggml-cuda.dll, from
+        /// <c>voice/fetch-whisper.sh --cuda</c>, or libggml-cuda.so from a Linux build).
+        /// </summary>
+        public static bool HasGpuBuild(string executable)
+        {
+            if (string.IsNullOrEmpty(executable))
+                return false;
+            string folder = Path.GetDirectoryName(Path.GetFullPath(executable)) ?? "";
+            return File.Exists(Path.Combine(folder, "ggml-cuda.dll")) || File.Exists(Path.Combine(folder, "libggml-cuda.so"));
+        }
+
         /// <summary>whisper-server.exe on Windows, whisper-server elsewhere.</summary>
         public static string ExecutableName => IsWindows ? "whisper-server.exe" : "whisper-server";
 
@@ -50,6 +62,7 @@ namespace SpatialModeling.VoiceCore.Whisper
         readonly string model;
         readonly int threads;
         readonly int startTimeoutMs;
+        readonly bool useGpu;
         readonly Action<string> log;
         readonly Queue<string> lastLines = new Queue<string>();
         Process process;
@@ -60,9 +73,12 @@ namespace SpatialModeling.VoiceCore.Whisper
         /// <param name="startTimeoutMs">Longest wait for the model to load and the warm-up to finish. Voice input waits
         /// this long at most before it falls back to Vosk alone; the measured start is 0.5 s (tiny.en) to 1 s (base.en).</param>
         /// <param name="log">Progress and errors, for example Unity's Debug.Log. May be called on any thread.</param>
+        /// <param name="useGpu">Let a GPU build (whisper.cpp's CUDA zip, see <see cref="HasGpuBuild"/>) decode on the
+        /// GPU. False passes <c>-ng</c>: the CPU decodes even with a GPU build.</param>
         public WhisperServer(string executable, string model, int port = DefaultPort, int threads = 4,
-            int startTimeoutMs = DefaultStartTimeoutMs, Action<string> log = null)
+            int startTimeoutMs = DefaultStartTimeoutMs, Action<string> log = null, bool useGpu = false)
         {
+            this.useGpu = useGpu;
             this.executable = executable;
             this.model = model;
             Port = port;
@@ -179,9 +195,9 @@ namespace SpatialModeling.VoiceCore.Whisper
             var start = new ProcessStartInfo
             {
                 FileName = executable,
-                // -ng: never the GPU, which renders VR on the demo PC. Decode options come with each request.
+                // -ng: not the GPU unless asked (useGpu, a CUDA build). Decode options come with each request.
                 Arguments = "-m " + Quote(model) + " --host 127.0.0.1 --port " + Port.ToString(CultureInfo.InvariantCulture) +
-                            " -t " + threads.ToString(CultureInfo.InvariantCulture) + " -l en -nt -ng",
+                            " -t " + threads.ToString(CultureInfo.InvariantCulture) + " -l en -nt" + (useGpu ? "" : " -ng"),
                 WorkingDirectory = Path.GetDirectoryName(Path.GetFullPath(executable)),
                 UseShellExecute = false,
                 CreateNoWindow = true, // no console window over the app
@@ -268,7 +284,8 @@ namespace SpatialModeling.VoiceCore.Whisper
         /// <summary>The first decode allocates its buffers; do it now with half a second of silence.</summary>
         void WarmUp()
         {
-            var silence = new WhisperServerRecognizer(Port, prompt: "", promptWithGrammar: false, timeoutMs: Math.Max(5000, startTimeoutMs));
+            var silence = new WhisperServerRecognizer(Port, prompt: "", promptWithGrammar: false, timeoutMs: Math.Max(5000, startTimeoutMs),
+                minSpeechRms: 0f); // silence on purpose: the speech gate would skip the request
             silence.Start(16000);
             silence.AcceptAudio(new short[8000], 8000);
             silence.Stop();

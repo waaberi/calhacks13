@@ -25,7 +25,17 @@ namespace SpatialModeling.VoiceCore.Whisper
     /// buffers the push-to-talk audio, POSTs it as a WAV to <c>/inference</c> on <see cref="Stop"/> (VoiceInput's
     /// worker thread waits for the answer), snaps the transcript to the grammar with <see cref="PhraseSnapper"/> and
     /// raises the snapped phrases with their similarity as confidence (capped below 0.5 when the snap had to replace
-    /// words, see <see cref="DefaultGuessConfidence"/>). Whisper is trained on real speech, so it hears
+    /// words, see <see cref="DefaultGuessConfidence"/>). Three answers, so the app can tell them apart:
+    /// <list type="bullet">
+    /// <item>a phrase: the snap was accepted;</item>
+    /// <item><see cref="NoResult"/> (text "", confidence 0): speech was heard but none of it is in the grammar
+    /// (chatter, or a command Whisper misheard beyond the snap), so the app can say "didn't catch that";</item>
+    /// <item>nothing at all: no speech. The utterance was silent (<see cref="MinSpeechRms"/>, checked before Whisper
+    /// is asked) or Whisper wrote one of its silence hallucinations ("you", "thank you", "[BLANK_AUDIO]", see
+    /// <see cref="IsSilenceHallucination"/>), so an accidental press says nothing.</item>
+    /// </list>
+    /// VoiceSession.Hear ignores a result with no text, so <see cref="NoResult"/> changes nothing for a session that
+    /// doesn't look for it. Whisper is trained on real speech, so it hears
     /// real voices far better than Vosk's small model; the snap keeps its output inside what VoiceCore understands.
     /// It talks HTTP over a plain socket because Unity refuses <c>http://</c> in UnityWebRequest
     /// (<c>insecureHttpOption</c> 0), and it has no native code in Unity: if the server is down or slow the
@@ -55,6 +65,38 @@ namespace SpatialModeling.VoiceCore.Whisper
         /// </summary>
         public const float DefaultGuessConfidence = 0.49f;
 
+        /// <summary>
+        /// "Speech was heard, but nothing in it is a command": raised instead of a phrase when the transcript snaps to
+        /// nothing. Text "" and confidence 0; test with <see cref="IsNoResult"/>.
+        /// </summary>
+        public static readonly RecognitionResult NoResult = new RecognitionResult("", 0f);
+
+        /// <summary>The result is <see cref="NoResult"/> (no text).</summary>
+        public static bool IsNoResult(RecognitionResult result) => result.Text.Length == 0;
+
+        /// <summary>
+        /// The speech gate: an utterance is speech only if at least <see cref="MinSpeechFrames"/> of its 30 ms frames
+        /// reach this RMS (16-bit samples; 100 is -50 dBFS). Measured: the quietest of 1,100 real Speech Commands
+        /// clips had its third-loudest frame at 293, the 320 SLURP clips at 778, the 290 TTS clips at 3,458; the
+        /// silent press of the Unity run was 0. Below it Whisper isn't asked at all (it writes "you" for silence).
+        /// </summary>
+        public const float DefaultMinSpeechRms = 100f;
+
+        /// <summary>Frames that must reach <see cref="MinSpeechRms"/>: 90 ms of sound, more than a click.</summary>
+        public const int MinSpeechFrames = 3;
+
+        /// <summary>
+        /// What Whisper writes for silence or noise (normalized), from the Unity run (a silent press gave "you" at
+        /// 1.0) and whisper.cpp's known hallucinations. Single filler sounds count too.
+        /// </summary>
+        static readonly HashSet<string> SilenceHallucinations = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "you", "thank you", "thank you very much", "thanks", "thanks for watching", "thank you for watching",
+            "thanks for listening", "thank you for listening", "bye", "bye bye", "goodbye", "blank audio",
+            "silence", "music", "applause", "laughter", "um", "uh", "uhm", "umm", "hmm", "hm", "mm", "mhm", "ah", "oh",
+            "eh", "er", "huh",
+        };
+
         readonly string host;
         readonly int port;
         readonly string basePrompt;
@@ -76,9 +118,10 @@ namespace SpatialModeling.VoiceCore.Whisper
         /// <param name="guessConfidence">Cap on the confidence of a snap that replaced words; 1 for none.</param>
         public WhisperServerRecognizer(int port = WhisperServer.DefaultPort, string prompt = null, bool promptWithGrammar = true,
             int timeoutMs = 4000, float threshold = PhraseSnapper.DefaultThreshold, float guessConfidence = DefaultGuessConfidence,
-            string host = "127.0.0.1")
+            string host = "127.0.0.1", float minSpeechRms = DefaultMinSpeechRms)
         {
             this.guessConfidence = guessConfidence;
+            MinSpeechRms = minSpeechRms;
             this.host = host;
             this.port = port;
             basePrompt = prompt ?? BlenderPrompt;
@@ -100,6 +143,21 @@ namespace SpatialModeling.VoiceCore.Whisper
         public double LastMilliseconds { get; private set; }
 
         public bool LastStopFailed { get; private set; }
+
+        /// <summary>The last utterance was no speech: too quiet to send, or a silence hallucination that was dropped.</summary>
+        public bool LastWasSilence { get; private set; }
+
+        /// <summary>The last transcript was a silence hallucination ("you"), dropped or not.</summary>
+        public bool LastWasHallucination { get; private set; }
+
+        /// <summary>See <see cref="DefaultMinSpeechRms"/>; 0 sends every utterance to Whisper.</summary>
+        public float MinSpeechRms { get; }
+
+        /// <summary>
+        /// Drop a transcript that is a silence hallucination (see <see cref="IsSilenceHallucination"/>). True by
+        /// default; <see cref="FastPathRecognizer"/> turns it off and drops them itself unless Vosk heard speech too.
+        /// </summary>
+        public bool DropSilenceHallucinations { get; set; } = true;
 
         public string LastError { get; private set; }
 
@@ -138,8 +196,20 @@ namespace SpatialModeling.VoiceCore.Whisper
             LastMilliseconds = 0;
             LastStopFailed = false;
             LastError = null;
+            LastWasSilence = false;
+            LastWasHallucination = false;
             if (pcm.Count < rate / 10)
+            {
+                LastWasSilence = true;
+                pcm.Clear();
                 return; // under 0.1 s: a click, not speech (whisper.cpp ignores it too)
+            }
+            if (!HasSpeech(pcm, rate, MinSpeechRms))
+            {
+                LastWasSilence = true; // Whisper would write "you": don't ask it
+                pcm.Clear();
+                return;
+            }
 
             if (restartFailed != null)
             {
@@ -174,17 +244,69 @@ namespace SpatialModeling.VoiceCore.Whisper
             }
 
             LastTranscript = text.Trim();
+            if (PhraseSnapper.Normalize(LastTranscript).Length == 0 && !IsSilenceHallucination(LastTranscript))
+            {
+                LastWasSilence = true; // Whisper heard no words
+                return;
+            }
+            LastWasHallucination = IsSilenceHallucination(LastTranscript);
+            if (LastWasHallucination && DropSilenceHallucinations)
+            {
+                LastWasSilence = true;
+                return;
+            }
             if (snapper == null)
             {
                 string words = PhraseSnapper.Normalize(LastTranscript);
-                if (words.Length > 0)
-                    Recognized?.Invoke(new RecognitionResult(words, 1f));
+                Recognized?.Invoke(words.Length == 0 ? NoResult : new RecognitionResult(words, 1f));
                 return;
             }
             LastSnap = snapper.Snap(LastTranscript);
-            if (LastSnap.Accepted)
-                Recognized?.Invoke(new RecognitionResult(LastSnap.Text,
+            Recognized?.Invoke(!LastSnap.Accepted
+                ? NoResult
+                : new RecognitionResult(LastSnap.Text,
                     LastSnap.WordForWord ? LastSnap.Similarity : Math.Min(LastSnap.Similarity, guessConfidence)));
+        }
+
+        /// <summary>
+        /// Whisper's words for silence or noise: "you", "Thank you.", "[BLANK_AUDIO]", "(music)", a single "um".
+        /// A whole transcript in brackets or parentheses is a sound description, never speech.
+        /// </summary>
+        public static bool IsSilenceHallucination(string transcript)
+        {
+            string trimmed = (transcript ?? "").Trim().TrimEnd('.', '!', '?', ',').Trim();
+            if (trimmed.Length == 0)
+                return false;
+            if ((trimmed[0] == '[' && trimmed[trimmed.Length - 1] == ']') || (trimmed[0] == '(' && trimmed[trimmed.Length - 1] == ')') ||
+                (trimmed[0] == '*' && trimmed[trimmed.Length - 1] == '*'))
+                return true;
+            var words = new StringBuilder();
+            foreach (char c in trimmed.ToLowerInvariant())
+                words.Append(char.IsLetter(c) ? c : ' ');
+            string normalized = string.Join(" ", words.ToString().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries));
+            return SilenceHallucinations.Contains(normalized);
+        }
+
+        /// <summary>
+        /// At least <see cref="MinSpeechFrames"/> 30 ms frames reach <paramref name="minRms"/> (see
+        /// <see cref="DefaultMinSpeechRms"/>). A threshold of 0 or less lets everything through.
+        /// </summary>
+        public static bool HasSpeech(IReadOnlyList<short> samples, int sampleRate, float minRms)
+        {
+            if (minRms <= 0f)
+                return true;
+            int frame = Math.Max(1, sampleRate * 30 / 1000);
+            double needed = (double)minRms * minRms * frame;
+            int loud = 0;
+            for (int start = 0; start + frame <= samples.Count; start += frame)
+            {
+                double energy = 0;
+                for (int i = start; i < start + frame; i++)
+                    energy += (double)samples[i] * samples[i];
+                if (energy >= needed && ++loud >= MinSpeechFrames)
+                    return true;
+            }
+            return false;
         }
 
         public void Dispose()
