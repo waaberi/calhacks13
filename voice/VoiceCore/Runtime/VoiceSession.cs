@@ -57,14 +57,35 @@ namespace SpatialModeling.VoiceCore
     public sealed class VoiceTurn
     {
         internal VoiceTurn(VoiceCommand command, IReadOnlyList<Prompt> prompts, VoiceResolve resolve = null, bool grammarChanged = false,
-            string hostReason = null)
+            string hostReason = null, NoResultReason? noResult = null, bool choiceDismissed = false, bool asked = false)
         {
             Command = command;
             Prompts = prompts;
             Resolve = resolve;
             GrammarChanged = grammarChanged;
             HostReason = hostReason;
+            NoResult = noResult;
+            ChoiceDismissed = choiceDismissed;
+            CancelsDelete = asked || (command != null && command.Kind != CommandKind.Cancel);
         }
+
+        /// <summary>The press gave nothing to act on (<see cref="VoiceSession.NothingRecognized"/>, or empty words): show a
+        /// short "Didn't catch that". Only <see cref="NoResultReason.NotUnderstood"/> also has a spoken prompt; a silent
+        /// press has none, so it never speaks.</summary>
+        public NoResultReason? NoResult { get; }
+
+        /// <summary>The host's "which one?" (<see cref="VoiceSession.Choice"/>) was dropped because the words weren't an
+        /// answer: hide its panel. Words with a command are handled as that new command in the same turn.</summary>
+        public bool ChoiceDismissed { get; }
+
+        /// <summary>
+        /// The newest request wins over a Delete waiting for its controller confirmation: this turn has a new command
+        /// (anything but Cancel, which cancels the delete itself) or asks a new question (a missing field, or the host's
+        /// "which one?"). The app must then drop the waiting delete and say <see cref="Prompt.ReplacedPending"/>, so the
+        /// trigger can never confirm a delete the panel no longer shows. Words still waiting for the host don't cancel
+        /// it; the host's answer does if it runs or asks.
+        /// </summary>
+        public bool CancelsDelete { get; }
 
         /// <summary>The host's reason for rejecting or asking ("Join isn't available by voice."), to show next to the
         /// prompts, or null.</summary>
@@ -86,7 +107,8 @@ namespace SpatialModeling.VoiceCore
 
         public override string ToString() =>
             (Command == null ? "no command" : Command.ToString()) + (Prompts.Count == 0 ? "" : " [" + string.Join(", ", Prompts) + "]") +
-            (Resolve == null ? "" : " ask host: " + Resolve.Text);
+            (Resolve == null ? "" : " ask host: " + Resolve.Text) + (NoResult == null ? "" : " no result: " + NoResult) +
+            (ChoiceDismissed ? " question dismissed" : "");
     }
 
     /// <summary>
@@ -358,6 +380,7 @@ namespace SpatialModeling.VoiceCore
             choice = new PendingChoice(new VoiceCandidates(answer.Resolution, VoiceDecision.Ask, answer.Reason, seconds, candidates),
                 asked.Target, clock() + TimeSpan.FromSeconds(seconds));
             turn.GrammarChanged = true;
+            turn.Asked = true;
             turn.Prompts.Add(Prompt.AskChoice);
             return turn.Build();
         }
@@ -397,22 +420,53 @@ namespace SpatialModeling.VoiceCore
             return turn.Build();
         }
 
-        /// <summary>Handles one final recognized utterance. Words still waiting for the host's answer are dropped.</summary>
+        /// <summary>
+        /// Handles one final recognized utterance. Words still waiting for the host's answer are dropped. While the host's
+        /// question is open (<see cref="Choice"/>), an answer answers it; words with something else in them dismiss it
+        /// (<see cref="VoiceTurn.ChoiceDismissed"/>) and are handled as a new command, routed to the host as usual.
+        /// Empty words are a silent press (<see cref="VoiceTurn.NoResult"/>, nothing spoken).
+        /// </summary>
         public VoiceTurn Hear(RecognitionResult result)
         {
             var turn = Begin();
-            if (promptPlaying || string.IsNullOrWhiteSpace(result.Text))
+            if (promptPlaying)
                 return turn.Build();
-            if (choice != null)
+            if (string.IsNullOrWhiteSpace(result.Text))
             {
-                HearChoice(result, turn);
+                turn.NoResult = NoResultReason.Silence;
                 return turn.Build();
             }
+            if (choice != null && HearChoice(result, turn))
+                return turn.Build();
             resolving = null;
             if (ForHost(result))
                 AskHost(result, turn);
             else
                 HearHere(result, turn);
+            return turn.Build();
+        }
+
+        /// <summary>
+        /// A push-to-talk press that gave no result (<see cref="VoiceInput.TryGetNoResult"/>). The turn's
+        /// <see cref="VoiceTurn.NoResult"/> lets the UI show "Didn't catch that". Silence says nothing and changes nothing.
+        /// Speech that matched no phrase says <see cref="Prompt.LowConfidence"/>; while the host's question is open it also
+        /// dismisses it: with the answers-only grammar that is a new command the recognizer couldn't hold, so the next try
+        /// gets the full grammar back.
+        /// </summary>
+        public VoiceTurn NothingRecognized(NoResultReason reason)
+        {
+            var turn = Begin();
+            if (promptPlaying)
+                return turn.Build();
+            turn.NoResult = reason;
+            if (reason == NoResultReason.Silence)
+                return turn.Build();
+            if (choice != null)
+            {
+                EndChoice(turn);
+                turn.ChoiceDismissed = true;
+            }
+            turn.Prompts.Add(Prompt.LowConfidence);
             return turn.Build();
         }
 
@@ -488,16 +542,21 @@ namespace SpatialModeling.VoiceCore
         }
 
         /// <summary>The answer to the host's question: only an exact answer phrase without "[unk]" counts, at
-        /// <see cref="VoiceSessionOptions.ChoiceMinConfidence"/>; anything else asks again.</summary>
-        void HearChoice(RecognitionResult result, Turn turn)
+        /// <see cref="VoiceSessionOptions.ChoiceMinConfidence"/> (ordinals first: "the second one" is two). Words made only
+        /// of answer words, "[unk]" and fillers ("[unk] two", "two please", "to") are a garbled answer and ask again.
+        /// Anything else dismisses the question and returns false: the caller handles the words as a new command.</summary>
+        bool HearChoice(RecognitionResult result, Turn turn)
         {
-            if (result.Confidence < options.ChoiceMinConfidence)
-            {
-                turn.Prompts.Add(Prompt.LowConfidence);
-                return;
-            }
             int? said = ChoiceWords.Read(result.Text, choice.Candidates);
-            if (said == 0)
+            if (!said.HasValue && !ChoiceWords.LooksLikeAnAnswer(result.Text))
+            {
+                EndChoice(turn);
+                turn.ChoiceDismissed = true;
+                return false;
+            }
+            if (result.Confidence < options.ChoiceMinConfidence)
+                turn.Prompts.Add(Prompt.LowConfidence);
+            else if (said == 0)
             {
                 EndChoice(turn);
                 turn.Prompts.Add(Prompt.Cancelled);
@@ -506,6 +565,7 @@ namespace SpatialModeling.VoiceCore
                 Pick(said.Value, turn);
             else
                 turn.Prompts.Add(Prompt.AskChoice);
+            return true;
         }
 
         void Pick(int number, Turn turn)
@@ -684,6 +744,7 @@ namespace SpatialModeling.VoiceCore
                 return;
             }
             expiresAt = clock() + options.PendingTimeout;
+            turn.Asked = true;
             turn.Prompts.Add(Question(draft, missing));
         }
 
@@ -769,7 +830,10 @@ namespace SpatialModeling.VoiceCore
             public VoiceResolve Resolve;
             public bool GrammarChanged;
             public string HostReason;
-            public VoiceTurn Build() => new VoiceTurn(Command, Prompts, Resolve, GrammarChanged, HostReason);
+            public NoResultReason? NoResult;
+            public bool ChoiceDismissed;
+            public bool Asked; // a new question: cancels a delete waiting for its confirmation
+            public VoiceTurn Build() => new VoiceTurn(Command, Prompts, Resolve, GrammarChanged, HostReason, NoResult, ChoiceDismissed, Asked);
         }
 
         /// <summary>Words sent to the host, kept to be handled as without a host if it can't help.</summary>

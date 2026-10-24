@@ -249,6 +249,36 @@ namespace SpatialModeling.VoiceCore
             return choice == 0 || (choice.HasValue && Offers(offered, choice.Value)) ? choice : null;
         }
 
+        /// <summary>Not a command but a garbled answer: every word is an answer word, "[unk]" or a filler ("[unk] two",
+        /// "two please", "to"). Anything else said while asking is a new command.</summary>
+        public static bool LooksLikeAnAnswer(string text)
+        {
+            foreach (string word in Vocabulary.Words(text))
+                if (word != Vocabulary.Unknown && !AnswerWords.Contains(word) && !Fillers.Contains(word))
+                    return false;
+            return true;
+        }
+
+        static readonly HashSet<string> Fillers = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "please", "to", "too", "uh", "um", "er", "oh", "ok", "okay", "yes", "yeah", "that", "this", "it", "is", "a", "an", "and",
+        };
+
+        static readonly HashSet<string> AnswerWords = Collect();
+
+        static HashSet<string> Collect()
+        {
+            var words = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string[] phrases in Spoken)
+                foreach (string phrase in phrases)
+                    words.UnionWith(phrase.Split(' '));
+            foreach (string phrase in CancelPhrases)
+                words.UnionWith(phrase.Split(' '));
+            foreach (string phrase in Typed.Keys)
+                words.UnionWith(phrase.Split(' '));
+            return words;
+        }
+
         static bool Offers(IReadOnlyList<VoiceCandidate> offered, int number)
         {
             foreach (VoiceCandidate candidate in offered)

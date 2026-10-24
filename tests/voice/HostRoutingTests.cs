@@ -297,7 +297,6 @@ namespace SpatialModeling.VoiceCore.Tests
         [InlineData("[unk]")]
         [InlineData("two please")]         // only exact answers count
         [InlineData("to")]
-        [InlineData("make it thicker")]
         [InlineData("three")]              // only two were offered
         public void AnythingButAnExactAnswerAsksAgain(string text)
         {
@@ -663,6 +662,161 @@ namespace SpatialModeling.VoiceCore.Tests
             asking.Answer(VoiceDecision.Ask, Array, Duplicate);
             Assert.Equal(new[] { "low_confidence" }, Prompts(asking.Say("two", 0.85f)));
             Assert.Equal(2, asking.Say("two", 0.9f).Command.Choice);
+        }
+
+        // ---------- a new command while asking, presses without a result, a waiting delete ----------
+
+        static Asking AskingAboutCopies()
+        {
+            var asking = new Asking(Cube);
+            asking.Say("make copies");
+            asking.Answer(VoiceDecision.Ask, Array, Duplicate);
+            Assert.NotNull(asking.Session.Choice);
+            return asking;
+        }
+
+        [Theory]
+        [InlineData("make it thicker")]
+        [InlineData("subdivide it twice")]
+        [InlineData("bevel the edges")]
+        public void AHostCommandWhileAskingDismissesTheQuestionAndGoesToTheHost(string text)
+        {
+            Asking asking = AskingAboutCopies();
+            VoiceTurn turn = asking.Say(text);
+            Assert.True(turn.ChoiceDismissed);
+            Assert.True(turn.GrammarChanged);
+            Assert.Null(asking.Session.Choice);
+            Assert.Null(turn.Command);
+            Assert.Equal(text, turn.Resolve.Text);
+            Assert.Contains("rotate", asking.Session.GrammarPhrases()); // the full grammar again
+            Assert.Equal(CommandKind.Run, asking.Answer(VoiceDecision.Run, Subsurf).Command.Kind);
+        }
+
+        [Fact]
+        public void ACoreCommandWhileAskingDismissesTheQuestionAndRuns()
+        {
+            Asking asking = AskingAboutCopies();
+            VoiceTurn turn = asking.Say("rotate this ninety degrees around z");
+            Assert.True(turn.ChoiceDismissed);
+            Assert.Null(turn.Resolve);
+            Assert.Equal(CommandKind.Rotate, turn.Command.Kind);
+            Assert.Equal(Cube.Id, turn.Command.TargetId);
+            Assert.Null(asking.Session.Choice);
+
+            asking = AskingAboutCopies();
+            Assert.Equal(CommandKind.Undo, asking.Say("undo").Command.Kind);
+            Assert.Null(asking.Session.Choice);
+        }
+
+        [Theory]
+        [InlineData("the second one", 2)] // ordinals first, also next to the new rule
+        [InlineData("number two", 2)]
+        [InlineData("first", 1)]
+        public void AnswersStillAnswerAndAreNeverANewCommand(string text, int expected)
+        {
+            Asking asking = AskingAboutCopies();
+            VoiceTurn turn = asking.Say(text);
+            Assert.False(turn.ChoiceDismissed);
+            Assert.Null(turn.Resolve);
+            Assert.Equal(expected, turn.Command.Choice);
+        }
+
+        [Fact]
+        public void ALowConfidenceCommandWhileAskingIsStillDismissedAndHandledAsUsual()
+        {
+            Asking asking = AskingAboutCopies();
+            VoiceTurn turn = asking.Say("make it thicker", 0.4f);
+            Assert.True(turn.ChoiceDismissed);
+            Assert.True(turn.Resolve.LowConfidence); // the host may only ask
+        }
+
+        [Fact]
+        public void ASilentPressSaysNothing()
+        {
+            var asking = new Asking(Cube);
+            VoiceTurn turn = asking.Session.NothingRecognized(NoResultReason.Silence);
+            Assert.Equal(NoResultReason.Silence, turn.NoResult);
+            Assert.Empty(turn.Prompts);
+            Assert.Null(turn.Command);
+            Assert.False(turn.CancelsDelete);
+
+            VoiceTurn empty = asking.Say("  ");
+            Assert.Equal(NoResultReason.Silence, empty.NoResult);
+            Assert.Empty(empty.Prompts);
+
+            Asking asked = AskingAboutCopies();
+            VoiceTurn whileAsking = asked.Session.NothingRecognized(NoResultReason.Silence);
+            Assert.Empty(whileAsking.Prompts);
+            Assert.False(whileAsking.ChoiceDismissed);
+            Assert.NotNull(asked.Session.Choice); // an accidental tap doesn't drop the question
+        }
+
+        [Fact]
+        public void SpeechThatMatchedNothingSaysItWasNotCaught()
+        {
+            var f = new Fixture(Cube);
+            VoiceTurn turn = f.Session.NothingRecognized(NoResultReason.NotUnderstood);
+            Assert.Equal(NoResultReason.NotUnderstood, turn.NoResult);
+            Assert.Equal(new[] { "low_confidence" }, Prompts(turn));
+
+            Assert.Equal(new[] { "ask_axis" }, Prompts(f.Say("rotate this")));
+            Assert.Equal(new[] { "low_confidence" }, Prompts(f.Session.NothingRecognized(NoResultReason.NotUnderstood)));
+            Assert.NotNull(f.Session.Pending); // the pending command keeps waiting
+        }
+
+        [Fact]
+        public void SpeechThatMatchedNothingWhileAskingDismissesTheQuestion()
+        {
+            // With the answers-only grammar, a command said while asking matches nothing (Whisper's transcript snaps onto
+            // no answer): drop the question so that saying it again gets the full grammar.
+            Asking asking = AskingAboutCopies();
+            VoiceTurn turn = asking.Session.NothingRecognized(NoResultReason.NotUnderstood);
+            Assert.True(turn.ChoiceDismissed);
+            Assert.True(turn.GrammarChanged);
+            Assert.Equal(new[] { "low_confidence" }, Prompts(turn));
+            Assert.Null(asking.Session.Choice);
+            Assert.NotNull(asking.Say("make it thicker").Resolve);
+        }
+
+        [Fact]
+        public void NoResultIsIgnoredWhileAPromptPlays()
+        {
+            var f = new Fixture(Cube);
+            f.Session.SetPromptPlaying(true);
+            VoiceTurn turn = f.Session.NothingRecognized(NoResultReason.NotUnderstood);
+            Assert.Null(turn.NoResult);
+            Assert.Empty(turn.Prompts);
+        }
+
+        [Fact]
+        public void AHostQuestionCancelsAWaitingDelete()
+        {
+            var asking = new Asking(Cube);
+            VoiceTurn delete = asking.Say("delete this");
+            Assert.True(delete.Command.RequiresConfirmation);
+            Assert.True(delete.CancelsDelete); // a new delete replaces an older one
+
+            VoiceTurn sent = asking.Say("make copies");
+            Assert.NotNull(sent.Resolve);
+            Assert.False(sent.CancelsDelete); // still waiting: the trigger may still confirm
+
+            VoiceTurn asked = asking.Answer(VoiceDecision.Ask, Array, Duplicate);
+            Assert.NotNull(asking.Session.Choice);
+            Assert.True(asked.CancelsDelete); // the question replaces the delete, never hides it
+        }
+
+        [Fact]
+        public void WhatCancelsAWaitingDelete()
+        {
+            var asking = new Asking(Cube);
+            Assert.True(asking.Say("undo").CancelsDelete);
+            Assert.True(asking.Say("add").CancelsDelete);             // a question about a missing field
+            Assert.False(asking.Say("cancel").CancelsDelete);         // Cancel cancels it anyway, with its own prompt
+            Assert.False(asking.Say("make copies").CancelsDelete);    // sent to the host
+            Assert.True(asking.Answer(VoiceDecision.Run, Duplicate).CancelsDelete);
+            Assert.False(asking.Session.NothingRecognized(NoResultReason.NotUnderstood).CancelsDelete);
+            Assert.False(asking.Session.Tick().CancelsDelete);
+            Assert.False(asking.Say("[unk]").CancelsDelete);
         }
     }
 }

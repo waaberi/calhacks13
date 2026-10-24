@@ -80,12 +80,33 @@ reject (contracts/README.md, Voice). Without `AskHost` nothing changes.
   with buttons that call `session.Choose(n)` and a Cancel button (`session.Cancel()`).
 - **Grammar changes:** when a turn has `GrammarChanged` (a question began or ended), call
   `input.SetGrammar(session.GrammarPhrases())`. While asking, the grammar is only the answers and "[unk]".
+- **A new command while asking:** words that aren't an answer and aren't only answer words, "[unk]" and fillers
+  ("make it thicker", "rotate this ninety degrees around z", "undo") drop the question and are handled as a new
+  command in the same turn, routed to the host as usual. The turn has `ChoiceDismissed` (hide the choice panel) and
+  `GrammarChanged`. Garbled answers ("[unk] two", "two please", "to") still ask again. The grammar stays answers-only:
+  with the host's phrases merged in, the TTS answers fell from 20/20 to 14/20 at 0.9 ("two" heard as "do"), so a
+  command said while asking usually reaches the session as a press without a result (next item), which also
+  dismisses the question, and saying it again gets the full grammar.
+- **A press without a result:** `VoiceInput.TryGetNoResult(out NoResultReason reason)` reports each push-to-talk
+  utterance that ended without any result. Drain it after `TryGetResult` and pass it to
+  `session.NothingRecognized(reason)`. The turn's `NoResult` is set: show a short "Didn't catch that". `Silence`
+  (an accidental tap, and the default for recognizers that don't say) has no prompt, so it never speaks and keeps any
+  question. `NotUnderstood` (speech that matched no phrase) says `low_confidence` and dismisses an open question. A
+  recognizer says which by implementing `IReportsNoResult` (raise `NoResult` from `Stop`, only when it raises no
+  result; the Whisper fast path should report a transcript that snapped onto nothing as `NotUnderstood`, and
+  silence hallucinations such as "you" as `Silence`). Empty words given to `Hear` are a `Silence` turn too.
+- **A delete waiting for its confirmation:** the newest request wins. When a turn has `CancelsDelete` (a command other
+  than Cancel, or a new question: a missing field or the host's "which one?"), drop the waiting delete and say
+  `replaced_pending` before the turn's own prompts. A delete and a question are then never shown at once, and the
+  trigger never confirms a delete the panel no longer shows. Words still waiting for the host don't cancel it; the
+  host's run or question does.
 
 Which words go to the host (`VoiceSession.Hear`), in order:
 
 1. While the host's question is pending, only an exact answer counts: "one", "first", "the first one", "option one",
-   "number one" (and two, three), "cancel" or "never mind", at confidence 0.9 or more, never with "[unk]". Anything
-   else asks again.
+   "number one" (and two, three), "cancel" or "never mind", at confidence 0.9 or more, never with "[unk]". Garbled
+   answers (only answer words, "[unk]" and fillers) ask again; other words dismiss the question and go on below as a
+   new command.
 2. Two different command verbs are a mishearing (#142), and "[unk]" alone is nothing: neither goes to the host.
 3. Undo, redo and cancel never go to the host.
 4. To the host: no command verb ("shade smooth", "a monkey" when "add" was lost), words VoiceCore doesn't know after
