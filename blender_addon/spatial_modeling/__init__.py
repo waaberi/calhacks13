@@ -152,9 +152,13 @@ def register():
         bpy.utils.register_class(cls)
     host.register()
     gate.register()
+    from . import ownership
+    ownership.register()
 
 
 def unregister():
+    from . import ownership
+    ownership.unregister()
     gate.unregister()
     host.unregister()
     for cls in reversed(CLASSES):
