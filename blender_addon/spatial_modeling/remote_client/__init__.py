@@ -83,7 +83,9 @@ def poll():
             elif kind == "error":
                 _can_edit = False
                 presence.clear()
-                state.stale(f"Connection refused ({payload}) — reconnect explicitly")
+                state.stale("Host scene unavailable — last scene is stale; awaiting a fresh snapshot"
+                            if payload == "failed" else
+                            f"Connection refused ({payload}) — reconnect explicitly")
             else:
                 _can_edit = False
                 presence.clear()

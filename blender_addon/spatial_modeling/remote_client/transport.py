@@ -105,7 +105,7 @@ class ReadOnlyLink:
                                 # can send arbitrary text. Codes are sufficient for UI.
                                 code = body.get("code", "invalid_message")
                                 if code not in ("wrong_document", "unsupported_version", "permission_denied",
-                                                "invalid_message", "busy", "internal_error"):
+                                                "invalid_message", "busy", "internal_error", "failed"):
                                     code = "invalid_message"
                                 self._post("error", code)
                                 if code in ("wrong_document", "unsupported_version", "permission_denied"):
