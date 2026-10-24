@@ -67,8 +67,7 @@ namespace SpatialModeling
             Application.runInBackground = true; // Desktop Blender keeps focus while its VR screen updates.
             Application.SetStackTraceLogType(LogType.Log, StackTraceLogType.None);
             toggle = new InputAction("Show or hide Blender", InputActionType.Button);
-            toggle.AddBinding("<XRController>{RightHand}/primaryButton"); // A
-            toggle.AddBinding("<XRController>{LeftHand}/primaryButton"); // X
+            toggle.AddBinding(WorkspaceHandPreference.Controller + "/primaryButton"); // A / X
             toggle.AddBinding("<Keyboard>/f2");
             toggle.performed += _ => Toggle();
             toggle.Enable();
@@ -78,21 +77,23 @@ namespace SpatialModeling
             select.performed += _ => { if (interaction == null || !interaction.HasTrackedHands) pointedButton?.onClick.Invoke(); };
             select.Enable();
             magnify = new InputAction("Magnify Blender screen", InputActionType.Button);
-            magnify.AddBinding("<XRController>{RightHand}/thumbstickClicked");
+            magnify.AddBinding(WorkspaceHandPreference.Controller + "/thumbstickClicked");
             magnify.AddBinding("<Keyboard>/z");
             magnify.performed += _ => { if (Visible) CycleMagnification(); };
             magnify.Enable();
             panAction = new InputAction("Pan magnified Blender screen", InputActionType.Value);
-            panAction.AddBinding("<XRController>{RightHand}/thumbstick");
+            panAction.AddBinding(WorkspaceHandPreference.Controller + "/thumbstick");
             panAction.AddCompositeBinding("2DVector").With("Up", "<Keyboard>/upArrow")
                 .With("Down", "<Keyboard>/downArrow").With("Left", "<Keyboard>/leftArrow").With("Right", "<Keyboard>/rightArrow");
             panAction.Enable();
+            WorkspaceHandPreference.Changed += RebindHandShortcuts;
             StartCoroutine(Poll(0));
             StartCoroutine(Poll(1));
         }
 
         void OnDisable()
         {
+            WorkspaceHandPreference.Changed -= RebindHandShortcuts;
             StopAllCoroutines();
             for (int i = 0; i < requests.Length; i++)
             {
@@ -105,6 +106,22 @@ namespace SpatialModeling
             magnify?.Dispose();
             panAction?.Dispose();
             if (canvasObject != null) canvasObject.SetActive(false);
+        }
+
+        void RebindHandShortcuts()
+        {
+            // Rebind controller entries only. Preserve keyboard bindings and active capture coroutines.
+            foreach (var action in new[] { toggle, magnify, panAction })
+            {
+                action.Disable();
+                for (int i = 0; i < action.bindings.Count; i++)
+                {
+                    string path = action.bindings[i].path;
+                    if (path != null && path.StartsWith("<XRController>"))
+                        action.ApplyBindingOverride(i, WorkspaceHandPreference.Controller + path.Substring(path.IndexOf('}') + 1));
+                }
+                action.Enable();
+            }
         }
 
         void OnDestroy()
