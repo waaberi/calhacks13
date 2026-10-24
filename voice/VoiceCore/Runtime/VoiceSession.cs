@@ -5,8 +5,10 @@ namespace SpatialModeling.VoiceCore
 {
     public sealed class VoiceSessionOptions
     {
-        /// <summary>Results below this confidence are rejected and never produce a command. Provisional: chosen
-        /// from TTS samples in the Vosk spike; recalibrate with the Quest microphone.</summary>
+        /// <summary>Results below this confidence are rejected and never produce a command. Confidence is the lowest
+        /// word confidence, and Vosk gives "two" about 0.5 because "to" sounds the same, so a higher threshold rejects
+        /// nearly every command with "two" in it. Checked with real voices in #93 (laptop and earphone microphones);
+        /// recheck with the Quest microphone. See voice/README.md, "Confidence threshold".</summary>
         public float MinConfidence { get; set; } = 0.5f;
 
         /// <summary>A pending command is dropped this long after its last question.</summary>
@@ -222,6 +224,12 @@ namespace SpatialModeling.VoiceCore
             }
 
             ParsedUtterance parsed = CommandParser.Parse(result.Text, objects, pending?.Kind);
+            if (parsed.ConflictingVerbs)
+            {
+                // Two commands in one transcript is a mishearing (or two requests at once): treated as low confidence.
+                turn.Prompts.Add(Prompt.LowConfidence);
+                return turn.Build();
+            }
             if (parsed.Verb == CommandKind.Cancel)
             {
                 if (pending == null)

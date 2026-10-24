@@ -34,6 +34,11 @@ namespace SpatialModeling.VoiceCore
 
         /// <summary>Words outside the vocabulary (including Vosk's "[unk]"), ignoring any before the verb.</summary>
         public bool HasUnknownWords;
+
+        /// <summary>A second, different command verb after the first: "move eight add y millimeters" was Vosk's
+        /// transcript of "move it up five millimeters" (#93). Only "undo", "redo", "cancel" and "apply" may name
+        /// another command ("undo the move").</summary>
+        public bool ConflictingVerbs;
     }
 
     /// <summary>
@@ -117,7 +122,12 @@ namespace SpatialModeling.VoiceCore
                     parsed.Unit = parsed.Unit ?? unit;
                 else if (Vocabulary.Fillers.Contains(w))
                     negation = negates; // "minus the x axis"
-                else if (!Vocabulary.Verbs.ContainsKey(w) && !IsNumberWord(w))
+                else if (Vocabulary.Verbs.TryGetValue(w, out CommandKind other))
+                {
+                    if (other != parsed.Verb && !NamesACommand(parsed.Verb))
+                        parsed.ConflictingVerbs = true;
+                }
+                else if (!IsNumberWord(w))
                 {
                     parsed.HasUnknownWords = true;
                     nameLike = true;
@@ -139,6 +149,10 @@ namespace SpatialModeling.VoiceCore
         }
 
         static string At(List<string> words, int i) => i < words.Count ? words[i] : null;
+
+        /// <summary>Verbs that can take another command as their object: "undo the move", "cancel that rotate".</summary>
+        static bool NamesACommand(CommandKind? verb) =>
+            verb == CommandKind.Undo || verb == CommandKind.Redo || verb == CommandKind.Cancel || verb == CommandKind.Apply;
 
         static bool ContinuesNumber(string next) =>
             next == "point" || next == "hundred" || (next != null && Vocabulary.Units.ContainsKey(next));
