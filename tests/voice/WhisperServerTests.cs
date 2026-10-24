@@ -519,6 +519,9 @@ namespace SpatialModeling.VoiceCore.Tests
             var server = new WhisperServer(Path.Combine(dir, WhisperServer.ExecutableName), Path.Combine(dir, "m.bin"), running.Port);
             using (var whisper = new WhisperServerRecognizer(running.Port) { Server = server })
             {
+                // The fake answers before EnsureRunning looks (300 ms): on a busy CI runner the first connect was slower
+                // and EnsureRunning tried to start a server of its own (this test failed twice on CI that way).
+                Assert.True(WhisperServer.Answers(running.Port, 5000));
                 server.EnsureRunning();
                 Assert.False(server.NeedsStart);
                 whisper.SetGrammar(new[] { "undo", "redo" });
