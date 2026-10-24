@@ -34,7 +34,7 @@ def decode(line):
         raise ProtocolError(f"line is {len(line)} bytes; the limit is {MAX_LINE_BYTES}")
     try:
         msg = json.loads(line)
-    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as e:
         raise ProtocolError(f"not valid JSON: {e}") from e
     if not isinstance(msg, dict):
         raise ProtocolError("message must be a JSON object")
