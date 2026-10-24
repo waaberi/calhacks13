@@ -38,3 +38,21 @@ def test_rejects_oversized(monkeypatch):
         protocol.encode(protocol.message("ping", {"blob": "x" * 100}))
     with pytest.raises(protocol.ProtocolError):
         protocol.decode(b"x" * 100)
+
+
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "-Infinity", "1e999", "-1e999"])
+def test_rejects_non_finite_numbers(number):
+    line = '{"v": 1, "type": "ping", "id": "a", "payload": {"x": ' + number + "}}\n"
+    with pytest.raises(protocol.ProtocolError):
+        protocol.decode(line.encode())
+
+
+def test_accepts_ordinary_numbers():
+    line = b'{"v": 1, "type": "ping", "id": "a", "payload": {"x": [1e300, -0.0, 2, 1.5e-7]}}\n'
+    assert protocol.decode(line)["payload"]["x"] == [1e300, -0.0, 2, 1.5e-7]
+
+
+@pytest.mark.parametrize("number", [float("nan"), float("inf"), float("-inf")])
+def test_never_sends_non_finite_numbers(number):
+    with pytest.raises(protocol.ProtocolError):
+        protocol.encode(protocol.message("ping", {"x": number}))
