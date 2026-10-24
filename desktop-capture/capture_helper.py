@@ -126,6 +126,8 @@ class Windows:
             raise WindowUnavailable(
                 "error", "Selected window size is unsupported (maximum 8192 pixels per side)."
             )
+        bridge = getattr(self, "input_bridge", None)
+        input_geometry = bridge.frame_geometry(selected, width, height, "print") if bridge else None
         dc = self.u.GetWindowDC(hwnd)
         memory = self.g.CreateCompatibleDC(dc)
         bitmap = self.g.CreateCompatibleBitmap(dc, width, height)
@@ -151,6 +153,8 @@ class Windows:
             # Preserve native UI pixels on ordinary laptop displays. Text suffers when
             # a high-DPI window is reduced before it even reaches the headset.
             image.thumbnail((3840, 2400), Image.Resampling.LANCZOS)
+            if bridge:
+                image.info["input_geometry"] = input_geometry
             return image, current["title"]
         finally:
             self.g.SelectObject(memory, old)
@@ -168,6 +172,8 @@ class LatestFrame:
         self.jpeg = None
         self.captured_ms = 0
         self.last_success = 0
+        self.input_bridge = None  # P2.5 is explicit opt-in; capture behavior stays the default.
+        self.input_geometry = None
         self.status = {
             "state": "no_window",
             "window": None,
@@ -185,6 +191,7 @@ class LatestFrame:
             self.jpeg = None
             self.captured_ms = 0
             self.last_success = 0
+            self.input_geometry = None
             self.status = {
                 "state": "no_window",
                 "window": window["title"] if window else None,
@@ -202,16 +209,19 @@ class LatestFrame:
             if generation != self.generation:
                 return
             self.jpeg = None
+            self.input_geometry = None
             self.status.update(state=state, fps=0.0, message=message)
 
-    def publish(self, generation, image, title, fps, captured_ms):
+    def publish(self, generation, image, title, fps, captured_ms, input_geometry=None):
         output = io.BytesIO()
         image.save(output, format="JPEG", quality=95, subsampling=0)
         self.publish_jpeg(
-            generation, output.getvalue(), image.width, image.height, title, fps, captured_ms
+            generation, output.getvalue(), image.width, image.height, title, fps, captured_ms,
+            input_geometry
         )
 
-    def publish_jpeg(self, generation, jpeg, width, height, title, fps, captured_ms):
+    def publish_jpeg(self, generation, jpeg, width, height, title, fps, captured_ms,
+                     input_geometry=None):
         with self.lock:
             if generation != self.generation or captured_ms <= self.captured_ms:
                 return False  # A slow old encoder must never roll the newest image back.
@@ -219,6 +229,7 @@ class LatestFrame:
             self.jpeg = jpeg
             self.captured_ms = captured_ms
             self.last_success = time.monotonic()
+            self.input_geometry = input_geometry
             self.status = {
                 "state": "capturing",
                 "window": title,
@@ -278,7 +289,8 @@ def capture_loop(api, latest, stop, fps):
                 finished = time.monotonic()
                 measured = 1 / (finished - previous) if previous else 0
                 previous = finished
-                latest.publish(generation, image, title, measured, captured_ms)
+                geometry = image.info.get("input_geometry") if latest.input_bridge else None
+                latest.publish(generation, image, title, measured, captured_ms, geometry)
             except WindowUnavailable as exc:
                 latest.fail(generation, exc.state, str(exc))
                 previous = None
@@ -311,7 +323,7 @@ def graphics_capture_loop(api, latest, stop, fps):
                 raw_ready.clear()
             if item is None:
                 continue
-            generation, selected, pixels, captured_ms, item_session = item
+            generation, selected, pixels, captured_ms, item_session, geometry = item
             item = None
             with latest.lock:
                 if generation != latest.generation or item_session != session[0]:
@@ -356,7 +368,8 @@ def graphics_capture_loop(api, latest, stop, fps):
                     encoded_times.popleft()
                 measured = measured_frame_rate(encoded_times, now)
                 if not latest.publish_jpeg(
-                    generation, encoded.tobytes(), width, height, current["title"], measured, captured_ms
+                    generation, encoded.tobytes(), width, height, current["title"], measured,
+                    captured_ms, geometry
                 ):
                     encoded_times.pop()
 
@@ -412,8 +425,12 @@ def graphics_capture_loop(api, latest, stop, fps):
                     if this_session == session[0]:
                         latest.fail(generation, "error", "Capture returned an empty or unsupported pixel frame.")
                 return
+            geometry = (latest.input_bridge.frame_geometry(
+                selected, pixels.shape[1], pixels.shape[0], "graphics")
+                if latest.input_bridge else None)
             with raw_lock:
-                raw_slot[0] = (generation, selected, pixels, int(time.time() * 1000), this_session)
+                raw_slot[0] = (generation, selected, pixels, int(time.time() * 1000), this_session,
+                               geometry)
                 raw_ready.set()
 
         @capture.event
@@ -480,17 +497,24 @@ def graphics_capture_loop(api, latest, stop, fps):
             control.stop()
 
 
-def make_server(latest, port):
+def make_server(latest, port, input_bridge=None):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
         def do_GET(self):
-            # No CORS, no control endpoints, no capture of anything but the local selection.
+            # No CORS and no capture of anything but the local selection.
             if self.headers.get("Host", "").split(":")[0] not in ("127.0.0.1", "localhost"):
                 self.send_error(403)
                 return
             status, jpeg, captured = latest.snapshot()
             headers = {}
+            if self.path == "/input/state":
+                if not self.input_request_allowed():
+                    return
+                state = input_bridge.state() if input_bridge else {
+                    "enabled": False, "ready": False, "reason": "input_disabled"}
+                self.write_json(200, state)
+                return
             if self.path == "/status":
                 code, mime, body = 200, "application/json", json.dumps(status).encode()
             elif self.path == "/selection":
@@ -532,6 +556,65 @@ def make_server(latest, port):
             except (BrokenPipeError, ConnectionResetError):
                 pass
 
+        def input_request_allowed(self):
+            if (self.client_address[0] != "127.0.0.1"
+                    or self.headers.get("Host", "").split(":")[0] not in ("127.0.0.1", "localhost")
+                    or self.headers.get("Origin") is not None
+                    or self.headers.get("Sec-Fetch-Site") is not None):
+                self.send_error(403)
+                return False
+            return True
+
+        def write_json(self, code, value):
+            body = json.dumps(value).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+        def do_POST(self):
+            from input_bridge import InputRejected
+
+            if not self.input_request_allowed():
+                self.close_connection = True
+                return
+            if self.path != "/input":
+                self.send_error(404)
+                self.close_connection = True
+                return
+            if input_bridge is None:
+                self.write_json(403, {"ok": False, "reason": "input_disabled"})
+                self.close_connection = True
+                return
+            if self.headers.get("Transfer-Encoding") or self.headers.get(
+                    "Content-Type", "").split(";")[0].strip() != "application/json":
+                self.send_error(415)
+                self.close_connection = True
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if not 1 <= length <= 8192:
+                    raise ValueError("Invalid length")
+                raw = self.rfile.read(length)
+                if len(raw) != length:
+                    raise ValueError("Incomplete body")
+                payload = json.loads(raw)
+            except (ValueError, UnicodeError, OSError):
+                self.write_json(400, {"ok": False, "reason": "invalid_input_payload"})
+                self.close_connection = True
+                return
+            try:
+                self.write_json(200, input_bridge.dispatch(payload))
+            except InputRejected as exc:
+                self.write_json(exc.status, {"ok": False, "reason": exc.reason})
+            except OSError:
+                self.write_json(502, {"ok": False, "reason": "native_input_unavailable"})
+
         def log_message(self, *_):
             pass
 
@@ -539,6 +622,27 @@ def make_server(latest, port):
         daemon_threads = True
         request_queue_size = 8
         allow_reuse_address = False
+        # Input mutations never queue inside the bridge; bound connections as
+        # well when its authenticated control surface is explicitly enabled.
+        request_slots = threading.BoundedSemaphore(8) if input_bridge else None
+
+        def process_request(self, request, client_address):
+            if self.request_slots and not self.request_slots.acquire(blocking=False):
+                self.shutdown_request(request)
+                return
+            try:
+                super().process_request(request, client_address)
+            except BaseException:
+                if self.request_slots:
+                    self.request_slots.release()
+                raise
+
+        def process_request_thread(self, request, client_address):
+            try:
+                super().process_request_thread(request, client_address)
+            finally:
+                if self.request_slots:
+                    self.request_slots.release()
 
         def server_bind(self):
             if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
@@ -610,6 +714,8 @@ def main():
         "--window", type=int, help="Explicit selected Blender HWND; otherwise opens a picker"
     )
     parser.add_argument("--list", action="store_true")
+    parser.add_argument("--enable-input", action="store_true",
+                        help="Explicitly enable P2.5 input for the selected Blender window")
     args = parser.parse_args()
     if not 1 <= args.fps <= 60:
         parser.error("--fps must be between 1 and 60")
@@ -623,8 +729,18 @@ def main():
         if not selected:
             parser.error("--window must identify an actual Blender application window")
         latest.select(selected)
-    server = make_server(latest, args.port)
+    input_bridge = None
+    if args.enable_input:
+        from input_bridge import InputBridge, WindowsInput
+
+        input_bridge = InputBridge(latest, WindowsInput(api), enabled=True)
+        latest.input_bridge = input_bridge
+        api.input_bridge = input_bridge
+    server = make_server(latest, args.port, input_bridge)
     stop = threading.Event()
+    if input_bridge:
+        threading.Thread(target=input_bridge.run_watchdog, args=(stop,), daemon=True,
+                         name="Selected Blender input release watchdog").start()
     threading.Thread(target=server.serve_forever, daemon=True).start()
     loop = graphics_capture_loop if args.backend == "graphics" else capture_loop
     if args.backend == "graphics":
