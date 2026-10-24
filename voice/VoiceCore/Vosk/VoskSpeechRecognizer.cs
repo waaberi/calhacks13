@@ -20,6 +20,7 @@ namespace SpatialModeling.VoiceCore.Vosk
         IntPtr model;
         IntPtr recognizer;
         string grammar;
+        bool grammarChanged;
         int recognizerRate;
 
         VoskSpeechRecognizer(IntPtr model) => this.model = model;
@@ -44,14 +45,15 @@ namespace SpatialModeling.VoiceCore.Vosk
 
         public void SetGrammar(IReadOnlyList<string> phrases)
         {
-            // Vosk takes the grammar when the recognizer is made, so the next Start makes a new one.
+            // Vosk takes the grammar when the recognizer is made, so the next Start makes a new one; an utterance
+            // in progress keeps the old grammar.
             grammar = phrases == null ? null : VoskJson.Grammar(phrases);
-            FreeRecognizer();
+            grammarChanged = true;
         }
 
         public void Start(int sampleRate)
         {
-            if (recognizer != IntPtr.Zero && recognizerRate == sampleRate)
+            if (recognizer != IntPtr.Zero && recognizerRate == sampleRate && !grammarChanged)
             {
                 Native.vosk_recognizer_reset(recognizer);
                 return;
@@ -64,6 +66,7 @@ namespace SpatialModeling.VoiceCore.Vosk
                 throw new InvalidOperationException("Vosk couldn't make a recognizer");
             Native.vosk_recognizer_set_words(recognizer, 1); // word confidences, see VoskJson.ParseResult
             recognizerRate = sampleRate;
+            grammarChanged = false;
         }
 
         public void AcceptAudio(short[] samples, int count)

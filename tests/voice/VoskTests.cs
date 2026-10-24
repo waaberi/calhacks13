@@ -185,6 +185,28 @@ namespace SpatialModeling.VoiceCore.Tests
         }
 
         [SkippableFact]
+        public void AGrammarChangeDuringAnUtteranceKeepsIt()
+        {
+            SkipWithoutModel();
+            VoiceSession session = ExampleScene();
+            using (VoiceInput input = Listen(session))
+            {
+                (float[] samples, int rate) = Audio(Fixture("undo"));
+                input.StartUtterance();
+                input.Write(samples, samples.Length / 2, rate);
+                session.SetObjects(Contract.SnapshotObjects().Take(1)); // a scene update while the button is down
+                input.SetGrammar(session.GrammarPhrases());
+                float[] rest = samples.Skip(samples.Length / 2).Concat(new float[rate / 2]).ToArray();
+                input.Write(rest, rest.Length, rate);
+                input.StopUtterance();
+                Assert.Equal("undo", Heard(input).Text);
+
+                Speak(input, Fixture("move-the-shaft-ten-millimeters-along-x")); // the shaft is no longer in the grammar
+                Assert.DoesNotContain("shaft", Heard(input).Text);
+            }
+        }
+
+        [SkippableFact]
         public void APromptHeardWhilePausedIsNeverRecognized()
         {
             SkipWithoutModel();
