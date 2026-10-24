@@ -6,6 +6,7 @@ inside Server.drain(). This module must not import bpy: host.py passes in the
 document and scene snapshot as functions, so the tests can run it outside Blender.
 """
 
+import logging
 import re
 import tomllib
 import uuid
@@ -29,6 +30,8 @@ HOST_NAME = "Host Blender"  # the host's own participant: whoever sits at the ho
 ROLES = ("vr", "blender-client")
 _UUID = re.compile(r"[0-9a-f]{32}")
 _VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?")
+
+log = logging.getLogger(__name__)
 
 
 def is_uuid(value):
@@ -160,7 +163,10 @@ class Session:
     def _changed(self):
         self.broadcast(self.session_update())
         if self.on_change is not None:
-            self.on_change()
+            try:
+                self.on_change()
+            except Exception:  # a display problem must not fail the hello that caused it
+                log.exception("on_change failed")
 
     @staticmethod
     def _refuse(conn, msg, code, text, details=None):

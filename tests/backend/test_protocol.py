@@ -40,7 +40,9 @@ def test_rejects_oversized(monkeypatch):
         protocol.decode(b"x" * 100)
 
 
-@pytest.mark.parametrize("number", ["NaN", "Infinity", "-Infinity", "1e999", "-1e999"])
+@pytest.mark.parametrize(
+    "number", ["NaN", "Infinity", "-Infinity", "1e999", "-1e999", "1" * 5000], ids=lambda n: n[:9]
+)
 def test_rejects_non_finite_numbers(number):
     line = '{"v": 1, "type": "ping", "id": "a", "payload": {"x": ' + number + "}}\n"
     with pytest.raises(protocol.ProtocolError):

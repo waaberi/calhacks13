@@ -50,7 +50,9 @@ def decode(line):
         raise ProtocolError(f"line is {len(line)} bytes; the limit is {MAX_LINE_BYTES}")
     try:
         msg = json.loads(line, parse_constant=_reject_constant, parse_float=_finite_float)
-    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as e:
+    except ProtocolError:
+        raise
+    except (ValueError, RecursionError) as e:  # bad JSON or UTF-8, a 5000-digit integer
         raise ProtocolError(f"not valid JSON: {e}") from e
     if not isinstance(msg, dict):
         raise ProtocolError("message must be a JSON object")
