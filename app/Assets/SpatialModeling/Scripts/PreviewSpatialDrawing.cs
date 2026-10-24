@@ -19,7 +19,8 @@ namespace SpatialModeling
         public string Tool => manualTool.Length > 0 ? manualTool : (string)NativeState["tool"] ?? "";
         public string StatusText => status + "\n" + Session.Notice;
         public bool HasDraft => first.HasValue;
-        public bool NativeStateCurrent => scene != null && scene.IsCurrent && Time.unscaledTime - stateAt < 2f;
+        public bool NativeStateCurrent => scene != null && scene.IsCurrent && Session.Ready && Session.SceneCurrent
+            && Time.unscaledTime - stateAt < 2f;
 
         HostScene scene;
         Material solvedMaterial, draftMaterial;
@@ -137,6 +138,10 @@ namespace SpatialModeling
             var msg = e.RawMessage; var p = msg["payload"] as JObject;
             Session.Receive(msg);
             string type = (string)msg["type"];
+            // A welcome starts a new admission/scene handshake. Never carry
+            // the preceding connection's UI reservation through its snapshot.
+            if (type == "welcome")
+            { NativeState = new JObject(); stateAt = float.NegativeInfinity; CancelLocal(); }
             if (type == "preview.state" && p != null) SetNativeState(p);
             if ((type == "preview.ui.granted" && (string)msg["re"] == beginId)
                 || (type == "preview.ui.ended" && (string)msg["re"] == endId))
@@ -165,7 +170,11 @@ namespace SpatialModeling
             var identity = Session.RequestIdentity;
             if (identity == null || p == null) return;
             foreach (string name in new[] { "session_id", "host_epoch", "document_id", "open_epoch" })
-                if ((string)p[name] != (string)identity[name]) { CancelLocal(); status = "Native tool state belongs to another session/document"; return; }
+                if ((string)p[name] != (string)identity[name])
+                {
+                    NativeState = new JObject(); stateAt = float.NegativeInfinity;
+                    CancelLocal(); status = "Native tool state belongs to another session/document; preview input disabled"; return;
+                }
             string before = (string)NativeState["sketch_id"] + "/" + (string)NativeState["native_tool"];
             NativeState = (JObject)p.DeepClone(); stateAt = Time.unscaledTime;
             string after = (string)p["sketch_id"] + "/" + (string)p["native_tool"];
