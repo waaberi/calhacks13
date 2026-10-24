@@ -21,6 +21,11 @@ __pycache__/
 bin/
 obj/
 
+# Speech models (voice/fetch-model.sh), wherever they are unpacked, and spike audio
+vosk-model-*
+/voice/models/
+/voice/VoskSpike/samples/
+
 # Blender backup saves (.blend1, .blend2, ...)
 *.blend[0-9]*
 
