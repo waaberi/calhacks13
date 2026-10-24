@@ -19,7 +19,7 @@ namespace SpatialModeling
         {
             output = Environment.GetEnvironmentVariable("P3_PLAYER_SMOKE_REPORT");
             int.TryParse(Environment.GetEnvironmentVariable("CALHACKS_HOST_PORT"), out var port);
-            if (string.IsNullOrEmpty(output) || !Path.IsPathRooted(output) || port < 1024 || port == 8765) { Application.Quit(3); return; }
+            if (string.IsNullOrEmpty(output) || !Path.IsPathRooted(output) || port < 1024 || port == 8765) { WorkspaceShutdown.Quit(3); return; }
             StartCoroutine(Run());
         }
         IEnumerator Run()
@@ -77,7 +77,7 @@ namespace SpatialModeling
             report["sketches"] = new JArray(session.Sketches.Values); report["passed"] = true; Write();
             SketchHome(); ScreenCapture.CaptureScreenshot(Path.ChangeExtension(output, ".png"));
             Debug.Log("P3_CAD_PLAYER_SMOKE PASS actual menu/native solver/100x60to120x60/conflict/UndoRedo/circle/angle/Save");
-            yield return new WaitForSecondsRealtime(2); Application.Quit(0);
+            yield return new WaitForSecondsRealtime(2); WorkspaceShutdown.Quit(0);
         }
         IEnumerator NewSketch() { menu.Home(); if (!Click("Sketch") || !Click("New sketch") || !Click("XY") || !Click("Apply")) yield break; yield return Receipt("create native XY sketch"); }
         void SketchHome() { menu.Home(); Click("Sketch"); }
@@ -104,6 +104,7 @@ namespace SpatialModeling
         static Dictionary<string, Vector2> Points(JArray entities) { var result = new Dictionary<string, Vector2>(); foreach (JObject e in entities) if ((string)e["kind"] == "point") result[(string)e["id"]] = new Vector2((float)e["at"][0], (float)e["at"][1]); return result; }
         bool Click(string title) { if (failed) return false; if (menu.SmokeClick(title)) return true; Fail("Missing usable menu control: " + title); return false; }
         void Write() { Directory.CreateDirectory(Path.GetDirectoryName(output)); File.WriteAllText(output, report.ToString()); }
-        void Fail(string error) { failed = true; report["passed"] = false; report["error"] = error; if (output != null) Write(); Debug.LogError("P3_CAD_PLAYER_SMOKE FAIL " + error); Application.Quit(2); }
+        void Fail(string error) { failed = true; report["passed"] = false; report["error"] = error; if (output != null) Write(); Debug.LogError("P3_CAD_PLAYER_SMOKE FAIL " + error); WorkspaceShutdown.Quit(2); }
     }
 }
+
