@@ -163,6 +163,83 @@ namespace SpatialModeling.VoiceCore.Tests
             Assert.True(vosk.Disposed && whisper.Disposed);
         }
 
+        static readonly VoiceCandidate[] TwoCandidates =
+        {
+            new VoiceCandidate(1, "Array", "object.modifier_add", needsTarget: true),
+            new VoiceCandidate(2, "duplicate", "object.duplicate", needsTarget: true),
+        };
+
+        [Fact]
+        public void WhileAskingVoskHearsTheAnswersAndWhisperTheAnswersAndTheFullGrammar()
+        {
+            var (hybrid, vosk, whisper, _) = Make();
+            List<string> answers = ChoiceWords.Grammar(TwoCandidates); // VoiceSession.GrammarPhrases() while asking
+            Assert.True(ChoiceWords.IsGrammar(answers));
+
+            hybrid.SetGrammar(answers);
+            Assert.Same(answers, vosk.Grammar);
+            Assert.Equal(answers.Take(answers.Count - 1), whisper.Grammar.Take(answers.Count - 1)); // the answers first
+            Assert.Equal(Grammar.Where(p => p != "[unk]" && !answers.Contains(p)), // then the full grammar's other phrases
+                whisper.Grammar.Skip(answers.Count - 1).Take(whisper.Grammar.Count - answers.Count));
+            Assert.Equal("[unk]", whisper.Grammar.Last());
+            Assert.Single(whisper.Grammar, "[unk]");
+            Assert.Contains("add a cube", whisper.Grammar);
+            Assert.Same(whisper.Grammar, hybrid.SlowGrammar);
+
+            hybrid.SetGrammar(Grammar); // the question ended: one grammar again
+            Assert.Same(Grammar, vosk.Grammar);
+            Assert.Same(Grammar, whisper.Grammar);
+        }
+
+        [Fact]
+        public void WhileAskingVoskIsSureOnlyOfAnAnswer()
+        {
+            var (hybrid, vosk, whisper, heard) = Make();
+            hybrid.SetGrammar(ChoiceWords.Grammar(TwoCandidates));
+            vosk.OnStop.Add(new RecognitionResult("add a cube", 1f)); // in Whisper's grammar, not in Vosk's
+            whisper.OnStop.Add(new RecognitionResult("add a cube", 1f));
+            Utter(hybrid);
+            Assert.Equal(FastPathOutcome.Slow, hybrid.LastOutcome);
+
+            vosk.OnStop.Clear();
+            vosk.OnStop.Add(new RecognitionResult("the second one", 0.95f));
+            Utter(hybrid);
+            Assert.Equal(FastPathOutcome.Fast, hybrid.LastOutcome);
+            Assert.Equal(new[] { "add a cube", "the second one" }, heard.Select(r => r.Text));
+        }
+
+        [Fact]
+        public void AQuestionBeforeAnyFullGrammarGivesWhisperTheAnswersAlone()
+        {
+            var vosk = new Fake();
+            var whisper = new Fake();
+            var hybrid = new FastPathRecognizer(vosk, whisper);
+            List<string> answers = ChoiceWords.Grammar(TwoCandidates);
+            hybrid.SetGrammar(answers);
+            Assert.Same(answers, vosk.Grammar);
+            Assert.Same(answers, whisper.Grammar);
+        }
+
+        [Theory]
+        [InlineData(new[] { "one", "two", "cancel", "never mind", "[unk]" }, true)]
+        [InlineData(new[] { "one", "first", "option one", "number one", "the first one", "cancel", "never mind", "[unk]" }, true)]
+        [InlineData(new[] { "add a cube", "one", "two", "cancel", "[unk]" }, false)] // a full grammar has commands
+        [InlineData(new[] { "one", "two", "[unk]" }, false)]                         // a question's always has cancel
+        [InlineData(new string[0], false)]
+        public void AQuestionsGrammarIsOnlyAnswersAndCancel(string[] phrases, bool isQuestion) =>
+            Assert.Equal(isQuestion, ChoiceWords.IsGrammar(phrases));
+
+        [Fact]
+        public void TheSessionsGrammarsAreToldApart()
+        {
+            var session = new VoiceSession(new VoiceSessionOptions { AskHost = true }, () => DateTime.UtcNow);
+            session.SetObjects(new[] { new SceneObject("id-cube", "Cube") });
+            session.SetHostGrammar(new[] { "make it thicker", "shade smooth" });
+            Assert.False(ChoiceWords.IsGrammar(session.GrammarPhrases()));
+            Assert.False(ChoiceWords.IsGrammar(new VoiceSession().GrammarPhrases())); // VoiceCore's words alone
+            Assert.False(ChoiceWords.IsGrammar(null));
+        }
+
         [Fact]
         public void ResultsDontLeakIntoTheNextUtterance()
         {

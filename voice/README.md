@@ -91,10 +91,14 @@ reject (contracts/README.md, Voice). Without `AskHost` nothing changes.
 - **A new command while asking:** words that aren't an answer and aren't only answer words, "[unk]" and fillers
   ("make it thicker", "rotate this ninety degrees around z", "undo") drop the question and are handled as a new
   command in the same turn, routed to the host as usual. The turn has `ChoiceDismissed` (hide the choice panel) and
-  `GrammarChanged`. Garbled answers ("[unk] two", "two please", "to") still ask again. The grammar stays answers-only:
-  with the host's phrases merged in, the TTS answers fell from 20/20 to 14/20 at 0.9 ("two" heard as "do"), so a
-  command said while asking usually reaches the session as a press without a result (next item), which also
-  dismisses the question, and saying it again gets the full grammar.
+  `GrammarChanged`. Garbled answers ("[unk] two", "two please", "to") still ask again. `GrammarPhrases()` stays
+  answers-only: with the host's phrases merged in, Vosk's TTS answers fell from 20/20 to 14/20 at 0.9 ("two" heard as
+  "do"). With `FastPathRecognizer` (the default) the command still arrives: Vosk keeps the answers-only grammar, but
+  Whisper's transcript is snapped onto the answers plus the last full grammar it was given, so "make it thicker"
+  reaches `Hear` as "make it thicker" and runs (or goes to the host). The adapter calls `SetGrammar` as always; the
+  fast path tells a question's grammar from the full one itself. With Vosk alone, a command said while asking reaches
+  the session as a press without a result (next item), which dismisses the question, and saying it again gets the
+  full grammar.
 - **A press without a result:** `VoiceInput.TryGetNoResult(out NoResultReason reason)` reports each push-to-talk
   utterance that ended without any result. Drain it after `TryGetResult` and pass it to
   `session.NothingRecognized(reason)`. The turn's `NoResult` is set: show a short "Didn't catch that". `Silence`

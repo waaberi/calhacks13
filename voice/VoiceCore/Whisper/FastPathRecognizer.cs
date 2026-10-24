@@ -12,7 +12,8 @@ namespace SpatialModeling.VoiceCore.Whisper
     /// Measured on the TTS corpus with Vosk G2 and whisper tiny.en (voice-asr-alternatives study): 196/250 commands
     /// top-1 vs 151 for Vosk alone, 0/20 and 0/48 chatter accepted, and 65% of utterances on the fast path.
     /// Needs push-to-talk: results come out at <see cref="Stop"/>, so with an open microphone (Start once, never
-    /// Stop) use Vosk alone.
+    /// Stop) use Vosk alone. While VoiceSession asks "which one?", Vosk listens for the answers only and Whisper for
+    /// the answers and every command (see <see cref="SetGrammar"/>).
     /// An utterance without a result raises <see cref="NoResult"/> (<see cref="IReportsNoResult"/>):
     /// <see cref="NoResultReason.Silence"/> for no speech (Whisper's speech gate dropped a silent press, or Whisper
     /// wrote a silence hallucination such as "you" that Vosk didn't back up: <see cref="FastPathOutcome.Silence"/>),
@@ -31,6 +32,7 @@ namespace SpatialModeling.VoiceCore.Whisper
         readonly List<RecognitionResult> slowResults = new List<RecognitionResult>();
         HashSet<string> phrases = new HashSet<string>(StringComparer.Ordinal);
         NoResultReason? slowReason; // the slow recognizer's NoResult during this Stop
+        IReadOnlyList<string> fullGrammar; // the last grammar that wasn't a question's
         int rate = 16000;
 
         public FastPathRecognizer(ISpeechRecognizer fast, ISpeechRecognizer slow, float minFastConfidence = DefaultMinFastConfidence)
@@ -60,12 +62,48 @@ namespace SpatialModeling.VoiceCore.Whisper
         /// <summary>Which recognizer answered the last utterance.</summary>
         public FastPathOutcome LastOutcome { get; private set; }
 
+        /// <summary>The grammar the slow recognizer snaps onto (see <see cref="SetGrammar"/>), for logs and tests.</summary>
+        public IReadOnlyList<string> SlowGrammar { get; private set; }
+
+        /// <summary>
+        /// Two grammars while <see cref="VoiceSession"/> asks "which one?". The adapter passes
+        /// <see cref="VoiceSession.GrammarPhrases"/> as always; while a question is open that is only the answers, cancel
+        /// and "[unk]". Vosk keeps exactly that (on TTS 20/20 answers at 0.9, against 14/20 with the full grammar
+        /// merged in). Whisper gets the answers followed by the last full grammar seen here, so a new command said
+        /// during the question ("make it thicker") snaps onto that command and reaches <see cref="VoiceSession.Hear"/>,
+        /// which dismisses the question and handles it, instead of becoming a press without a result. An answer is
+        /// still exact for Whisper ("two", "the second one"), and Vosk's sure answer still skips Whisper. The full
+        /// grammar is the last grammar that wasn't a question's (<see cref="ChoiceWords.IsGrammar"/>): a full grammar
+        /// that changed during the question arrives when it ends. Before any full grammar Whisper gets the answers alone.
+        /// </summary>
         public void SetGrammar(IReadOnlyList<string> grammar)
         {
+            IReadOnlyList<string> forSlow = grammar;
+            if (!ChoiceWords.IsGrammar(grammar))
+                fullGrammar = grammar;
+            else if (fullGrammar != null)
+                forSlow = AnswersThenFull(grammar, fullGrammar);
             fast.SetGrammar(grammar);
-            slow.SetGrammar(grammar);
+            slow.SetGrammar(forSlow);
+            SlowGrammar = forSlow;
             phrases = new HashSet<string>(grammar ?? Array.Empty<string>(), StringComparer.Ordinal);
-            phrases.Remove("[unk]");
+            phrases.Remove(Vocabulary.Unknown);
+        }
+
+        /// <summary>The answers first (so their words lead Whisper's prompt), then the full grammar's other phrases,
+        /// then "[unk]" once.</summary>
+        static List<string> AnswersThenFull(IReadOnlyList<string> answers, IReadOnlyList<string> full)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal) { Vocabulary.Unknown };
+            var both = new List<string>(answers.Count + full.Count);
+            foreach (string phrase in answers)
+                if (seen.Add(phrase))
+                    both.Add(phrase);
+            foreach (string phrase in full)
+                if (seen.Add(phrase))
+                    both.Add(phrase);
+            both.Add(Vocabulary.Unknown);
+            return both;
         }
 
         public void Start(int sampleRate)

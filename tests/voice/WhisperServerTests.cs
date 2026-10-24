@@ -333,6 +333,68 @@ namespace SpatialModeling.VoiceCore.Tests
         }
 
         [Fact]
+        public void ACommandSaidWhileAskingReachesTheSessionAsThatCommand()
+        {
+            string reply = "";
+            using (var server = new FakeHttpServer { Respond = _ => (200, Reply(reply)) })
+            {
+                var session = new VoiceSession(new VoiceSessionOptions { AskHost = true }, () => DateTime.UtcNow);
+                session.SetObjects(new[] { new SceneObject("id-cube", "Cube") });
+                session.SetHostGrammar(new[] { "make copies", "make it thicker", "shade smooth" });
+                var vosk = new FakeVosk();
+                var hybrid = new FastPathRecognizer(vosk, new WhisperServerRecognizer(server.Port));
+                var heard = new List<RecognitionResult>();
+                hybrid.Recognized += heard.Add;
+                List<NoResultReason> reasons = Reasons(hybrid);
+                hybrid.SetGrammar(session.GrammarPhrases());
+
+                void Ask()
+                {
+                    VoiceTurn sent = session.Hear(new RecognitionResult("make copies", 1f));
+                    session.ResolveSent(sent.Resolve, "msg1");
+                    VoiceTurn asked = session.HostAnswered("msg1", new VoiceCandidates("res1", VoiceDecision.Ask, null, 30, new[]
+                    {
+                        new VoiceCandidate(1, "Array", "object.modifier_add", needsTarget: true),
+                        new VoiceCandidate(2, "duplicate", "object.duplicate", needsTarget: true),
+                    }));
+                    Assert.True(asked.GrammarChanged);
+                    hybrid.SetGrammar(session.GrammarPhrases()); // what the adapter does: answers only
+                }
+
+                RecognitionResult Say(string voskHeard, float voskConfidence, string whisperWrote)
+                {
+                    vosk.OnStop.Clear();
+                    vosk.OnStop.Add(new RecognitionResult(voskHeard, voskConfidence));
+                    reply = whisperWrote;
+                    heard.Clear();
+                    hybrid.Start(16000);
+                    hybrid.AcceptAudio(Tone(16000), 16000);
+                    hybrid.Stop();
+                    return Assert.Single(heard);
+                }
+
+                Ask();
+                RecognitionResult command = Say("[unk]", 1f, " Make it thicker."); // Vosk had only the answers
+                Assert.Equal("make it thicker", command.Text);
+                Assert.Equal(1f, command.Confidence);
+                VoiceTurn turn = session.Hear(command);
+                Assert.True(turn.ChoiceDismissed);
+                Assert.Equal("make it thicker", turn.Resolve.Text); // to the host, as a new command
+                Assert.Null(session.Choice);
+                hybrid.SetGrammar(session.GrammarPhrases()); // GrammarChanged: the full grammar again
+                Assert.Contains("make it thicker", hybrid.SlowGrammar);
+
+                Ask();
+                RecognitionResult answer = Say("two", 0.6f, " Two."); // Vosk isn't sure: Whisper still hears the answer
+                Assert.Equal("two", answer.Text);
+                VoiceTurn picked = session.Hear(answer);
+                Assert.Equal(CommandKind.Run, picked.Command.Kind);
+                Assert.Equal(2, picked.Command.Choice);
+                Assert.Empty(reasons);
+            }
+        }
+
+        [Fact]
         public void WhenWhisperFailsAndVoskHeardNothingTheFastPathGivesNoReason()
         {
             var hybrid = new FastPathRecognizer(new FakeVosk(), new WhisperServerRecognizer(FreePort(), timeoutMs: 1000));
