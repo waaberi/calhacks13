@@ -2,12 +2,12 @@
 
 import http.client
 import json
+import os
 import sys
 import threading
 import time
 import types
 import unittest
-from collections import deque
 from contextlib import closing, contextmanager
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -23,7 +23,7 @@ from capture_helper import (
 from PIL import Image
 
 try:
-    import cv2  # noqa: F401 -- graphics_capture_loop imports it.
+    import cv2
     import numpy as np
 except ImportError:
     np = None
@@ -144,10 +144,143 @@ class CaptureContractTests(unittest.TestCase):
         self.assertFalse(np.shares_memory(queued, pixels))
         self.assertEqual(int(queued.max()), 0)
 
-    def test_rate_measurement_tolerates_coincident_clock_readings(self):
-        self.assertEqual(measured_frame_rate(deque(), 5.0), 0)
-        self.assertEqual(measured_frame_rate(deque([5.0, 5.0]), 5.0), 0)
-        self.assertEqual(measured_frame_rate(deque([5.0, 5.5, 6.0]), 6.0), 2.0)
+    def test_owned_bgr_snapshot_preserves_padded_source_channels_and_identical_jpeg(self):
+        import cv2
+        import numpy as np
+
+        backing = np.arange(8 * 16 * 4, dtype=np.uint8).reshape(8, 16, 4)
+        mapped = backing[:, :12]
+        self.assertFalse(mapped.flags.c_contiguous)
+        owned = owned_capture_pixels(SimpleNamespace(frame_buffer=mapped))
+        self.assertTrue(owned.flags.c_contiguous)
+        self.assertFalse(np.shares_memory(owned, mapped))
+        np.testing.assert_array_equal(owned, mapped[:, :, :3])
+        settings = [cv2.IMWRITE_JPEG_QUALITY, 95, cv2.IMWRITE_JPEG_SAMPLING_FACTOR,
+                    cv2.IMWRITE_JPEG_SAMPLING_FACTOR_444]
+        self.assertEqual(cv2.imencode(".jpg", mapped, settings)[1].tobytes(),
+                         cv2.imencode(".jpg", owned, settings)[1].tobytes())
+        backing[:] = 0
+        self.assertGreater(int(owned.max()), 0)
+
+    def test_coincident_clock_ticks_never_crash_capture_rate_reporting(self):
+        self.assertEqual(measured_frame_rate([100, 100], 100), 0)
+        self.assertEqual(measured_frame_rate([100], 100), 0)
+        self.assertAlmostEqual(measured_frame_rate([100, 100.025, 100.05], 100.05), 40)
+
+    @contextmanager
+    def actual_graphics_workers(self):
+        captures = []
+        refresh = threading.Event()
+        reached_publication = threading.Event()
+        release_publication = threading.Event()
+        blocked = [False]
+        stop = threading.Event()
+        thread_errors = []
+
+        def iconic(_):
+            if threading.current_thread().name.startswith("Latest JPEG encoder") and not blocked[0]:
+                blocked[0] = True
+                reached_publication.set()
+                release_publication.wait(4)
+            return False
+
+        class FakeCapture:
+            def __init__(self, **_):
+                self.callbacks = {}
+                captures.append(self)
+
+            def event(self, handler):
+                self.callbacks[handler.__name__] = handler
+                return handler
+
+            def start_free_threaded(self):
+                return SimpleNamespace(stop=lambda: None, is_finished=lambda: False)
+
+        def refresh_due(*_):
+            if refresh.is_set():
+                refresh.clear()
+                return True
+            return False
+
+        api = SimpleNamespace(identity=lambda hwnd: {"hwnd": hwnd, "pid": 2, "title": "Blender"},
+                              u=SimpleNamespace(IsIconic=iconic))
+        latest = LatestFrame()
+        latest.select({"hwnd": 1, "pid": 2, "title": "Blender"})
+        with patch("windows_capture.WindowsCapture", FakeCapture), \
+             patch("capture_helper.capture_refresh_due", refresh_due), \
+             patch("threading.excepthook", thread_errors.append):
+            worker = threading.Thread(target=graphics_capture_loop, args=(api, latest, stop, 60), daemon=True)
+            worker.start()
+            try:
+                self.wait_until(lambda: bool(captures))
+                yield SimpleNamespace(captures=captures, refresh=refresh, reached=reached_publication,
+                                      release=release_publication, latest=latest)
+            finally:
+                release_publication.set()
+                stop.set()
+                worker.join(3)
+                self.assertFalse(worker.is_alive())
+                for encoder in threading.enumerate():
+                    if encoder.name.startswith("Latest JPEG encoder"):
+                        encoder.join(1)
+                self.assertFalse(thread_errors, [str(error.exc_value) for error in thread_errors])
+
+    def wait_until(self, predicate):
+        until = time.monotonic() + 3
+        while not predicate() and time.monotonic() < until:
+            time.sleep(0.005)
+        self.assertTrue(predicate(), "Actual graphics workers did not reach the expected state")
+
+    @unittest.skipUnless(os.name == "nt", "Windows capture binding")
+    def test_empty_callback_reports_unavailable_then_valid_pixels_recover(self):
+        import numpy as np
+
+        with self.actual_graphics_workers() as run:
+            callback = run.captures[0].callbacks["on_frame_arrived"]
+            callback(SimpleNamespace(frame_buffer=np.empty((0, 12, 4), dtype=np.uint8)),
+                     SimpleNamespace(stop=lambda: None))
+            self.assertEqual(run.latest.snapshot()[0]["state"], "error")
+            self.assertIsNone(run.latest.snapshot()[1])
+            run.release.set()
+            callback(SimpleNamespace(frame_buffer=np.full((8, 12, 4), 64, dtype=np.uint8)),
+                     SimpleNamespace(stop=lambda: None))
+            self.wait_until(lambda: run.latest.snapshot()[1] is not None)
+            self.assertEqual(run.latest.snapshot()[0]["state"], "capturing")
+
+    @unittest.skipUnless(os.name == "nt", "Windows capture binding")
+    def test_epoch_change_during_final_publication_cannot_resurrect_old_pixels(self):
+        import numpy as np
+
+        with self.actual_graphics_workers() as run:
+            frame = SimpleNamespace(frame_buffer=np.full((8, 12, 4), 32, dtype=np.uint8))
+            run.captures[0].callbacks["on_frame_arrived"](frame, SimpleNamespace(stop=lambda: None))
+            self.assertTrue(run.reached.wait(2))  # Past the first session check, before final publication.
+            run.refresh.set()
+            self.wait_until(lambda: len(run.captures) >= 2)
+            run.release.set()
+            time.sleep(0.1)
+            self.assertIsNone(run.latest.snapshot()[1])
+
+    @unittest.skipUnless(os.name == "nt", "Windows capture binding")
+    def test_two_actual_encoders_allow_new_frame_to_overtake_blocked_old_frame(self):
+        import cv2
+        import numpy as np
+
+        with self.actual_graphics_workers() as run:
+            old = SimpleNamespace(frame_buffer=np.full((8, 12, 4), 16, dtype=np.uint8))
+            new = SimpleNamespace(frame_buffer=np.full((8, 12, 4), 192, dtype=np.uint8))
+            callback = run.captures[0].callbacks["on_frame_arrived"]
+            callback(old, SimpleNamespace(stop=lambda: None))
+            self.assertTrue(run.reached.wait(2))
+            callback(new, SimpleNamespace(stop=lambda: None))
+            self.wait_until(lambda: run.latest.snapshot()[1] is not None)
+            jpeg = run.latest.snapshot()[1]
+            run.release.set()
+            time.sleep(0.1)
+            self.assertEqual(run.latest.snapshot()[1], jpeg)
+            self.assertEqual(run.latest.snapshot()[0]["frame"], 1)
+            image = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
+            self.assertTrue((image == 192).all())
 
 
 class FakeControl:
@@ -220,7 +353,7 @@ class GraphicsWorkerTests(unittest.TestCase):
         self.assertEqual(self.thread_errors, [])
 
     def wait_until(self, predicate, timeout=3):
-        until = time.perf_counter() + timeout  # One test pins time.monotonic().
+        until = time.perf_counter() + timeout
         while not predicate() and time.perf_counter() < until:
             time.sleep(0.005)
         self.assertTrue(predicate(), "capture threads did not reach the expected state")
@@ -231,26 +364,24 @@ class GraphicsWorkerTests(unittest.TestCase):
             SimpleNamespace(frame_buffer=pixels), SimpleNamespace(stop=lambda: None)
         )
 
-    def test_empty_native_frame_reports_error_then_next_frame_recovers(self):
-        with self.workers() as (harness, latest, _):
+    def test_unexpected_encoder_error_is_reported_and_next_frame_recovers(self):
+        real_imencode, calls = cv2.imencode, []
+
+        def imencode(*args):
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("unexpected encoder failure")
+            return real_imencode(*args)
+
+        with patch("cv2.imencode", imencode), self.workers() as (harness, latest, _):
             self.wait_until(lambda: harness.captures)
             capture = harness.captures[0][0]
-            self.arrive(capture, np.empty((0, 12, 4), np.uint8))
-            self.wait_until(lambda: latest.snapshot()[0]["state"] == "error")
+            self.arrive(capture, np.full((8, 12, 4), 32, np.uint8))
+            self.wait_until(lambda: latest.snapshot()[0]["message"].startswith("Capture encoder failed"))
             self.assertIsNone(latest.snapshot()[1])
             self.arrive(capture, np.full((8, 12, 4), 64, np.uint8))
             self.wait_until(lambda: latest.snapshot()[1] is not None)
             self.assertEqual(latest.snapshot()[0]["state"], "capturing")
-
-    def test_publications_at_one_clock_reading_keep_the_encoder_running(self):
-        # time.monotonic() ticks every 15.6 ms on Windows before Python 3.13.
-        clock = patch("capture_helper.time.monotonic", return_value=1000.0)
-        with clock, self.workers() as (harness, latest, _):
-            self.wait_until(lambda: harness.captures)
-            capture = harness.captures[0][0]
-            for frame in (1, 2, 3):
-                self.arrive(capture, np.full((8, 12, 4), 40 * frame, np.uint8))
-                self.wait_until(lambda frame=frame: latest.snapshot()[0]["frame"] == frame)
 
     def test_capture_start_error_is_reported_and_retried(self):
         with self.workers(start_failures=1) as (harness, latest, loop):
