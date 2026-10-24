@@ -10,7 +10,7 @@ namespace SpatialModeling
     // This is software integration evidence, never physical placement acceptance.
     public static class NativeSmokeWorkspace
     {
-        public static bool Place(HostScene scene)
+        public static bool Seed(HostScene scene)
         {
             if (scene == null || scene.Table == null) return false;
             var camera = Camera.main;
@@ -26,6 +26,12 @@ namespace SpatialModeling
             // Inactive XR can prevent Table.Update from creating controls. Create the same
             // production panel, then invoke its registered Place Table callback.
             if (!found) typeof(TablePlacement).GetMethod("CreatePanel", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(scene.Table, null);
+            return true;
+        }
+
+        public static bool Place(HostScene scene)
+        {
+            if (!Seed(scene)) return false;
             foreach (var control in Object.FindObjectsByType<TableAction>(FindObjectsInactive.Include, FindObjectsSortMode.None))
                 if (control.name == "Place Table") { control.Invoke(); return scene.Table.IsPlaced && scene.Placement.gameObject.activeInHierarchy; }
             return false;

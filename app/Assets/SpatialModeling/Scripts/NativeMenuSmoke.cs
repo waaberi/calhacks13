@@ -89,6 +89,9 @@ namespace SpatialModeling
             menu.ToggleMenu(); // Exact production callback used by F3 / other-stick binding.
             if (!menu.Visible || !menu.SelectingNative || !menu.Presented || HasTableControls()) { Fail("One menu toggle did not restore native editing exclusively"); yield break; }
             if (!Click("Settings") || !Click("Move Table / Recenter")) yield break;
+            // P2 deliberately waits for a fresh tracked head sample after reset.
+            // This inactive-XR harness supplies its explicit software sample, without placing.
+            if (!NativeSmokeWorkspace.Seed(scene)) { Fail("No bounded software head sample after placement reset"); yield break; }
             if (menu.Presented || scene.Table.IsPlaced || !HasTableControls()) { Fail("Tracking/placement confirmation did not preempt native controls"); yield break; }
             if (!NativeSmokeWorkspace.Place(scene)) { Fail("Place Table could not return from placement confirmation"); yield break; }
             yield return null;

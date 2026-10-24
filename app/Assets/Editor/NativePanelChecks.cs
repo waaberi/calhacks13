@@ -47,6 +47,12 @@ public static class NativePanelChecks
             Check(panel.gameObject.activeSelf && !nativePanel.gameObject.activeSelf, "Arrange view / hidden native menu must restore table controls");
             show.Invoke(menu, new object[] { true });
             Check(menu.Visible && menu.SelectingNative && nativePanel.gameObject.activeSelf && !panel.gameObject.activeSelf, "one menu toggle must restore native Select/Edit and exclusive panel visibility");
+            table.ConfirmTrackingReset();
+            Check(!(bool)present.Invoke(menu, null) && table.NeedsSeed && !table.IsPlaced, "tracking reset must wait for a fresh pose without showing native controls");
+            table.SeedFromHead(new Vector3(0, 1.65f, 0), Vector3.forward);
+            Check(!(bool)present.Invoke(menu, null) && panel.gameObject.activeSelf && table.State == TablePlacement.PlacementState.ConfirmTrackingReset, "fresh pose must reveal confirmation controls without auto-placing");
+            table.Place();
+            Check((bool)present.Invoke(menu, null) && nativePanel.gameObject.activeSelf && !panel.gameObject.activeSelf, "explicit Place after tracking reset must restore native menu alone");
             Check(Vector3.Distance(scene.Placement.position, pose.position) < 1e-6f
                 && Quaternion.Angle(scene.Placement.rotation, pose.rotation) < 1e-4f
                 && Vector3.Distance(scene.Placement.localScale, size) < 1e-6f, "panel visibility must never change table placement or scale");
