@@ -43,6 +43,21 @@ namespace SpatialModeling
             if (!NativeSmokeWorkspace.Place(scene) || NativeSmokeWorkspace.ActiveModelRenderers(scene) == 0)
             { Fail("Real Place Table action did not expose active object renderers"); yield break; }
             report["placement"] = "Bounded software test pose and real Place Table callback; no physical placement pass";
+            menu.Home(); if (!Click("Pin menu")) yield break;
+            var menuPanel = GameObject.Find("Native edit controls").transform;
+            var pinnedPose = new Pose(menuPanel.position, menuPanel.rotation);
+            var camera = Camera.main.transform;
+            var softwareHand = new Pose(camera.TransformPoint(new Vector3(WorkspaceHandPreference.Left ? 0.2f : -0.2f, -0.15f, 0.55f)), camera.rotation);
+            menu.UpdateMenuHand(WorkspaceHandPreference.MenuHand, softwareHand);
+            yield return null;
+            if (!menu.Pinned || Vector3.Distance(menuPanel.position, pinnedPose.position) > 1e-5f
+                || Quaternion.Angle(menuPanel.rotation, pinnedPose.rotation) > 0.001f) { Fail("Pinned menu moved with the bounded software hand"); yield break; }
+            if (!Click("Hold menu")) yield break;
+            menu.UpdateMenuHand(WorkspaceHandPreference.MenuHand, softwareHand);
+            yield return null;
+            if (menu.Pinned || Vector3.Distance(menuPanel.position, pinnedPose.position) < 0.01f) { Fail("Held menu did not follow the bounded software hand"); yield break; }
+            menu.TrackingLost(WorkspaceHandPreference.MenuHand); yield return null;
+            report["menu_pin_hold_software_pose"] = true;
             string target = null; foreach (var id in session.Objects.Keys) { target = id; break; }
             peer = new HostLink("127.0.0.1", port, new JObject { ["role"] = "vr", ["name"] = "Ownership test participant", ["app"] = new JObject { ["name"] = "Native ownership smoke", ["version"] = "1" } });
             until = Time.realtimeSinceStartupAsDouble + 10;
