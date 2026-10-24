@@ -37,6 +37,7 @@ namespace SpatialModeling
         string arrangementDocument = "";
         bool preserveArrangementOnSnapshot;
         public Transform Placement => root;
+        public Material ObjectDisplayMaterial => ObjectMaterial;
         public bool DisplayPlacementReady => placed && !recenterRequested;
         public Pose PlacementHeadPose { get; private set; }
         readonly StartupFacingGate startupFacing = new StartupFacingGate();
