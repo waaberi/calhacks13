@@ -64,6 +64,10 @@ def array_of_five(obj):
     obj.modifiers.new("Array", "ARRAY").count = 5
 
 
+def array_of_two(obj):
+    obj.modifiers.new("Array", "ARRAY").count = 2
+
+
 # (what is said, the operator, its properties, modifier values set, set-up before)
 TESTS = [
     ("add a monkey", "mesh.primitive_monkey_add", {}, {}, None),
@@ -339,6 +343,23 @@ def checks():
     undo, _ = yield from commander.send(commander.command("history.undo"))
     assert undo["summary"] == "Undid: " + receipt["summary"], undo  # the refusal left no step
     yield from watched(other, "the undo of the subdivision")
+    redo, _ = yield from commander.send(commander.command("history.redo"))
+    assert redo["summary"] == "Redid: " + receipt["summary"], redo
+    yield from watched(other, "the redo of the subdivision")
+    redo, _ = yield from commander.send(commander.command("history.redo"))
+    assert redo["outcome"] == "rejected", redo  # no Redo brings the refused array back
+    bc.log("ok a refused modifier leaves no Undo or Redo step")
+
+    # Too heavy and reused: the Array of 2 goes back to 2 exactly (level 2 x 5 is 78,720).
+    suzanne = fresh(array_of_two)
+    target = target_of(suzanne)
+    yield from drained(talia, other)
+    answer = yield from resolve(talia, "subdivide level two", target)
+    receipt, _ = yield from commander.send(voice_run(commander, answer, target))
+    assert receipt["outcome"] == "applied", receipt  # 31,488 triangles
+    yield from watched(other, "the subdivision after the array")
+    yield from refused_heavy(talia, other, commander, "make five copies", suzanne, "triangles")
+    assert bc.by_id(target["id"]).modifiers["Array"].count == 2
 
     # Too heavy by bytes: flat shading splits every vertex (~48,000 triangles, ~9 MB).
     fresh()

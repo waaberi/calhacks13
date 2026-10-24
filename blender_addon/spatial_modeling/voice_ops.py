@@ -986,15 +986,18 @@ class Voice:
         before = {o.session_uid for o in layer.objects}
         weight = _weight(bpy, scene, [obj] if obj is not None else [])
         try:
-            changed = _execute(bpy, c, obj, label)
+            changed, revert = _execute(bpy, c, obj, label)
         finally:
             edits._restore_selection(selection)  # the host desktop's, not the command's
         created = [o for o in layer.objects if o.session_uid not in before]
         heavy = _too_heavy(bpy, scene, ([obj] if obj is not None else []) + created, weight)
         if heavy:
             name = (created or [obj])[0].name
-            _undo(bpy, f"Voice: {label} (too heavy, undone)")
-            edits._restore_selection(selection)
+            if revert is not None:
+                revert()  # exactly, so no Redo can bring it back
+            else:
+                _undo(bpy, f"Voice: {label} (too heavy, undone)")
+                edits._restore_selection(selection)
             self.sync.flush()  # inside the command's commit: sync sees the scene as it was
             raise commands.Refused("failed", f"That would make {name} too heavy to show in VR "
                                    f"({heavy}), so I undid it.")
@@ -1043,7 +1046,11 @@ def _select_only(bpy, obj):
 
 
 def _execute(bpy, c, obj, label):
-    """Run candidate c on obj (or nothing, for an add). Returns what changed, for the summary."""
+    """Run candidate c on obj (or nothing, for an add).
+
+    Returns (a note for the summary or None, a function that takes a modifier change back
+    exactly, or None for other operations).
+    """
     module, name = c["op"].split(".")
     operator = getattr(getattr(bpy.ops, module), name)
     _select_only(bpy, obj)
@@ -1068,20 +1075,37 @@ def _execute(bpy, c, obj, label):
             else:
                 result = operator(**c["props"])
         except RuntimeError as e:  # poll() failed: Blender changed nothing
-            raise commands.Refused("failed", f"Blender can't {label} here: {e}") from None
+            raise commands.Refused("failed", f"Blender couldn't run {label} here: {e}") from None
     if "FINISHED" not in result:
-        raise commands.Refused("failed", f"Blender didn't {label}.")
+        raise commands.Refused("failed", f"Blender didn't run {label}.")
     if c["op"] != MOD:
-        return None
+        return None, None
     modifier = reused or next((m for m in obj.modifiers if m.name not in names), None)
     if modifier is None:
         raise RuntimeError(f"Blender reported adding a {label} modifier, but there is none")
+    saved = {key: _value(getattr(modifier, key)) for key in c["post"]}
     for key, value in c["post"].items():
-        if isinstance(value, list):
-            getattr(modifier, key)[:] = value
+        _set(modifier, key, value)
+
+    def revert():
+        if reused is None:
+            obj.modifiers.remove(modifier)
         else:
-            setattr(modifier, key, value)
-    return "changed the existing one" if reused else None
+            for key, value in saved.items():
+                _set(modifier, key, value)
+
+    return ("changed the existing one" if reused else None), revert
+
+
+def _value(value):
+    return list(value) if hasattr(value, "__len__") and not isinstance(value, str) else value
+
+
+def _set(modifier, key, value):
+    if isinstance(value, list):
+        getattr(modifier, key)[:] = value
+    else:
+        setattr(modifier, key, value)
 
 
 def _triangles(bpy, scene, objects):
