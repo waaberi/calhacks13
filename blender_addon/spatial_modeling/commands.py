@@ -16,10 +16,13 @@ applied by the editor on Blender's main thread and answered with exactly one
    (wrong_document).
 5. The target exists (not_found) and its generation is current; Undo and Redo
    need base_revision to be the current revision (stale_revision).
-6. Leases: none are granted before P3B, so a command naming one gets not_found.
+6. Leases: leases.Leases.check(), right before the write: a named `lease` must
+   be this actor's and cover the target (not_found, permission_denied), and no
+   other participant's lease may cover what would change (lease_conflict).
 7. editor.apply() changes Blender, reads the result back, flushes (scene.update
-   to everyone) and pushes one Undo step; then this module sends `result` to
-   the sender and `activity` to the others, in that order.
+   to everyone) and pushes one Undo step, inside session.commit() so no lease
+   ends halfway; then this module sends `result` to the sender and `activity`
+   to the others, in that order.
 
 The editor (edits.py in Blender, a fake in the tests) provides flush() -> the
 current revision after broadcasting pending scene updates (sync.flush),
@@ -28,7 +31,17 @@ apply(op, target_id, args) -> Applied, whose revision is what its own flush
 returned. apply() raises Refused when Blender changed nothing; any other
 exception, a failed flush included, means the outcome is unknown. Then the
 host stops writes, re-reads the scene, sends everyone a fresh scene.snapshot
-and accepts writes again.
+and accepts writes again. If it can't re-read the scene yet, poll() (host.py's
+timer) retries, so clients waiting for that snapshot aren't stuck.
+
+Receipts (see "Reconnecting" in contracts/README.md) are keyed by request ID
+only, so a client that reconnected, and so has a new actor_id, still finds the
+requests it sent under the old one. They last as long as the host_epoch:
+receipt.query names the host_epoch its requests were sent under, and the host
+answers an earlier one's IDs it has no record of as `unknown`, never as
+`missing`. `missing` is only for requests the host never received in this
+host_epoch, and the query fences them: if one arrives late (a half-open
+connection), it is refused, never applied.
 
 This module must not import bpy, so the tests can run it outside Blender.
 Received data is only ever compared and copied, never executed.
@@ -50,6 +63,7 @@ except ImportError:  # imported directly by the tests, outside Blender
 
 MAX_RECEIPTS = 10000  # the newest receipts kept for deduplication and receipt.query
 MAX_QUERY = 100
+RECONCILE_RETRY = 0.5  # seconds between attempts to re-read the scene while writes are stopped
 MAX_REVISION = 9007199254740991
 REQUEST_FIELDS = ("session_id", "host_epoch", "document_id", "open_epoch", "actor_id")
 OBJECT_OPS = ("object.add", "object.move", "object.rotate", "object.scale", "object.delete")
@@ -76,6 +90,8 @@ _UUID = re.compile(r"[0-9a-f]{32}")
 _LOCAL_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 log = logging.getLogger(__name__)
+
+_FENCED = object()  # stored digest of a request ID that receipt.query reported missing or unknown
 
 
 class Refused(Exception):
@@ -306,7 +322,9 @@ def _check_command(msg):
 
 def _check_receipt_query(msg):
     _envelope(msg)
-    ids = _keys(msg["payload"], "payload", ("request_ids",))["request_ids"]
+    p = _keys(msg["payload"], "payload", ("host_epoch", "request_ids"))
+    _uuid(p["host_epoch"], "host_epoch")
+    ids = p["request_ids"]
     if not isinstance(ids, list) or not 1 <= len(ids) <= MAX_QUERY:
         raise Invalid(f"request_ids must list 1 to {MAX_QUERY} request IDs")
     for i, value in enumerate(ids):
@@ -347,15 +365,20 @@ class Commands:
     """Handles `command` and `receipt.query` for a session, on Blender's main thread.
 
     session: the session.Session (participants, identity, broadcast, document and
-    snapshot). editor: see the module docstring.
+    snapshot). editor: see the module docstring. leases: the leases.Leases that
+    step 6 asks; without one nobody holds a lease, so a named lease is not_found.
     """
 
-    def __init__(self, session, editor, max_receipts=None):
+    def __init__(self, session, editor, max_receipts=None, leases=None):
         self.session = session
         self.editor = editor
+        self.leases = leases
         self.max_receipts = MAX_RECEIPTS if max_receipts is None else max_receipts
         self.receipts = OrderedDict()  # request_id -> (payload digest, receipt), oldest first
+        self.evicted = False  # the store has dropped receipts: unseen IDs may have been applied
         self.frozen = False  # after an unknown outcome, until the host has re-read the scene
+        self._retry_at = 0.0  # when poll() next tries to reconcile
+        self._reconcile_failures = 0
 
     def attach(self, srv):
         """Handle commands and receipt queries on srv. Returns srv."""
@@ -374,6 +397,13 @@ class Commands:
         rid, payload = msg["id"], msg["payload"]
         digest = _digest(payload)
         stored = self.receipts.get(rid)
+        if stored is not None and stored[0] is _FENCED:
+            text = ("receipt.query already reported this request ID as not received, so the host "
+                    "won't apply it now. Look at the scene, then use a new ID.")
+            receipt = self._receipt(conn, rid, payload, "rejected", self._revision_now(),
+                                    error=_error("duplicate_request", text))
+            self._store(rid, digest, receipt)  # a later query says rejected, not missing
+            return protocol.message("result", receipt, re=rid)
         if stored is not None:
             if stored[0] == digest:
                 return protocol.message("result", stored[1], re=rid)  # never applied twice
@@ -382,7 +412,11 @@ class Commands:
                                     error=_error("duplicate_request", text))
             return protocol.message("result", receipt, re=rid)  # the original stays stored
 
-        receipt = self._run(rid, payload, conn)
+        try:
+            receipt = self._run(rid, payload, conn)
+        except Exception as e:  # a bug; Blender may have changed, so never report "rejected"
+            log.exception("%s failed", payload["op"])
+            receipt = self._unknown(conn, rid, payload, e)
         self._store(rid, digest, receipt)
         conn.send(protocol.message("result", receipt, re=rid))
         outcome = receipt["outcome"]
@@ -399,10 +433,41 @@ class Commands:
         if problem:
             re_ = msg["id"] if is_uuid(msg["id"]) else None
             return server.error("invalid_message", f"bad receipt.query: {problem}", re_)
-        ids = msg["payload"]["request_ids"]
-        found = [self.receipts[i][1] for i in ids if i in self.receipts]
-        missing = [i for i in ids if i not in self.receipts]
-        return protocol.message("receipts", {"receipts": found, "missing": missing}, re=msg["id"])
+        p = msg["payload"]
+        found, unseen = [], []
+        for rid in p["request_ids"]:
+            stored = self.receipts.get(rid)
+            if stored is not None and stored[1] is not None:
+                found.append(stored[1])
+            else:
+                unseen.append(rid)
+        current = p["host_epoch"] == self.session.host_epoch
+        if current:
+            for rid in unseen:  # never apply them from now on
+                if rid not in self.receipts:
+                    self._store(rid, _FENCED, None)
+        # Only requests sent in this host_epoch, with nothing dropped from the store, are
+        # certainly not applied. Before a restart, or once receipts were dropped, they may be.
+        sure = current and not self.evicted
+        payload = {"receipts": found, "missing": unseen if sure else [],
+                   "unknown": [] if sure else unseen}
+        return protocol.message("receipts", payload, re=msg["id"])
+
+    def stop_writes(self, why):
+        """Refuse writes until the scene is re-read and everyone has a fresh snapshot.
+
+        For a change the host can't vouch for, as after an unknown outcome: gate.py
+        calls it when host Blender changed leased data by a route the gate doesn't
+        cover. The next poll() reconciles.
+        """
+        log.warning("edits stopped until the scene is re-read: %s", why)
+        self.frozen = True
+        self._retry_at = 0.0
+
+    def poll(self):
+        """While writes are stopped, retry reconciling now and then. host.py's timer calls it."""
+        if self.frozen and time.monotonic() >= self._retry_at:
+            self._reconcile()
 
     # The checks, in the contract's order (step 1 and 2 are in command()).
 
@@ -453,13 +518,18 @@ class Commands:
         if op in HISTORY_OPS and p["base_revision"] != revision:
             return rejected("stale_revision", "The document changed since you last saw it. "
                             "Look again, then retry.", {"revision": revision})
-        # 6. Leases (P3B)
-        if "lease" in p:
-            return rejected("not_found", "That lease doesn't exist; this host grants no leases "
-                            "yet, so leave lease out.")
+        # 6. Leases, immediately before the write
+        if self.leases is not None:
+            refusal = self.leases.check(actor["actor_id"], op, target and target["id"],
+                                        p.get("lease"))
+            if refusal is not None:
+                return rejected(*refusal)
+        elif "lease" in p:
+            return rejected("not_found", "That lease doesn't exist.")
         # 7. Apply, read back, publish (scene.update) and commit as one Undo step
         try:
-            done = self.editor.apply(op, target and target["id"], p["args"])
+            with self.session.commit():
+                done = self.editor.apply(op, target and target["id"], p["args"])
         except Refused as e:
             return rejected(e.code, e.message, e.details)
         except Exception as e:  # including a flush that failed after the change
@@ -483,9 +553,16 @@ class Commands:
                 protocol.message("scene.snapshot", self.session.snapshot(self.session.document()))
             )
         except Exception:
-            log.exception("could not re-read the scene; edits stay stopped")
+            if self._reconcile_failures == 0:
+                log.exception("could not re-read the scene; edits stay stopped")
+            self._reconcile_failures += 1
+            self._retry_at = time.monotonic() + RECONCILE_RETRY
             return False
+        if self._reconcile_failures:
+            log.warning("re-read the scene after %d failed attempts; edits resume",
+                        self._reconcile_failures)
         self.frozen = False
+        self._reconcile_failures = 0
         return True
 
     # Receipts
@@ -514,8 +591,10 @@ class Commands:
 
     def _store(self, rid, digest, receipt):
         self.receipts[rid] = (digest, receipt)
+        self.receipts.move_to_end(rid)
         while len(self.receipts) > self.max_receipts:
             self.receipts.popitem(last=False)
+            self.evicted = True
 
 
 def _error(code, text, details=None):

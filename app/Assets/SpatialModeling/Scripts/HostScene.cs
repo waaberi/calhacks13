@@ -33,13 +33,27 @@ namespace SpatialModeling
         static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
 
         readonly Dictionary<string, GameObject> objects = new Dictionary<string, GameObject>();
-        readonly Dictionary<string, Pose> arrangements = new Dictionary<string, Pose>();
-        string arrangementDocument = "";
-        bool preserveArrangementOnSnapshot;
         public Transform Placement => root;
+        public int ObjectCount => objects.Count;
+        public bool IsCurrent => status == Status.Connected;
+        public string ConnectionText => IsCurrent
+            ? $"Connected to {documentName} — revision {revision}"
+            : $"{status} — last scene is stale; native edits disabled";
+        public string DocumentId => documentId;
+        public string OpenEpoch => openEpoch;
+        public long Revision => revision;
+        public TablePlacement Table => table;
+        public IEnumerable<WorkspaceObjectView> ObjectViews
+        {
+            get { foreach (var go in objects.Values) if (go != null) yield return go.GetComponent<WorkspaceObjectView>(); }
+        }
         public bool DisplayPlacementReady => placed && !recenterRequested;
         public Pose PlacementHeadPose { get; private set; }
         readonly StartupFacingGate startupFacing = new StartupFacingGate();
+        string documentId = "", openEpoch = "";
+        TablePlacement table;
+        internal HostLink Link => link;
+        internal event System.Action<HostEvent> HostEventReceived;
         HostLink link;
         Transform root;
         MaterialPropertyBlock block;
@@ -64,6 +78,8 @@ namespace SpatialModeling
             root.localScale = Vector3.one * displayScale;
             root.gameObject.SetActive(false); // Wait for an actual tracked pose, not the startup origin.
             block = new MaterialPropertyBlock();
+            table = GetComponent<TablePlacement>() ?? gameObject.AddComponent<TablePlacement>();
+            table.Initialize(root);
         }
 
         void OnEnable()
@@ -92,12 +108,19 @@ namespace SpatialModeling
             connected = false;
         }
 
+        static void ReleaseObject(UnityEngine.Object value)
+        {
+            if (value == null) return;
+            if (Application.isPlaying) Destroy(value);
+            else DestroyImmediate(value);
+        }
+
         void OnDestroy()
         {
             ClearScene();
-            if (root != null) Destroy(root.gameObject);
-            if (statusPanel != null) Destroy(statusPanel);
-            if (fallbackMaterial != null) Destroy(fallbackMaterial);
+            if (root != null) ReleaseObject(root.gameObject);
+            if (statusPanel != null) ReleaseObject(statusPanel);
+            if (fallbackMaterial != null) ReleaseObject(fallbackMaterial);
         }
 
         void Update()
@@ -115,6 +138,7 @@ namespace SpatialModeling
         {
             FindFirstObjectByType<WorkspaceInteraction>()?.CancelGrabs();
             recenterRequested = true;
+            table?.ConfirmTrackingReset();
             FindFirstObjectByType<BlenderScreen>()?.RequestRecenter();
         }
 
@@ -125,7 +149,7 @@ namespace SpatialModeling
             UpdateHeadsetStatus(camera);
             // Place once after head tracking starts. Looking/walking and scene reconnects
             // must not move an already placed model. B/Y explicitly requests a new placement.
-            if (placed && !recenterRequested) return;
+            if (placed && !recenterRequested && (table == null || !table.NeedsSeed)) return;
             var headPose = new Pose(camera.transform.position, camera.transform.rotation);
             bool xr = XRSettings.enabled || XRSettings.isDeviceActive;
             if (xr)
@@ -146,8 +170,9 @@ namespace SpatialModeling
 
             if (!TryGetDisplayPose(headPose.position, headPose.rotation * Vector3.forward,
                     viewingDistance, belowEyeHeight, out var position, out var rotation)) return;
-            root.SetPositionAndRotation(position, rotation);
-            root.gameObject.SetActive(true);
+            // Share the accepted settled head pose with the live screen. Table
+            // preview is visible first; model visibility requires explicit Place.
+            table.SeedFromHead(headPose.position, headPose.rotation * Vector3.forward);
             placed = true;
             recenterRequested = false;
             PlacementHeadPose = headPose;
@@ -269,7 +294,7 @@ namespace SpatialModeling
             if (GUI.Button(new Rect(20, 230, 300, 48), "Recenter view (B / Y / R)")) RequestRecenter();
         }
 
-        void Handle(HostEvent e)
+        internal void Handle(HostEvent e)
         {
             switch (e.Kind)
             {
@@ -278,9 +303,6 @@ namespace SpatialModeling
                 case HostEventKind.Welcome:
                     hostError = hostErrorCode = "";
                     documentName = e.Text;
-                    preserveArrangementOnSnapshot = e.DocumentId.Length > 0 && e.DocumentId == arrangementDocument;
-                    if (!preserveArrangementOnSnapshot) arrangements.Clear();
-                    arrangementDocument = e.DocumentId;
                     break;
                 case HostEventKind.Error:
                     hostErrorCode = e.Code;
@@ -288,30 +310,67 @@ namespace SpatialModeling
                     Debug.LogWarning("Host error: " + hostError);
                     break;
                 case HostEventKind.Warning: Debug.LogWarning("HostScene: " + e.Text); break;
+                case HostEventKind.InvalidScene:
+                    connected = false;
+                    status = Status.NotResponding;
+                    link?.Reconnect();
+                    break;
                 case HostEventKind.Scene:
-                    Debug.Log($"HostScene received {(e.Snapshot ? "snapshot" : "update")} revision={e.Revision} objects={e.Objects.Count} removed={e.Removed.Count}");
+                    if (!e.Snapshot && (!connected || e.DocumentId != documentId || e.OpenEpoch != openEpoch ||
+                        !e.Revision.HasValue || e.Revision < revision || e.Revision > revision + 1))
+                    {
+                        Debug.LogWarning("HostScene: ignored an update without a matching fresh snapshot");
+                        connected = false;
+                        status = Status.NotResponding;
+                        link?.Reconnect();
+                        break;
+                    }
+                    bool missingMesh = false;
+                    foreach (var record in e.Objects)
+                        if (!record.HasMesh && (e.Snapshot || !objects.ContainsKey(record.Id))) missingMesh = true;
+                    if (missingMesh)
+                    {
+                        Debug.LogWarning("HostScene: incomplete object mesh; requesting a fresh snapshot");
+                        connected = false;
+                        status = Status.NotResponding;
+                        link?.Reconnect();
+                        break;
+                    }
                     if (e.Snapshot)
                     {
-                        if (preserveArrangementOnSnapshot) foreach (var pair in objects)
+                        // Reuse objects/arrangements on reconnect to the same native
+                        // document. Never reuse offsets in a new document epoch.
+                        if (documentId != e.DocumentId || openEpoch != e.OpenEpoch)
                         {
-                            if (pair.Value == null) continue;
-                            var view = pair.Value.GetComponent<WorkspaceObjectView>();
-                            if (view != null && view.ObjectId != null && arrangementDocument.Length > 0)
-                                arrangements[pair.Key] = new Pose(view.PositionOffset, view.RotationOffset);
+                            FindFirstObjectByType<WorkspaceInteraction>()?.CancelGrabs();
+                            ClearScene();
+                            table.RequirePlacement();
                         }
-                        ClearScene();
-                        preserveArrangementOnSnapshot = true;
+                        documentId = e.DocumentId;
+                        openEpoch = e.OpenEpoch;
+                        var incoming = new HashSet<string>();
+                        foreach (var record in e.Objects) incoming.Add(record.Id);
+                        foreach (var id in new List<string>(objects.Keys))
+                            if (!incoming.Contains(id)) Remove(id);
                     }
                     if (e.Revision.HasValue) revision = e.Revision.Value;
-                    foreach (var id in e.Removed) { arrangements.Remove(id); Remove(id); }
+                    foreach (var id in e.Removed) Remove(id);
+                    bool applied = true;
                     foreach (var r in e.Objects)
                     {
                         try { ApplyObject(r); }
-                        catch (System.Exception ex) { Debug.LogWarning($"HostScene: couldn't draw {r.Id}: {ex.Message}"); }
+                        catch (System.Exception ex) { applied = false; Debug.LogWarning($"HostScene: couldn't draw {r.Id}: {ex.Message}"); }
                     }
-                    if (e.Snapshot) connected = haveScene = true;
+                    if (!applied)
+                    {
+                        connected = false;
+                        status = Status.NotResponding;
+                        link?.Reconnect();
+                    }
+                    else if (e.Snapshot) { connected = haveScene = true; status = Status.Connected; }
                     break;
             }
+            HostEventReceived?.Invoke(e);
         }
 
         // ---------- drawing ----------
@@ -339,18 +398,18 @@ namespace SpatialModeling
                 go.transform.SetParent(root, false);
                 go.GetComponent<MeshRenderer>().sharedMaterial = ObjectMaterial;
                 objects[r.Id] = go;
-                var view = go.GetComponent<WorkspaceObjectView>();
-                view.ObjectId = r.Id;
-                if (arrangements.TryGetValue(r.Id, out var placement))
-                    view.RestoreArrangement(placement.position, placement.rotation);
             }
             go.name = r.Name;
+            var view = go.GetComponent<WorkspaceObjectView>();
+            view.ObjectId = r.Id;
+            view.NativeParentId = r.ParentId;
+            view.Generation = r.Generation;
             go.SetActive(r.Visible);
 
             // Wire transforms are world space, so objects stay flat under the display root.
             if (r.HasTransform)
             {
-                go.GetComponent<WorkspaceObjectView>().SetNativePose(r.Position, r.Rotation, r.Scale);
+                view.SetNativePose(r.Position, r.Rotation, r.Scale);
                 Debug.Log($"HostScene object {r.Name}: local={r.Position:F4} world={go.transform.position:F4} root={root.position:F3}");
             }
 
@@ -359,7 +418,7 @@ namespace SpatialModeling
             if (r.HasMesh)
             {
                 go.GetComponent<MeshCollider>().sharedMesh = null;
-                if (mf.sharedMesh != null) Destroy(mf.sharedMesh);
+                if (mf.sharedMesh != null) ReleaseObject(mf.sharedMesh);
                 mf.sharedMesh = r.Mesh != null ? BuildMesh(r.Mesh, r.Name) : null;
                 go.GetComponent<MeshCollider>().sharedMesh = mf.sharedMesh;
                 mr.enabled = r.Mesh != null;
@@ -396,8 +455,8 @@ namespace SpatialModeling
 
         public void ResetObjectArrangement()
         {
-            arrangements.Clear();
             foreach (var go in objects.Values) if (go != null) go.GetComponent<WorkspaceObjectView>()?.ResetArrangement();
+            table.ResetView();
             RequestRecenter();
         }
 
@@ -419,8 +478,10 @@ namespace SpatialModeling
             objects.Remove(id);
             if (go == null) return; // Unity may destroy child objects before OnDestroy during exit.
             var mf = go.GetComponent<MeshFilter>();
-            if (mf != null && mf.sharedMesh != null) Destroy(mf.sharedMesh);
-            Destroy(go);
+            var collider = go.GetComponent<MeshCollider>();
+            if (collider != null) collider.sharedMesh = null;
+            if (mf != null && mf.sharedMesh != null) ReleaseObject(mf.sharedMesh);
+            ReleaseObject(go);
         }
 
         void ClearScene()

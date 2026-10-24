@@ -310,7 +310,7 @@ def test_receipts_are_found_by_request_id(store):
     found, missing = store.receipts([b["request_id"], unknown, a["request_id"]])
     assert found == [b, a]
     assert missing == [unknown]
-    assert valid("receipts", {"receipts": found, "missing": missing})
+    assert valid("receipts", {"receipts": found, "missing": missing, "unknown": []})
 
 
 def test_a_pending_receipt_is_completed_and_then_final(store):

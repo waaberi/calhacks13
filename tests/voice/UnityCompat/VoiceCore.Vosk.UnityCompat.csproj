@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Compiles the Vosk assembly the way Unity 6 does, against VoiceCore alone: .NET Standard 2.1, C# 9. -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <AssemblyName>SpatialModeling.VoiceCore.Vosk</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../../../voice/VoiceCore/Vosk/**/*.cs" />
+    <ProjectReference Include="VoiceCore.UnityCompat.csproj" />
+  </ItemGroup>
+
+</Project>

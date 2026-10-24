@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "type": "receipt.query",
+  "id": "5d0c1f0ad2a44f3c9a4e2b7c1e9f8a61",
+  "payload": {
+    "host_epoch": "de36341c159e4d63a802adfefdfd4683",
+    "request_ids": ["7e1b9c04a3f54d2e8b6a0c5d4f3e2a19"]
+  }
+}

@@ -15,7 +15,14 @@ host_epoch), so stopping always closes every connection and clients rejoin.
 Scene sync (sync.py) starts with them at revision 0; the drain timer also
 polls it, so direct edits in this Blender reach every client as scene.update.
 Commands (commands.py, applied by edits.py) and their receipts live as long as
-the session.
+the session: a restart, a file load included, drops them, and receipt.query
+then answers the old host_epoch's requests as `unknown` (contracts/README.md,
+"Reconnecting"). They aren't kept on disk: every restart also starts a new open
+epoch, so an old receipt couldn't be checked against the scene anyway, and the
+fresh snapshot is what clients trust. Participants and leases live as long too
+(session.py, leases.py; in memory). may_write() and blocked() are where the host
+desktop's own edits ask for permission; gate.py asks them before Blender's own
+tools change anything, and its poll() runs in the drain timer (#77).
 
 Undo: operators run from a timer don't push their own undo step, so an edit
 silently merges into the previous one and a single Undo reverts both. Every
@@ -33,7 +40,7 @@ import uuid
 import bpy
 from bpy.app.handlers import persistent
 
-from . import commands, document, edits, lan, server, session
+from . import commands, document, edits, gate, lan, leases, server, session
 from . import sync as scene_sync  # host.sync() is the role switch below
 
 DRAIN_INTERVAL = 0.02  # seconds between queue drains
@@ -43,6 +50,7 @@ _server = None
 _session = None
 _document = None
 _commands = None
+_leases = None
 _session_id = None  # used only while the add-on preferences aren't available
 _starting = False
 status = "Stopped"  # shown in the add-on preferences; never contains the token
@@ -76,6 +84,80 @@ def participants():
     return list(_session.participants.values()) if _session is not None else []
 
 
+def current_leases():
+    """Every lease (contract `lease` dicts, the host's own included), for ownership display."""
+    return _session.store.leases() if _session is not None else []
+
+
+def may_write(objects=(), whole=False):
+    """May the host desktop change these Blender objects now? The blocking lease, or None.
+
+    The question #77 asks before Blender's own editing tools change data: None
+    means go ahead; otherwise the contract `lease` dict says who holds it
+    (lease["owner"]["name"]). whole=True asks for a change that affects
+    everything, such as Undo and Redo. With no objects, only an exclusive lease
+    blocks. Also None while the host isn't running.
+    """
+    if _leases is None:
+        return None
+    ids = [scene_sync.object_id(obj) for obj in objects]
+    return _leases.may_write(ids, whole=whole)
+
+
+def others_hold_leases():
+    """Does any participant other than the host desktop hold a lease? Cheap: no flush.
+
+    False while the host isn't running. When it is False nothing the desktop does
+    can be refused, so gate.py lets Blender behave exactly as without the add-on.
+    """
+    if _session is None:
+        return False
+    me = _session.host["actor_id"]
+    return any(x["owner"]["actor_id"] != me for x in _session.store.leases())
+
+
+def blocked(objects=(), whole=False):
+    """(lease, reason) if another participant's lease forbids this desktop edit now, else None.
+
+    objects and whole as for may_write(). reason is the line the desktop shows,
+    such as "Lee is editing Cube" or "Talia is editing — wait for Apply".
+    """
+    if not others_hold_leases():
+        return None
+    objects = [o for o in objects if o is not None]
+    lease = may_write(objects, whole=whole)
+    if lease is None:
+        return None
+    return lease, leases.Leases.desktop_reason(lease, _leased_name(lease, objects), whole)
+
+
+def blocked_ids(object_ids=(), whole=False):
+    """The lease that forbids changing the objects with these IDs, or None. No flush needed:
+    removed objects count too. For gate.py's check of changes it didn't stop."""
+    if _leases is None or not others_hold_leases():
+        return None
+    return _leases.may_write(list(object_ids), whole=whole)
+
+
+def _leased_name(lease, objects):
+    """The name to show for what lease covers: its first target (what its owner asked for;
+    linked data follows), or else the first of objects."""
+    for target in lease["targets"]:
+        obj = scene_sync.find_object(target)
+        if obj is not None:
+            return obj.name
+    return objects[0].name if objects and lease["mode"] == "shared" else None
+
+
+def stop_writes(why):
+    """Refuse commands until the scene is re-read and every client has a fresh snapshot.
+
+    As after an unknown outcome; the drain timer reconciles straight away.
+    """
+    if _commands is not None:
+        _commands.stop_writes(why)
+
+
 def _prefs():
     addon = bpy.context.preferences.addons.get(__package__)
     return addon.preferences if addon else None
@@ -98,12 +180,23 @@ def _get_session_id():
     return _session_id
 
 
-def _participants_changed():
-    names = ", ".join(f"{a['name']} ({a['role']})" for a in participants()) or "nobody"
-    print("Spatial Modeling: connected:", names)
+_shown = None  # (participants, leases) as last printed
+
+
+def _session_changed():
+    global _shown
+    people, held = participants(), current_leases()
+    if _shown is None or people != _shown[0]:
+        names = ", ".join(f"{a['name']} ({a['role']})" for a in people) or "nobody"
+        print("Spatial Modeling: connected:", names)
+    if _shown is not None and held != _shown[1]:
+        owners = ", ".join(f"{x['owner']['name']} ({x['mode']}, {len(x['targets'])} targets)"
+                           for x in held) or "none"
+        print("Spatial Modeling: leases:", owners)
+    _shown = (people, held)
     for window in bpy.context.window_manager.windows:
         for area in window.screen.areas:
-            if area.type == "PREFERENCES":
+            if area.type in ("PREFERENCES", "VIEW_3D"):  # ownership display (#78)
                 area.tag_redraw()
 
 
@@ -113,6 +206,8 @@ def _drain():
     _document.tick()
     _server.drain()
     scene_sync.poll()  # direct edits in this Blender reach clients as scene.update
+    gate.poll()  # after an ungated edit of leased data, stop writes (#77)
+    _commands.poll()  # after an unknown outcome, retry the fresh snapshot until it goes out
     return DRAIN_INTERVAL
 
 
@@ -147,14 +242,15 @@ def _describe_lan(listener):
     return f"Listening on {where}, {how}"
 
 
-def _start_server(extra, sess, cmds):
-    srv = cmds.attach(sess.attach(server.Server(extra_listeners=[extra] if extra else [])))
+def _start_server(extra, sess, cmds, lses):
+    srv = server.Server(extra_listeners=[extra] if extra else [])
+    srv = lses.attach(cmds.attach(sess.attach(srv)))
     srv.start()
     return srv
 
 
 def start():
-    global _server, _session, _document, _commands, _starting, status, lan_status
+    global _server, _session, _document, _commands, _leases, _starting, status, lan_status
     if _server is not None:
         return
     _starting = True  # setting a generated token must not restart us from its update callback
@@ -163,19 +259,21 @@ def start():
     doc = document.Document()
     sess = session.Session(  # hello gets the document and snapshot from scene sync
         scene_sync.describe, scene_sync.snapshot, _get_session_id(),
-        on_change=_participants_changed,
+        on_change=_session_changed,
         name=prefs.host_name if prefs else None,
         client_can_edit=bool(prefs and prefs.client_edits),
     )
-    cmds = commands.Commands(sess, edits.Editor(scene_sync, undoable, doc))
+    editor = edits.Editor(scene_sync, undoable, doc)
+    lses = leases.Leases(sess, editor)
+    cmds = commands.Commands(sess, editor, leases=lses)
     try:
         extra = _lan_listener(prefs)
         try:
-            srv = _start_server(extra, sess, cmds)
+            srv = _start_server(extra, sess, cmds, lses)
         except OSError as e:
             if extra is None:
                 raise
-            srv = _start_server(None, sess, cmds)  # raises again if the localhost port failed
+            srv = _start_server(None, sess, cmds, lses)  # raises if the localhost port failed
             lan_status = f"Not listening: {e}"  # so it was the LAN port
             extra = None
     except OSError as e:
@@ -186,7 +284,7 @@ def start():
         return
     finally:
         _starting = False
-    _server, _session, _document, _commands = srv, sess, doc, cmds
+    _server, _session, _document, _commands, _leases = srv, sess, doc, cmds, lses
     scene_sync.start(doc, sess)
     status = f"Listening on {srv.host}:{srv.port}"
     if extra is not None:
@@ -196,7 +294,7 @@ def start():
 
 
 def stop():
-    global _server, _session, _document, _commands, status, lan_status
+    global _server, _session, _document, _commands, _leases, _shown, status, lan_status
     if bpy.app.timers.is_registered(_drain):
         bpy.app.timers.unregister(_drain)
     scene_sync.stop()
@@ -204,7 +302,7 @@ def stop():
         _server.stop()
         _server = None
         print("Spatial Modeling: stopped the host server")
-    _session = _document = _commands = None
+    _session = _document = _commands = _leases = _shown = None
     status = "Stopped"
     lan_status = "Off"
 

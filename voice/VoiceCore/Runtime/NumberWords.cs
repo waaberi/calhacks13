@@ -61,7 +61,8 @@ namespace SpatialModeling.VoiceCore
             return words;
         }
 
-        /// <summary>Reads a number starting at <paramref name="i"/> and moves <paramref name="i"/> past it.</summary>
+        /// <summary>Reads a number starting at <paramref name="i"/> and moves <paramref name="i"/> past it. A number whose
+        /// end was misheard ("one hundred and a") is read as NaN.</summary>
         public static bool TryRead(IReadOnlyList<string> w, ref int i, out double value)
         {
             int j = i;
@@ -79,6 +80,13 @@ namespace SpatialModeling.VoiceCore
                     whole += rest;
                     j = k;
                 }
+                else if (k > j)
+                {
+                    value = double.NaN; // "one hundred and a degrees": the rest of the number was misheard
+                    i = k;
+                    return true;
+                }
+
             }
             else if (ReadBelowHundred(w, ref j, out int below))
             {

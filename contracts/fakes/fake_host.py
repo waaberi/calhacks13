@@ -17,7 +17,12 @@ shaft standing on it, a camera and a dimensioned sketch, with real meshes.
 
 Commands: object.add, object.move, object.rotate, object.scale, object.delete,
 history.undo, history.redo and document.save. Sketch ops are rejected with
-`failed`; leases aren't granted (lease.* gets unknown_type).
+`failed`. Leases follow "Leases and presence" with the real host's rules and
+messages: lease.acquire, lease.granted, lease.release, conflicts, a command's own
+lease, Undo/Redo refused while someone else holds one, and leases ending when
+their owner disconnects. Linked data here is an object's descendants (Base
+plate's lease covers Shaft) and objects sharing its mesh; the real host also
+adds objects whose modifiers or constraints use it.
 
 Standard library only and Python 3.9 or newer, so it runs on a Mac without
 Blender. The framing repeats blender_addon/spatial_modeling/protocol.py so this
@@ -333,8 +338,33 @@ def check_hello(p):
             raise Invalid("token must be at least 16 characters")
 
 
+def check_lease_acquire(p):
+    _fields(p, "lease.acquire payload", REQUEST_FIELDS + ("mode", "targets"))
+    for field in REQUEST_FIELDS:
+        _uuid(p[field], field)
+    mode, targets = p["mode"], p["targets"]
+    if mode not in ("exclusive", "shared"):
+        raise Invalid("mode must be exclusive or shared")
+    if not isinstance(targets, list) or len(targets) > 64:
+        raise Invalid("targets must list at most 64 IDs")
+    for i, value in enumerate(targets):
+        _uuid(value, f"targets[{i}]")
+    if len(set(targets)) != len(targets):
+        raise Invalid("targets must not repeat")
+    if mode == "exclusive" and targets:
+        raise Invalid("an exclusive lease covers the whole document: targets must be []")
+    if mode == "shared" and not targets:
+        raise Invalid("a shared lease needs at least one target")
+
+
+def check_lease_release(p):
+    _fields(p, "lease.release payload", ("lease_id",))
+    _uuid(p["lease_id"], "lease_id")
+
+
 def check_receipt_query(p):
-    _fields(p, "receipt.query payload", ("request_ids",))
+    _fields(p, "receipt.query payload", ("host_epoch", "request_ids"))
+    _uuid(p["host_epoch"], "host_epoch")
     ids = p["request_ids"]
     if not isinstance(ids, list) or not 1 <= len(ids) <= 100:
         raise Invalid("request_ids must be a list of 1 to 100 IDs")
@@ -785,6 +815,7 @@ class Connection:
 
 
 TOO_LARGE = object()  # put in the inbox when a line is over MAX_LINE_BYTES
+FENCED = (None, None)  # a request ID receipt.query reported missing: never applied from then on
 
 
 def _print_log(text):
@@ -800,6 +831,8 @@ class FakeHost:
         self.port = options.port  # the bound port once started, useful with --port 0
         self.connections = {}  # number -> Connection
         self.receipts = {}  # request id -> (payload as canonical JSON, receipt)
+        self.leases = {}  # lease_id -> lease, in the order they were granted
+        self.lease_requests = {}  # lease.acquire id -> (payload as canonical JSON, reply)
         self._numbers = itertools.count(1)
         self._server = None
         self._stopped = None
@@ -897,6 +930,12 @@ class FakeHost:
                 self.log(f"{conn.label}: disconnected")
                 if conn.welcomed:
                     conn.welcomed = False
+                    mine = [k for k, v in self.leases.items()
+                            if v["owner"]["actor_id"] == conn.actor["actor_id"]]
+                    for lease_id in mine:  # a lease ends with its owner's connection
+                        del self.leases[lease_id]
+                    if mine:
+                        self.log(f"{conn.label}: its {len(mine)} lease(s) ended")
                     self.broadcast_session()
 
     async def _read(self, conn, reader):
@@ -988,7 +1027,9 @@ class FakeHost:
         participants = [dict(HOST_ACTOR)] + [
             dict(c.actor) for c in self.connections.values() if c.welcomed
         ]
-        self.broadcast(message("session.update", {"participants": participants, "leases": []}))
+        leases = [dict(lease) for lease in self.leases.values()]
+        self.broadcast(message("session.update", {"participants": participants,
+                                                  "leases": leases}))
 
     # Messages
 
@@ -1028,6 +1069,10 @@ class FakeHost:
                 self.on_command(conn, msg)
             elif kind == "receipt.query":
                 self.on_receipt_query(conn, msg)
+            elif kind == "lease.acquire":
+                self.on_lease_acquire(conn, msg)
+            elif kind == "lease.release":
+                self.on_lease_release(conn, msg)
             else:
                 text = f"The fake host doesn't handle {kind!r} messages."
                 conn.send(error("unknown_type", text, mid))
@@ -1085,15 +1130,31 @@ class FakeHost:
         p = msg["payload"]
         check_receipt_query(p)
         ids = p["request_ids"]
-        found = [self.receipts[i][1] for i in ids if i in self.receipts]
-        missing = [i for i in ids if i not in self.receipts]
-        conn.send(message("receipts", {"receipts": found, "missing": missing}, re=msg["id"]))
+        found = [self.receipts[i][1] for i in ids if self.receipts.get(i, FENCED)[1] is not None]
+        unseen = [i for i in ids if self.receipts.get(i, FENCED)[1] is None]
+        if p["host_epoch"] != self.host_epoch:  # from before a restart: they may have applied
+            conn.send(message("receipts", {"receipts": found, "missing": [], "unknown": unseen},
+                              re=msg["id"]))
+            return
+        for i in unseen:
+            self.receipts[i] = FENCED  # never received; refused if it turns up late
+        conn.send(message("receipts", {"receipts": found, "missing": unseen, "unknown": []},
+                          re=msg["id"]))
 
     def on_command(self, conn, msg):
         p, rid = msg["payload"], msg["id"]
         check_command(p)
         key = json.dumps(p, sort_keys=True)
         stored = self.receipts.get(rid)
+        if stored is FENCED:
+            receipt = self._receipt(conn, p, rid, "rejected", error={
+                "code": "duplicate_request",
+                "message": "receipt.query already reported this request ID as not received.",
+            })
+            self.receipts[rid] = (key, receipt)
+            self.log(f"{conn.label}: {p['op']} rejected: duplicate_request (fenced by receipt.query)")
+            conn.send(message("result", receipt, re=rid))
+            return
         if stored is not None:
             if stored[0] == key:
                 self.log(f"{conn.label}: repeated request {rid[:8]}; sent its stored result again")
@@ -1119,6 +1180,124 @@ class FakeHost:
         else:
             e = receipt["error"]
             self.log(f"{conn.label}: {p['op']} rejected: {e['code']}: {e['message']}")
+
+    # Leases, with the real host's rules (blender_addon/spatial_modeling/leases.py)
+
+    def on_lease_acquire(self, conn, msg):
+        p, rid = msg["payload"], msg["id"]
+        check_lease_acquire(p)
+        key = json.dumps(p, sort_keys=True)
+        stored = self.lease_requests.get(rid)
+        if stored is not None:
+            if stored[0] == key:
+                self.log(f"{conn.label}: repeated lease.acquire {rid[:8]}; sent its answer again")
+                conn.send(dict(stored[1], id=new_id()))
+            else:
+                conn.send(error("duplicate_request", "This request ID was already used for a "
+                                "different lease.acquire. Use a new ID.", rid))
+            return
+        reply = self.grant_lease(conn, p, rid)
+        self.lease_requests[rid] = (key, reply)
+        if reply["type"] == "error":
+            e = reply["payload"]
+            self.log(f"{conn.label}: lease.acquire refused: {e['code']}: {e['message']}")
+        conn.send(reply)
+
+    def grant_lease(self, conn, p, rid):
+        """Check one schema-valid lease.acquire. Returns lease.granted or error."""
+        if p["actor_id"] != conn.actor["actor_id"]:
+            return error("permission_denied", "actor_id isn't this connection's; copy it from "
+                         "welcome.", rid)
+        if (p["session_id"], p["host_epoch"]) != (SESSION_ID, self.host_epoch):
+            return error("wrong_session", "The host restarted since you connected. Reconnect.",
+                         rid)
+        if (p["document_id"], p["open_epoch"]) != (DOCUMENT_ID, self.scene.open_epoch):
+            return error("wrong_document", f"Blender has another document open "
+                         f"({DOCUMENT_NAME}).", rid, self._document_details())
+        sketches = {s["id"] for s in self.scene.sketches}
+        missing = [t for t in p["targets"] if t not in self.scene.objects and t not in sketches]
+        if missing:
+            return error("not_found", f"{len(missing)} of the targets don't exist (any more): "
+                         f"{', '.join(missing)}.", rid)
+        actor_id, mode = conn.actor["actor_id"], p["mode"]
+        targets = self.covered(p["targets"]) if mode == "shared" else []
+        blocking = self.blocking_lease(actor_id, mode, targets)
+        if blocking is not None:
+            text = _conflict_text(blocking, mode == "exclusive", "lease")
+            return error("lease_conflict", text, rid, {"lease": dict(blocking)})
+        lease = {"lease_id": new_id(), "mode": mode, "owner": dict(conn.actor),
+                 "targets": targets, "acquired_at": int(time.time() * 1000)}
+        self.leases[lease["lease_id"]] = lease
+        names = ", ".join(self._target_name(t) for t in targets) or "the whole document"
+        self.log(f"{conn.label}: {mode} lease {lease['lease_id'][:8]} on {names}")
+        self.broadcast_session()  # everyone sees the new owner, then the sender gets the lease
+        return message("lease.granted", {"lease": dict(lease)}, re=rid)
+
+    def on_lease_release(self, conn, msg):
+        p = msg["payload"]
+        check_lease_release(p)
+        lease = self.leases.get(p["lease_id"])
+        if lease is None:
+            conn.send(error("not_found", "No lease with that ID is held (any more).", msg["id"]))
+        elif lease["owner"]["actor_id"] != conn.actor["actor_id"]:
+            conn.send(error("permission_denied", "That lease is someone else's.", msg["id"]))
+        else:
+            del self.leases[p["lease_id"]]
+            self.log(f"{conn.label}: released lease {p['lease_id'][:8]}")
+            self.broadcast_session()  # no reply on success
+
+    def covered(self, ids):
+        """ids followed by their linked data: descendants and objects sharing a mesh."""
+        objects = self.scene.objects
+        out, queue = list(dict.fromkeys(ids)), list(ids)
+        while queue:
+            record = objects.get(queue.pop())
+            if record is None:
+                continue  # a sketch, leased whole by its ID
+            near = self.scene.children(record["id"]) + [
+                o for o, r in objects.items()
+                if record["mesh"] is not None and r["mesh"] is record["mesh"]
+            ]
+            for oid in near:
+                if oid not in out:
+                    out.append(oid)
+                    queue.append(oid)
+        return out
+
+    def blocking_lease(self, actor_id, mode, targets):
+        """Another participant's lease that collides with this mode and these targets, or None."""
+        for lease in self.leases.values():
+            if lease["owner"]["actor_id"] == actor_id:
+                continue  # your own leases never conflict
+            if "exclusive" in (mode, lease["mode"]) or set(targets) & set(lease["targets"]):
+                return lease
+        return None
+
+    def lease_check(self, actor_id, op, target_id, lease_id):
+        """Step 6 of a command: None, or (code, message, details) to reject it with."""
+        if lease_id is not None:
+            lease = self.leases.get(lease_id)
+            if lease is None:
+                text = "That lease has ended (released, or its owner left). Acquire a new one."
+                return "not_found", text, None
+            if lease["owner"]["actor_id"] != actor_id:
+                return "permission_denied", "That lease is someone else's.", None
+            if lease["mode"] == "shared" and target_id is not None and (
+                    target_id not in lease["targets"]):
+                text = ("Your lease doesn't cover this target. Acquire one that does, or leave "
+                        "lease out.")
+                return "permission_denied", text, None
+        history = op in ("history.undo", "history.redo")
+        targets = self.covered([target_id]) if target_id is not None else []
+        blocking = self.blocking_lease(actor_id, "exclusive" if history else "shared", targets)
+        if blocking is None:
+            return None
+        return "lease_conflict", _conflict_text(blocking, history, "command"), {
+            "lease": dict(blocking)}
+
+    def _target_name(self, oid):
+        record = self.scene.objects.get(oid)
+        return record["name"] if record else oid[:8]
 
     def _receipt(self, conn, p, rid, outcome, summary=None, created=None, error=None):
         receipt = {"request_id": rid, "op": p["op"]}
@@ -1167,8 +1346,10 @@ class FakeHost:
         if op in ("history.undo", "history.redo") and p["base_revision"] != scene.revision:
             return rejected("stale_revision", "The document changed since you last saw it. "
                             "Check it and try again.", {"revision": scene.revision})
-        if "lease" in p:
-            return rejected("not_found", "The fake host grants no leases; leave lease out.")
+        refusal = self.lease_check(conn.actor["actor_id"], op, target and target["id"],
+                                   p.get("lease"))
+        if refusal is not None:
+            return rejected(*refusal)
 
         created = None
         if op == "object.add":
@@ -1220,6 +1401,17 @@ class FakeHost:
             update = scene.save()
             summary = f"Saved {DOCUMENT_NAME}"
         return self._receipt(conn, p, rid, "applied", summary, created), update
+
+
+def _conflict_text(lease, whole, what):
+    name = lease["owner"]["name"]
+    if lease["mode"] == "exclusive":
+        return f"{name} is editing the whole document."
+    if whole and what == "command":
+        return f"{name} is editing, so Undo and Redo wait until they finish."
+    if whole:
+        return f"{name} is editing, so nobody can reserve the whole document."
+    return f"{name} is editing this."
 
 
 def _seconds(text):

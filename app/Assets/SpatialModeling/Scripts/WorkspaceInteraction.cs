@@ -184,6 +184,12 @@ namespace SpatialModeling
             bool screenFirst = hitScreen && (hitPart == null || screenDistance <= partDistance);
             if (screenFirst) distance = screenDistance;
 
+            var table = scene.Table;
+            float tableDistance = 4f;
+            bool tableHit = table != null && table.RaycastControls(ray, out tableDistance);
+            bool tableFirst = tableHit && tableDistance < distance;
+            if (tableFirst) distance = tableDistance;
+
             if (h.target != null)
             {
                 if (!gripNow || (h.target == screen.Placement && !screen.Visible)) Release(h);
@@ -198,6 +204,16 @@ namespace SpatialModeling
                         : "Aim to move whole build · release grip: place";
                 }
             }
+            else if (tableFirst)
+            {
+                table.HoverController(ray, triggerPressed);
+                Instruction = "Trigger: table placement control · local inspection only";
+            }
+            else if (table != null && table.IsPointing)
+            {
+                if (triggerNow) table.PointAt(ray);
+                Instruction = "Hold trigger and aim at the table position · Place Table to confirm";
+            }
             else if (screenFirst)
             {
                 bool button = screen.HoverController(ray, triggerPressed);
@@ -210,7 +226,7 @@ namespace SpatialModeling
                 Instruction = MoveIndividualParts ? "Grip: arrange " + hitPart.name + " in your view" : "Grip: move the whole build";
                 if (gripPressed && !Conflicts(other?.target, target)) Begin(h, target, MoveIndividualParts ? hitPart : null, aim, ray.GetPoint(distance));
             }
-            h.hasHit = hitScreen || hitPart != null;
+            h.hasHit = tableFirst || hitScreen || hitPart != null;
             h.pointerDistance = distance;
             return true;
         }

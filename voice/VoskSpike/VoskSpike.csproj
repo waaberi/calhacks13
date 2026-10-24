@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Spike: real Vosk recognition through VoiceCore's ISpeechRecognizer. Not part of the Unity package. -->
+  <!-- Measures real Vosk recognition through the package's recognizer, VoiceInput and PcmConverter. Not in Unity. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
@@ -11,10 +11,13 @@
 
   <ItemGroup>
     <Compile Include="../VoiceCore/Runtime/**/*.cs" Link="Runtime/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../VoiceCore/Vosk/**/*.cs" Link="Vosk/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Vosk" Version="0.3.38" />
+    <!-- Only for libvosk next to the program (the binaries voice/fetch-vosk.sh gives Unity); not its Vosk.dll. -->
+    <PackageReference Include="Vosk" Version="0.3.38" ExcludeAssets="compile;runtime" />
+    <PackageReference Include="NVorbis" Version="0.10.5" />
   </ItemGroup>
 
 </Project>
