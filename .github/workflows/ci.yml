@@ -6,11 +6,28 @@ on:
     branches: [main]
 
 jobs:
-  check:
+  python:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13" # Blender 5.2's Python
       - name: No file paths that differ only by case
         run: "! git ls-files | sort -f | uniq -di | grep ."
-      - name: Lint Python
-        run: pipx run ruff==0.17.2 check .
+      - run: pip install ruff==0.17.2 pytest==9.1.1
+      - run: ruff check .
+      - run: pytest tests
+
+  voicecore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - id: find
+        run: git ls-files 'tests/voice/*.csproj' | grep -q . && echo "found=true" >> "$GITHUB_OUTPUT" || echo "No tests/voice project yet"
+      - if: steps.find.outputs.found == 'true'
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "10.0.x"
+      - if: steps.find.outputs.found == 'true'
+        run: dotnet test tests/voice

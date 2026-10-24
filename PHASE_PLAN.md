@@ -4,7 +4,7 @@ We are building a new Windows application that lets people create and edit a rea
 
 Edits made in VR must update the native Blender project. Changes made in Blender must appear automatically in VR. A second person will edit the same session from Blender on Lee Jae-yeon's Windows computer. The app will explain who is editing, protect conflicting objects and preserve native Undo, Redo, Save and reopen. Voice will ask for missing information and remember the rest of the command.
 
-This is a fresh build. The application, host service, Blender add-ons, editing interface and voice behavior will be written for this project. Unity, Blender and appropriately licensed third-party libraries are dependencies. No product feature or acceptance test is assumed complete.
+This is a fresh build. The VR application, the Blender add-on (host and client roles), the capture helper, the editing interface and the voice behavior will be written for this project. Unity, Blender and appropriately licensed third-party libraries are dependencies. No product feature or acceptance test is assumed complete.
 
 This document is the team's complete working plan: product behavior, hardware and Wi-Fi setup, ownership, phased checklists, integration rules, acceptance, progress tracking, sponsor choices and the full feature catalog. Every phase includes all four people. Start with the core phases P0 to P6; later phases retain the broader product scope.
 
@@ -12,8 +12,8 @@ This document is the team's complete working plan: product behavior, hardware an
 
 | Person and computer | What this person builds | What the team receives |
 | --- | --- | --- |
-| Waaberi — Linux | Host service and Blender command system; edit permissions; voice recognition behavior, missing-input memory and spoken prompts. | Documented messages, tested backend commands and voice components that Jihyeon can connect to the UI. |
-| Lee Jae-yeon — Windows | Blender-window capture; Python CAD adapter; the second-computer Blender add-on; test tools and release packaging. | Working Windows helpers, a usable remote Blender client, clear failure reports and an installable package. |
+| Waaberi — Linux | Blender add-on Host role: session server and Blender command system; edit permissions; voice recognition behavior, missing-input memory and spoken prompts. | Documented messages, tested backend commands and voice components that Jihyeon can connect to the UI. |
+| Lee Jae-yeon — Windows | Blender-window capture helper; Python CAD adapter; the add-on's Client role for the second computer; test tools and release packaging. | Working Windows helpers, a usable remote Blender client, clear failure reports and an installable package. |
 | Jihyeon — Mac | New Unity app; VR room/table; controller input; held/pinned menu; settings; all visual feedback; microphone/voice UI adapter. | A Windows VR build that can be tested on Talia's PC, with desktop simulation for independent development. |
 | Talia — Windows and Quest | Mechanical reference models, useful modeling steps, CAD dimensions, physical VR tests, native validation and demo. | Expected engineering results, precise bug reports, phase acceptance evidence and the final demonstration. |
 
@@ -25,24 +25,80 @@ Delivery target: Saturday October 24, 2026 at 11 p.m. Pacific, which is Sunday O
 
 The complete scope is not a credible guaranteed weekend delivery from a fresh build. Wireless readiness, native synchronization, constrained CAD, reliable edit protection, voice and remote Blender are each significant risks. Keep producing working versions and report missing mandatory tests. A useful earlier phase is progress; it is not completion of P6. Waaberi and Talia reported at least 25 hours each; the other two availability totals are unconfirmed.
 
-## How the applications connect
+The team aims to finish everything by Saturday 11 p.m. Pacific, leaving time to sleep and prepare the pitch. These checkpoints keep that possible (Pacific time; the team can adjust them):
 
-| Connection | What travels across it | Owner |
+| Checkpoint | Target |
+| --- | --- |
+| P0 passed | Friday 10 p.m., then sleep |
+| P1 passed; SpacetimeDB spike | Saturday 11 a.m. |
+| P2 passed | Saturday 1 p.m. |
+| P3A passed | Saturday 3 p.m. |
+| P3B, P3C, P4 and P5 | Saturday 7 p.m. feature freeze |
+| Full rehearsal on the release build (P6) | Saturday 9–11 p.m. |
+
+If a checkpoint slips by more than an hour, cut scope in this order instead of cutting sleep: first the P6 finishing extras (materials, UV, render, export), then P3C, then whichever of P4 and P5 is further behind. Record each cut as a known limit for the pitch.
+
+## Architecture
+
+The final native document lives in Blender on Talia's PC. Our Blender add-on runs inside that Blender in **Host** role and is the only authority. Every edit is a request that the host validates, applies in Blender and confirms, whether it comes from VR or from the second computer. Unity renders the VR view of the scene. The flat Blender screen is a separate image stream. Air Link provides PC VR, but we have to build the scene synchronization ourselves. The Quest needs no standalone Android build.
+
+```mermaid
+flowchart LR
+  subgraph talia["Talia's Windows PC"]
+    host["Blender + add-on<br/>(Host role)"]
+    app["Unity VR app<br/>+ VoiceCore"]
+    capture["Capture helper"]
+    stdb[("SpacetimeDB<br/>(if spike passes)")]
+  end
+  subgraph lee["Lee Jae-yeon's Windows PC"]
+    client["Blender + add-on<br/>(Client role)"]
+  end
+  quest["Quest 3S"]
+  app <-->|"JSON lines over TCP<br/>127.0.0.1:8765"| host
+  capture -->|"newest JPEG over HTTP<br/>127.0.0.1:8766"| app
+  client <-->|"JSON lines over TLS<br/>LAN port 8767"| host
+  quest <-->|"Air Link over Wi-Fi"| app
+  host -.->|"HTTP, localhost"| stdb
+  stdb -.->|"C# SDK subscription"| app
+```
+
+| Component | Runs on | Owner | Code |
+| --- | --- | --- | --- |
+| Blender add-on, Host role: session server, command dispatch, scene sync, permissions | Talia PC, inside Blender | Waaberi | `blender_addon/spatial_modeling/` |
+| Blender add-on, Client role: joins a host, mirrors its scene, sends edits | Lee Jae-yeon PC, inside Blender | Lee Jae-yeon | `blender_addon/spatial_modeling/remote_client/` |
+| CAD adapter used by the host | Talia PC, inside Blender | Lee Jae-yeon | `blender_addon/spatial_modeling/sketch/` |
+| Unity VR app | Talia PC; Mac for simulated development | Jihyeon | `app/` |
+| VoiceCore: voice command parsing and missing-information memory | Talia PC, inside the Unity app; Linux for tests | Waaberi | `voice/VoiceCore/` |
+| Capture helper | Talia PC | Lee Jae-yeon | `desktop-capture/` |
+
+The wire format for all three connections is in [contracts/README.md](contracts/README.md). An interface change updates the sender, the receiver and that file in the same PR.
+
+### Architecture decisions
+
+1. **The add-on is the host; there is no separate host service.** Blender has to apply every edit on its own main thread anyway. A separate process would add a network hop, a process lifecycle and launcher work without adding any capability.
+2. **One add-on, two roles.** The same add-on is installed on both Windows PCs, and the role is chosen in its preferences. Host and Client share the protocol code, so they can't drift apart.
+3. **One wire format: one JSON object per line over TCP.** Inside Blender this needs only Python's standard library; Unity uses `TcpClient`. Nothing has to be installed into Blender. The Unity port listens on localhost only. The LAN port uses TLS with the session token as a pre-shared key (Python 3.13's `SSLContext.set_psk_*_callback`), so no certificates are needed. Verify this in Blender during P1-W-3. If it fails, use an isolated network route and token authentication.
+4. **Blender's main thread does all Blender work.** Sockets run on a background thread. Received messages go into a queue, and a `bpy.app.timers` callback drains it on the main thread. Received data is never executed as Python. Timers don't run while Blender is blocked, for example during a render, so messages wait until it finishes.
+5. **The wire uses Blender's coordinates and units:** right-handed, Z up, meters and radians. Unity converts in exactly one place (P2-W-2).
+6. **Stable object IDs are UUIDs stored in a custom property on each object.** They survive renames, Undo and save/reopen. Duplicating an object copies the property, so the host checks for repeated IDs and gives the copy a new one.
+7. **The Blender screen is fetched on request, not pushed.** The capture helper keeps only the newest frame and serves it on localhost. Unity requests it at a modest rate, so old frames can't pile up.
+8. **VoiceCore is a plain C# library outside the Unity project.** Unity loads it as a local package, and its assembly definition forbids Unity references. Waaberi builds and tests it on Linux. Jihyeon's VoiceUiAdapter feeds it microphone audio, selection and pointer targets. Recognition uses Vosk with a restricted command grammar first, because Vosk also runs on Linux and Mac for development. Unity's Windows speech recognition is the fallback.
+9. **SpacetimeDB (sponsor) holds shared session state if its spike passes; it is never in the geometry path.** Unity has an official C# SDK with live subscriptions. Blender has no maintained Python SDK (it has been on hiatus since May 2024), and the PostgreSQL wire protocol has no live subscriptions. So Blender uses SpacetimeDB only through its HTTP API with the standard library: it calls reducers and polls small tables. That makes SpacetimeDB a good fit for participants and presence, object leases, and the activity and receipt log (P3B, P5). It is a poor fit for scene data and native commands, which stay on the direct host connection. See [Sponsor choices](#sponsor-choices-and-optional-services) for the spike and its pass criteria. If the spike fails, the host keeps the same state in memory behind the same interface.
+10. **CAD sketches use CAD Sketcher inside the host Blender**, wrapped by Lee Jae-yeon's adapter, and only if the P0 compatibility check passes.
+
+| Port | Listens on | Used by |
 | --- | --- | --- |
-| Quest ↔ Unity Windows app on Talia PC | Air Link over Wi-Fi: VR display, headset/controller input and routed audio. | Jihyeon and Talia |
-| Unity ↔ host service ↔ main Blender add-on | Local typed commands, native results, revisions and 3D scene data. | Waaberi; Jihyeon client adapter |
-| Blender window → capture helper → Unity screen | Latest selected-window image, frame time/identity and capture status. | Lee Jae-yeon; Jihyeon screen |
-| Second Blender add-on ↔ main host service | Authenticated LAN session, edit requests, ownership, receipts and scene snapshots. | Lee Jae-yeon and Waaberi |
-
-The final native document lives in Blender on Talia's PC. Unity renders its VR representation. The flat Blender screen is a separate image stream. Air Link provides PC VR; our application must implement Blender scene synchronization. The Quest does not require a standalone Android build for this design. Build the local native bridge on localhost, and expose only the separately authenticated session endpoint to peers.
+| 8765 | 127.0.0.1 only | Unity app ↔ host add-on |
+| 8766 | 127.0.0.1 only | Capture helper → Unity app |
+| 8767 | Host PC's LAN address | Client-role add-on ↔ host add-on |
 
 | Device | Applications to run |
 | --- | --- |
-| Talia Windows PC | Blender + host add-on; host service; Unity Windows app; selected-window capture helper; Meta Horizon Link/OpenXR. |
+| Talia Windows PC | Blender with the add-on in Host role; Unity Windows app; capture helper; Meta Horizon Link/OpenXR. |
 | Quest 3S | Air Link session with Touch Plus controllers and routed microphone/output. |
-| Lee Jae-yeon Windows PC | Blender + remote-client add-on; Windows helper/test/build tools. |
-| Waaberi Linux PC | Backend and pure C# voice development/tests. The final demo must not depend on this laptop hosting services. |
-| Jihyeon Mac | Unity Editor with desktop controls and simulated backend/capture/speech. Physical Link tests run on Windows. |
+| Lee Jae-yeon Windows PC | Blender with the add-on in Client role; Windows build and test tools. |
+| Waaberi Linux PC | Add-on and VoiceCore development and tests. The final demo must not depend on this laptop. |
+| Jihyeon Mac | Unity Editor with the XR Device Simulator and simulated host, capture and speech. Physical Link tests run on Windows. |
 
 Meta documents the [Windows Link/OpenXR development path](https://developers.meta.com/vr/documentation/unity/unity-link/). Mac/Linux development checks do not replace Windows native-plugin, microphone or Quest tests.
 
@@ -54,12 +110,12 @@ Keep unfinished features disabled behind feature flags. After each merge, run th
 
 | Owner | Exclusive code or document area |
 | --- | --- |
-| Waaberi | contracts/; host/; blender_addon/spatial_modeling/ except sketch/ and remote_client/; app/Assets/SpatialModeling/Scripts/VoiceCore/; voice-spec/; tests/backend/; tests/voice/ |
+| Waaberi | contracts/; blender_addon/spatial_modeling/ except sketch/ and remote_client/; voice/; spacetime/; tests/backend/; tests/voice/ |
 | Lee Jae-yeon | desktop-capture/; blender_addon/spatial_modeling/sketch/; blender_addon/spatial_modeling/remote_client/; tests/protocol/; tests/security/; scripts/windows-release/ |
-| Jihyeon | app/ except Assets/SpatialModeling/Scripts/VoiceCore/ |
+| Jihyeon | app/ |
 | Talia (you) | samples/mechanical/; acceptance/native-reference/; docs/product-workflow/; docs/demo/ |
 
-Waaberi owns root Git/CI configuration and shared backend dispatch. Jihyeon owns VoiceUiAdapter.cs; Waaberi owns VoiceCore. Lee Jae-yeon owns only the named sketch and remote_client Python subfolders inside the add-on. Ask the owner or explicitly transfer a file before editing it. Commit each Unity asset with its .meta and preserve GUIDs. One author edits each binary .blend reference file. Use separate local clones, preferably outside active cloud-sync folders. Keep machine paths, tokens, generated Unity folders and build outputs out of Git. Pin dependency versions and use consistent filename case for Linux.
+Waaberi owns root Git/CI configuration and shared backend dispatch. Jihyeon owns VoiceUiAdapter.cs in app/; Waaberi owns VoiceCore in voice/VoiceCore/. When Unity first imports VoiceCore it creates .meta files in voice/VoiceCore/; Jihyeon may commit those. Lee Jae-yeon owns only the named sketch and remote_client Python subfolders inside the add-on. Ask the owner or explicitly transfer a file before editing it. Commit each Unity asset with its .meta and preserve GUIDs. One author edits each binary .blend reference file. Use separate local clones, preferably outside active cloud-sync folders. Keep machine paths, tokens, generated Unity folders and build outputs out of Git. Pin dependency versions and use consistent filename case for Linux.
 
 Every hand-off includes the commit/build ID, what changed, how to run it, expected output, actual test result and known failures. Interface changes update sender, receiver and sample messages together. Mocks help development but never count as native or physical acceptance.
 
@@ -85,7 +141,7 @@ Statuses are NOT STARTED, WORKING, READY TO TEST, PASSED and BLOCKED. Check a ta
 
 Keep the Quest on Talia's PC. Reserve an initial 45–60-minute wireless/app test, then focused 20–30-minute ready-to-test slots with a named behavior and exact build. Others continue independently. Prefer builds on Lee Jae-yeon's PC if capable; otherwise book Talia's machine separately so builds or automation do not interrupt a native/headset test.
 
-Check task IDs below against the shared board. Short IDs M1 and M2 remain stable tracking codes for Lee Jae-yeon and Jihyeon respectively.
+Every task ID below becomes an issue on the [project board](https://github.com/users/waaberi/projects/3), assigned to its owner, with Phase, Priority and Task ID fields. Issues for a phase are created when its work starts. Short IDs M1 and M2 remain stable tracking codes for Lee Jae-yeon and Jihyeon respectively.
 
 Reserve roughly 4–7 joint hours for hardware and integration across the weekend, including the final 90–120-minute rehearsal. Aim for ready-to-test slots about every two hours, with one wearer and one desktop observer. Use an owner/start/end queue for the host PC. Keep the final 4–6 hours focused on integration and release; these reserves overlap the testing windows and must not be added twice.
 
@@ -104,11 +160,11 @@ Completion depends on: the new project setup and recorded risk checks. Independe
 
 ### Product behavior and engineering rules
 
-Create a fresh repository and a minimal first working path: Windows app shell, Blender add-on skeleton and a local ping. Pin compatible Unity, Blender, OpenXR, Python and library versions before feature branches diverge. Initial target versions are Unity 6000.6.5f1 and Blender 5.2.2; verify availability and compatibility in this new project, then lock the agreed versions. CAD and speech dependency checks may report blockers without preventing independent app setup.
+The repository, CI and a Blender add-on skeleton already exist. Build the minimal first working path: the Windows app shell, and a ping between the app and the add-on over the host connection. Pin compatible Unity, Blender, OpenXR, Python and library versions before feature branches diverge. Initial target versions are Unity 6000.6.5f1 and Blender 5.2.2; verify availability and compatibility in this new project, then lock the agreed versions. CAD and speech dependency checks may report blockers without preventing independent app setup.
 
 Talia and anyone new to Unity spend 60–90 minutes opening the new project, finding scenes and assets, using Game/Scene views and the Inspector, reading console errors, and running/stopping the app. Jihyeon shows the new OpenXR input actions. Budget roughly 1–2 hours for initial learning and another hour of short phase exercises; count this within each person's available time.
 
-Agree on a request envelope before parallel implementation: contract version, session ID, host/source epoch, document ID/open epoch, authenticated actor, unique request ID, base revision, stable target ID/generation, operation, bounded arguments and lease token. Record units and pending/applied/rejected/unknown outcomes. Implement and validate the matching schema at both ends. Native Blender remains the authority for the actual committed result.
+Agree on a request envelope before parallel implementation: contract version, session ID, host/source epoch, document ID/open epoch, authenticated actor, unique request ID, base revision, stable target ID/generation, operation, bounded arguments and lease token. Record units and pending/applied/rejected/unknown outcomes. Implement and validate the matching schema at both ends. The framing and base envelope are already in [contracts/README.md](contracts/README.md); add the command fields there along with the P0-W-1 examples. Native Blender remains the authority for the actual committed result.
 
 ### Risk checks and response
 
@@ -124,9 +180,9 @@ Status: NOT STARTED | Build or commit: ______ | Evidence: ______ | Blocker and o
 
 - [ ] **P0-W-2** Give Jihyeon a fake server and Lee Jae-yeon a fake client. Fake means test data only.
 
-- [ ] **P0-W-3** Create a pure C# VoiceCore library and tests on Linux. Define a recognizer interface and test a local speech-library candidate. Do not tie command logic to Unity or a Windows-only API.
+- [ ] **P0-W-3** Build out the VoiceCore library in voice/VoiceCore/ with tests in tests/voice/ that run on Linux. Define the recognizer interface and try Vosk with a restricted command grammar. Do not tie command logic to Unity or a Windows-only API.
 
-- [ ] **P0-W-4** Create the new repository skeleton, JSON message schemas and a minimal Blender add-on. Register and unregister it cleanly; implement a local ping without changing scene data.
+- [ ] **P0-W-4** Write the JSON message schemas. Add the localhost server (port 8765) to the add-on skeleton and implement a ping without changing scene data. Check that the add-on still registers and unregisters cleanly.
 
 ### Lee Jae yeon checklist
 
@@ -142,7 +198,7 @@ Status: NOT STARTED | Build or commit: ______ | Evidence: ______ | Blocker and o
 
 Status: NOT STARTED | Build or commit: ______ | Evidence: ______ | Blocker and owner: ______
 
-- [ ] **P0-M2-1** Create a new Unity project with OpenXR and input support. Pin versions with the team. On Mac, use simulated headset, capture and speech responses where needed.
+- [ ] **P0-M2-1** Create a new Unity project in app/ with OpenXR, the XR Interaction Toolkit and Newtonsoft JSON, and add voice/VoiceCore as a local package. Pin versions with the team. On Mac, use simulated headset, capture and speech responses where needed.
 
 - [ ] **P0-M2-2** Show a cube using the fake scene message. Show an error message when the fake connection stops.
 
@@ -196,14 +252,14 @@ Talia starts the new app, finds the controller action and toggles the Blender pa
 - [ ] In Quest Link/Air Link settings choose the wireless PC connection. Select Talia PC, verify the pairing code on both devices, and connect. Menu labels vary by installed version; use Meta's current guide linked below.
 - [ ] Set Meta Horizon Link as the active OpenXR runtime for this test. Confirm the Unity project uses its pinned compatible provider/settings.
 - [ ] Run a known working PC VR scene. Verify tracking and both controllers before diagnosing Blender data flow.
-- [ ] Open the native reference project with our host add-on. Start our bridge/coordinator and Unity Windows EXE through its documented launcher.
+- [ ] Open the native reference project with the add-on in Host role. Start the capture helper and the Unity Windows EXE through the documented launcher.
 - [ ] Select Blender's window for capture. Use Show Blender / Hide Blender inside our app. Verify a changing live image, not just a Meta system desktop screen.
 - [ ] In Phase 2 choose Place Table. Edit an object in main Blender and see automatic 3D updates on the table.
 - [ ] Select/test the routed Quest microphone and output device. Check actual recording and audible prompt; do not mistake the laptop mic for the Quest mic.
 
 ### If Wi Fi pairing or performance fails
 
-Separate Air Link failure from the local Blender bridge and remote session connection. Ethernet can improve the PC side but does not bypass client isolation, separate VLANs or congestion on the headset's access point. Ask staff for an approved reachable network/dedicated access point or permission to use a borrowed private/travel router. A Windows hotspot is not an assumed equivalent. Do not disable firewalls, alter venue policy or configure port forwarding as a blind fix.
+Separate Air Link failure from the add-on's localhost connection and the LAN session connection. Ethernet can improve the PC side but does not bypass client isolation, separate VLANs or congestion on the headset's access point. Ask staff for an approved reachable network/dedicated access point or permission to use a borrowed private/travel router. A Windows hotspot is not an assumed equivalent. Do not disable firewalls, alter venue policy or configure port forwarding as a blind fix.
 
 USB Link can keep development moving if Wi-Fi fails. It does not pass the requested wireless gate. Network changes must follow venue policy; no purchase or paid fallback is assumed.
 
@@ -213,13 +269,13 @@ Meta recommends a wired PC connection to the access point/router, suitable 5 GHz
 
 Status: NOT STARTED | Build or commit: ______ | Evidence: ______ | Blocker and owner: ______
 
-- [ ] **P1-W-1** Build the local Blender-to-app bridge and host add-on from scratch. Add connected, disconnected and wrong-document messages. Document how the launcher starts or attaches each process.
+- [ ] **P1-W-1** Build the add-on's localhost server for the Unity app (port 8765). Add connected, disconnected and wrong-document messages. Document how Blender, the capture helper and the app are started or attached.
 
 - [ ] **P1-W-2** Review the frame message from Lee Jae-yeon: frame number, time, window identity, image size and capture status.
 
-- [ ] **P1-W-3** Prepare a separate authenticated LAN session endpoint for later peers. Do not expose the local native bridge built in P0 directly.
+- [ ] **P1-W-3** Prepare the add-on's LAN listener for Client-role peers (port 8767): TLS with the session token as a pre-shared key. Confirm Blender's bundled Python supports this; otherwise fall back to token authentication on an isolated route. Never expose port 8765 to the LAN.
 
-- [ ] **P1-W-4** Build a bounded message reader and host process lifecycle. Keep Blender data access on its permitted execution path; reject malformed messages and never execute arbitrary received Python.
+- [ ] **P1-W-4** Build a bounded message reader and the server lifecycle: start when the add-on is enabled, stop when it is disabled or another file loads. Keep Blender data access on its permitted execution path; reject malformed messages and never execute arbitrary received Python.
 
 ### Lee Jae yeon checklist
 
@@ -227,7 +283,7 @@ Status: NOT STARTED | Build or commit: ______ | Evidence: ______ | Blocker and o
 
 - [ ] **P1-M1-1** Build a Windows helper that captures only the Blender window selected by the user. First make one real frame, then repeated frames.
 
-- [ ] **P1-M1-2** Send the newest frame to the Unity app through a local-only interface. Do not make a growing queue of old images.
+- [ ] **P1-M1-2** Serve only the newest frame on 127.0.0.1:8766 as described in contracts/README.md. Unity requests frames, so no queue of old images can build up.
 
 - [ ] **P1-M1-3** Show a clear capture error if Blender is closed, minimized or cannot be captured. Test resizing and window focus. Hand Jihyeon real frame samples.
 
@@ -305,7 +361,7 @@ Status: NOT STARTED | Build or commit: ______ | Evidence: ______ | Blocker and o
 
 - [ ] **P2-M1-1** Write a Python check that reads a scene snapshot and checks object ID, position and units.
 
-- [ ] **P2-M1-2** Start the remote Blender add-on on your PC. Load the host snapshot into a separate session file for an early read-only test.
+- [ ] **P2-M1-2** Enable the add-on in Client role on your PC. Load the host snapshot into a separate session file for an early read-only test.
 
 - [ ] **P2-M1-3** Check that a missing connection cannot silently show old data as current.
 
@@ -581,7 +637,7 @@ Completion depends on: P3A, P3B. Independent preparation may start earlier.
 
 ### Product behavior and engineering rules
 
-Waaberi owns Scripts/VoiceCore/, parser/grammar, missing-field memory, prompts and execution policy. Jihyeon owns VoiceUiAdapter.cs and the microphone/PTT/selection/UI adapter. Lee Jae-yeon runs Windows recognition/audio tests. Pure behavior can be developed on Linux; speech recognition and headset audio need actual Windows acceptance. Choose and integrate the recognizer in this project. [Vosk](https://alphacephei.com/vosk/) is a candidate for offline recognition with C# bindings; its compatibility, model license, accuracy and packaging still need testing.
+Waaberi owns voice/VoiceCore/: parser/grammar, missing-field memory, prompts, execution policy and the recognizer behind its interface. Jihyeon owns VoiceUiAdapter.cs: it feeds microphone audio, push-to-talk, selection and pointer targets into VoiceCore and shows its prompts. Lee Jae-yeon runs Windows recognition and audio tests. Pure behavior can be developed on Linux; speech recognition and headset audio need actual Windows acceptance. Use [Vosk](https://alphacephei.com/vosk/) first, restricted to the command grammar for accuracy. It runs offline on Windows, Linux and Mac, so Waaberi can test real recognition on Linux. Download its small English model with a script that pins the version and checksum, and don't commit the model. If Vosk fails on accuracy or packaging, switch to Unity's Windows speech recognition behind the same interface.
 
 Example: Rotate this object 90 degrees -> Please select or point at the object you are referring to -> user selects -> ask Which axis: X, Y or Z? if needed -> execute the retained complete command once. Keep angle/value/units while asking for only missing information, and report actual native outcome.
 
@@ -605,7 +661,7 @@ Status: NOT STARTED | Build or commit: ______ | Evidence: ______ | Blocker and o
 
 - [ ] **P4-W-4** Route complete valid commands through the same native permission path. Undo/Redo need no target. Cancel, timeout or document/identity change clears unsafe pending state; unrelated revisions require revalidation rather than a stale automatic Apply.
 
-- [ ] **P4-W-5** Integrate and pin a local speech-recognition library and model. Build microphone-data handling, confidence policy, grammar and local speech output rather than assuming these components already exist.
+- [ ] **P4-W-5** Integrate and pin Vosk and its small English model (downloaded by script, not committed). Build microphone-data handling, confidence policy, grammar and local speech output rather than assuming these components already exist.
 
 ### Lee Jae yeon checklist
 
@@ -673,10 +729,10 @@ Distinguish host document state from peer display state. Disconnect and reconnec
 
 ### Remote Blender connection checklist
 
-- [ ] Build the native bridge to listen only on localhost. Waaberi supplies a separate authenticated session endpoint with a documented address/port.
-- [ ] On the shared event network use authenticated encrypted transport or an approved isolated route. Do not expose the raw native bridge or reusable credentials. Default local Spacetime hosting is not proof of a secure network deployment.
+- [ ] The Unity port (8765) and the SpacetimeDB server listen only on localhost. Client-role add-ons join through the host's LAN port (8767) with the session token.
+- [ ] On the shared event network use the TLS LAN port or an approved isolated route. Do not expose the localhost ports or reusable credentials.
 - [ ] Test Lee Jae-yeon PC can reach the host endpoint. If OS access rules are needed, document the exact app/endpoint for appropriate user/organizer setup; never disable protection globally.
-- [ ] Install matching remote add-on/dependency versions. Join with the host address and session credentials kept outside Git.
+- [ ] Install the same add-on version as the host and switch it to Client role. Join with the host address and the session token, both kept outside Git.
 - [ ] Open a separate session document. Receive the host snapshot with stable IDs; protect personal unsaved work.
 - [ ] Use supported collaborative Blender tools. Send a typed edit; wait for native acknowledgement; verify remote Blender, main Blender and VR agree.
 - [ ] Test both directions, same-object conflict, dropped connection/rejoin, Undo/Redo and native Save/reopen.
@@ -777,7 +833,7 @@ Status: NOT STARTED | Build or commit: ______ | Evidence: ______ | Blocker and o
 
 - [ ] **P6-M1-3** Run the previous-phase smoke tests and report pass/fail to Talia. Keep installation and errors in simple English.
 
-- [ ] **P6-M1-4** Create a dependency manifest and reproducible first-time setup instructions for the new app, host service, add-ons, speech models and solver. Test setup without a development checkout.
+- [ ] **P6-M1-4** Create a dependency manifest and reproducible first-time setup instructions for the app, the add-on, the capture helper, SpacetimeDB (if used), speech models and solver. Test setup without a development checkout.
 
 ### Jihyeon checklist
 
@@ -922,21 +978,32 @@ Core voice and real collaboration are required regardless of sponsor choice. Use
 | Candidate | Decision | Reason and dependency |
 | --- | --- | --- |
 | Cartesia | Deferred | Hosted speech recognition/output could improve the voice experience. Requires approved calls, credentials/free credits, network and a real headset trial. Local voice remains core. |
-| SpacetimeDB | Conditional candidate | Could manage rooms, identities, edit ownership, intent queues, receipts and subscriptions. Use a 90-minute compatibility/connection spike, then one real native edit from each client before commitment. |
+| SpacetimeDB | Selected for session state, if the spike passes | Holds participants, presence, object leases and the activity and receipt log. Unity subscribes live through the official C# SDK; Blender calls reducers and polls over HTTP. Geometry and native commands stay on the direct host connection. A 90-minute spike decides (below). |
 | Anthropic | Deferred | A bounded assistant would need a validated user problem, approved hosted access and typed native actions. It must not displace core editing. |
 | Moss | Not selected | Semantic tool retrieval needs a demonstrated advantage over a deterministic registry and verified current SDK/package guidance. |
 | Factory | Not selected | A runtime agent/repair role adds subprocess, permission, credit and integration work. Development coding assistance alone is not a product integration. |
 | Microsoft | Deferred | Requires a real customer workflow, measurable benefit and a qualifying product story. No additional API is selected solely for a prize. |
 
-### Conditional collaboration backend
+### SpacetimeDB session state
 
-Waaberi owns the module and host adapter, Lee Jae-yeon owns the remote Blender client, Jihyeon owns the Unity client and Talia owns the two-human native trial. Pin one compatible CLI/server/client version. Spacetime supports Windows, macOS and Linux, but that alone does not establish our native Python/client integration or venue-network readiness. [Installation documentation](https://spacetimedb.com/install).
+Waaberi owns the module and the host's SpacetimeDB adapter. Jihyeon owns the Unity subscription. Lee Jae-yeon owns how the Client role shows presence and ownership. Talia owns the two-person native trial. Pin one compatible CLI, server and client SDK version. [Installation documentation](https://spacetimedb.com/install).
 
-The service stores session/document identity, authority epoch, revisions, participants, temporary ownership, typed intents and receipts. Blender owns geometry and native history. The host independently validates identity, target, mode, units and current revision immediately before native mutation. Only the current host can publish native receipts. Presence changes do not change model revisions. No silent automatic promotion of a competing native host.
+**What it holds:** participants and presence, object leases, and the activity and receipt log. **What it doesn't hold:** geometry, scene snapshots and native commands. Those stay on the direct host connection, because Blender can only reach SpacetimeDB over HTTP polling.
 
-Database and Blender commits are not one atomic transaction. Queued does not mean applied. A crash between native commit and acknowledgement needs receipt/readback reconciliation. Unknown outcomes freeze writes; reconnect refreshes snapshots and queries request IDs rather than replaying an edit. Duplicate ID with identical payload returns the same result; changed payload under that ID rejects. Do not queue offline native mutations. Long operations serialize safely; cancellation is truthful only when supported.
+**Where it runs:** the self-hosted server runs on Talia's PC and listens on localhost only, because self-hosted SpacetimeDB has no TLS. The Unity app and the host add-on reach it locally. The Client-role add-on on Lee Jae-yeon's PC gets presence and leases relayed by the host over the TLS LAN link, so the LAN has a single entry point.
 
-Integration order: establish compatible server/clients and LAN access; prove each real client can edit; add identity/epochs/receipts and serialization; add object ownership/conflicts/external edits; then exercise lost acknowledgement, restart, document switch, persistence and actual Quest/remote Blender behavior. If the 90-minute spike fails or adds substantial complexity, choose a simpler authenticated host transport and defer sponsor work. The product still must pass two-person editing.
+**Spike (90 minutes, Saturday morning once P1 passes, before P3B work):** Waaberi writes the module; Jihyeon connects the Unity SDK. It passes only if all of these work:
+
+1. `spacetime start` runs on Talia's PC, and a module with participant, lease and activity tables publishes to it.
+2. The Unity app subscribes and shows a lease change within a quarter of a second.
+3. The host add-on, using only Python's standard library, acquires a lease through a reducer, and a second acquire of the same object is rejected.
+4. Restarting Blender loses neither the receipt log nor the current leases.
+
+If any of these fails, or the spike runs over, the host keeps the same state in memory and sends it over the existing connections. Write the host's lease and presence code behind one interface so this switch stays cheap. The product must pass two-person editing either way.
+
+**Rules that apply either way:** Blender owns geometry and native history. The host validates identity, target, mode, units, lease and current revision immediately before each native mutation. Only the host publishes native receipts. Presence changes don't change model revisions. There is no automatic promotion of a competing host.
+
+SpacetimeDB and Blender commits are not one atomic transaction. Queued does not mean applied. A crash between a native commit and its acknowledgement needs receipt and readback reconciliation. Unknown outcomes freeze writes. Reconnecting refreshes the snapshot and queries request IDs instead of replaying an edit. A duplicate request ID with an identical payload returns the same result, and a changed payload under the same ID is rejected. Don't queue offline native mutations. Long operations run one at a time, and cancellation is reported only where it's actually supported.
 
 Keep room tokens and credentials out of Git. Shared event Wi-Fi needs encrypted authenticated transport or an approved isolated route; default local server hosting is not security evidence. Hosted deployment, accounts and budgets are separate decisions. Capture actual median/p95 latency, conflict detection and reconnect time; proposed peer reconnect target is within 10 seconds after the connection returns. Do not substitute vendor benchmarks for measured results.
 
@@ -2391,7 +2458,9 @@ Owner: Waaberi with Talia for native validation and relevant client support. Dep
 | Term | Meaning |
 | --- | --- |
 | Host | Talia's PC and Blender document that decide the final accepted model state. |
+| Host role / Client role | The two modes of our single Blender add-on. Host serves the session on Talia's PC; Client joins it from another Blender. |
 | Client | A connected app or another Blender computer. |
+| JSON lines | One JSON object per line over a TCP connection; the format of every host connection. |
 | Snapshot | A complete current scene description sent by the host. |
 | Revision | The number of the latest accepted document change. |
 | Epoch | An identifier that changes when a session/document lifetime changes, preventing stale requests. |
@@ -2412,3 +2481,5 @@ Owner: Waaberi with Talia for native validation and relevant client support. Dep
 - [CAD Sketcher and its license](https://github.com/hlorus/CAD_Sketcher)
 - [Vosk offline recognition](https://alphacephei.com/vosk/)
 - [Spacetime installation](https://spacetimedb.com/install)
+- [SpacetimeDB HTTP API](https://spacetimedb.com/docs/http/database)
+- [Python TLS pre-shared keys](https://docs.python.org/3.13/library/ssl.html#ssl.SSLContext.set_psk_client_callback)
