@@ -15,6 +15,8 @@ minimum 160 by 110 mm envelope prevents breathing during a 100->120 mm edit.
 Empty sketches stay pending. A different/replaced region is an error.
 
 Write `OUTPUT/viewport-control.json` atomically (temporary file then rename).
+On Windows, use a short bounded retry if replacement briefly conflicts with
+the timer's read handle; preserve any final failure rather than changing permissions.
 The closed grammar has an increasing integer `seq` in 1..2147483647, a 4096-byte
 limit, and these requests:
 
@@ -41,6 +43,22 @@ Player, lower image quality, prove live capture, establish frame rate or certify
 physical acceptance. A screenshot/decoded-frame check is required to establish
 actual useful occupancy and changing video.
 
-At source publication: control validation has 19 passing tests; Ruff passes.
-Actual Blender framing, native-state/Undo preservation, pixel change and normal
-cleanup remain pending the coordinator's native gate grant and real GUI run.
+Actual isolated validation on cumulative C source
+`33b4bc01ba02b1f586715d152b74251d44b617fb`: Blender5.2.2/CAD0.32.1/slvs3.2,
+22 control/bounds tests and Ruff pass. Fresh point-only sketch stays pending.
+Unobscured120x60mm real rectangle occupies approximately42% of viewport width.
+Six native fingerprints match across frame/orbit/stop/restore: native/cache
+sketch, mesh, transforms, dimensions, material assignments/UVs, document units,
+revision/dirty/command-step, selection and zero leases. Actual shared Undo then
+returns100mm, Redo120mm.37 wire messages validate; host/verifier normal exit0;
+all92 native/contracts/harness hashes match before/after. Original view restore
+deltas are zero; framed distance roundoff5.96e-9 Blender units.
+
+Owned opposite-orbit PNGs change1.3801% of region pixels by more than12RGB;
+this does not establish Player/capture threshold, frame rate or human acceptance.
+Evidence `p3c-viewport-33b4bc0-r3`; failures retained in R1 (local atomic-writer
+WinError5) and R2 (native assertions pass, visual FAIL due startup splash).
+The final local wrapper disables splash only in owned-process memory before
+the GUI event loop, restores it before finish, and never saves preferences.
+Installed CLI help has no --no-splash option. Native lines remain thin and low
+contrast; coupled video and product presentation are separate review gates.
