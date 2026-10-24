@@ -153,7 +153,8 @@ namespace SpatialModeling.VoiceCore
             return turn.Build();
         }
 
-        /// <summary>A different document was opened or the session changed: forgets everything.</summary>
+        /// <summary>A different document was opened or the session changed (the app's Wrong document state):
+        /// forgets everything.</summary>
         public VoiceTurn DocumentChanged()
         {
             var turn = Begin();
@@ -165,6 +166,19 @@ namespace SpatialModeling.VoiceCore
             objects = new List<SceneObject>();
             selection.Clear();
             pointerId = null;
+            return turn.Build();
+        }
+
+        /// <summary>The host connection closed (the app's Disconnected state): drops the pending command. The objects
+        /// stay until the fresh snapshot's <see cref="SetObjects"/>, or <see cref="DocumentChanged"/>.</summary>
+        public VoiceTurn ConnectionLost()
+        {
+            var turn = Begin();
+            if (pending != null)
+            {
+                pending = null;
+                turn.Prompts.Add(Prompt.ConnectionLost);
+            }
             return turn.Build();
         }
 
@@ -180,7 +194,8 @@ namespace SpatialModeling.VoiceCore
             return turn.Build();
         }
 
-        /// <summary>While a prompt plays, results are ignored so the app can't hear itself.</summary>
+        /// <summary>While a prompt plays, results are ignored so the app can't hear itself. Pause
+        /// <see cref="VoiceInput"/> at the same time, so no utterance spans the prompt.</summary>
         public void SetPromptPlaying(bool playing) => promptPlaying = playing;
 
         /// <summary>Expires the pending command and lets a resting pointer answer "which object?".</summary>
@@ -245,9 +260,9 @@ namespace SpatialModeling.VoiceCore
                 return;
             }
 
-            var draft = new Draft(kind) { Shape = parsed.Shape, Axis = parsed.Axis, Negative = parsed.Negative };
+            var draft = new Draft(kind) { Shape = parsed.Shape, Axis = parsed.Axis, NegativeAxis = parsed.NegativeAxis };
             if (parsed.Number.HasValue)
-                draft.SetAmount(parsed.Number.Value, parsed.Unit, turn);
+                draft.SetAmount(parsed.Number.Value, parsed.NegativeAmount, parsed.Unit, turn);
             else if (parsed.Unit.HasValue)
                 draft.SetUnit(parsed.Unit.Value, turn);
 
@@ -290,20 +305,17 @@ namespace SpatialModeling.VoiceCore
             else if (needsTarget && parsed.Target == TargetRef.Context)
                 draft.Target = FromContext(draft.Kind);
 
-            bool signed = false;
             if ((missing & MissingFields.Shape) != 0 && parsed.Shape.HasValue)
                 draft.Shape = parsed.Shape;
             if ((missing & MissingFields.Axis) != 0 && parsed.Axis.HasValue)
             {
                 draft.Axis = parsed.Axis;
-                signed = true;
+                draft.NegativeAxis = parsed.NegativeAxis; // "negative z"
             }
             if ((missing & MissingFields.Amount) != 0 && parsed.Number.HasValue)
-                signed |= draft.SetAmount(parsed.Number.Value, parsed.Unit, turn);
+                draft.SetAmount(parsed.Number.Value, parsed.NegativeAmount, parsed.Unit, turn); // "minus ten centimeters"
             else if ((missing & MissingFields.Unit) != 0 && parsed.Unit.HasValue)
                 draft.SetUnit(parsed.Unit.Value, turn);
-            if (signed && parsed.Negative)
-                draft.Negative = !draft.Negative; // "negative z", "minus ten centimeters"
 
             Advance(turn);
         }
@@ -314,7 +326,7 @@ namespace SpatialModeling.VoiceCore
             Draft draft = pending;
             if (!draft.InRange())
             {
-                draft.Magnitude = null;
+                draft.ClearAmount(); // the corrected amount comes with its own unit and sign
                 turn.Prompts.Add(Prompt.OutOfRange);
             }
             MissingFields missing = draft.Missing;
@@ -338,12 +350,12 @@ namespace SpatialModeling.VoiceCore
             return Prompt.AskUnit;
         }
 
-        /// <summary>Explicit selection first, then the pointer target, then the only eligible object.</summary>
+        /// <summary>Explicit selection first, then the pointer target, then the only eligible object. A selection is
+        /// never overridden: several objects, or one that isn't eligible, is a question.</summary>
         SceneObject FromContext(CommandKind kind)
         {
-            SceneObject selected = kind == CommandKind.Select ? null : SingleSelected();
-            if (selected != null)
-                return selected;
+            if (kind != CommandKind.Select && selection.Count > 0)
+                return SingleSelected();
             SceneObject pointed = pointerId == null ? null : Find(pointerId);
             if (pointed != null)
                 return pointed;
@@ -364,15 +376,14 @@ namespace SpatialModeling.VoiceCore
             }
         }
 
+        /// <summary>The selected object if exactly one is selected and it is eligible, otherwise null.</summary>
         SceneObject SingleSelected()
         {
             SceneObject found = null;
             foreach (string id in selection)
             {
                 SceneObject obj = Find(id);
-                if (obj == null)
-                    continue;
-                if (found != null && found.Id != obj.Id)
+                if (obj == null || (found != null && found.Id != obj.Id))
                     return null;
                 found = obj;
             }
@@ -417,7 +428,7 @@ namespace SpatialModeling.VoiceCore
             public Axis? Axis;
             public double? Magnitude;
             public SpokenUnit? Unit;
-            public bool Negative;
+            public bool NegativeAmount, NegativeAxis;
 
             bool HasAmount => Kind == CommandKind.Move || Kind == CommandKind.Rotate || Kind == CommandKind.Scale;
 
@@ -440,17 +451,24 @@ namespace SpatialModeling.VoiceCore
                 }
             }
 
-            /// <summary>Sets the number and its unit, or explains a wrong unit. Returns whether it was set.</summary>
-            public bool SetAmount(double magnitude, SpokenUnit? unit, Turn turn)
+            /// <summary>Sets the number, its sign and its unit, or explains a wrong unit.</summary>
+            public void SetAmount(double magnitude, bool negative, SpokenUnit? unit, Turn turn)
             {
                 if (!HasAmount || (unit.HasValue && !SetUnit(unit.Value, turn)))
-                    return false;
+                    return;
                 if (Kind == CommandKind.Rotate)
                     Unit = SpokenUnit.Degrees;
                 else if (Kind == CommandKind.Scale && !Unit.HasValue)
                     Unit = SpokenUnit.Times;
                 Magnitude = magnitude;
-                return true;
+                NegativeAmount = negative;
+            }
+
+            public void ClearAmount()
+            {
+                Magnitude = null;
+                Unit = null;
+                NegativeAmount = false;
             }
 
             public bool SetUnit(SpokenUnit unit, Turn turn)
@@ -466,21 +484,21 @@ namespace SpatialModeling.VoiceCore
                 return ok;
             }
 
-            /// <summary>Bounds: moves up to 10 m, turns up to 360 degrees, scale factors from 0.01 to 100.</summary>
+            /// <summary>The voice limits (<see cref="VoiceLimits"/>), inside the contract's bounds.</summary>
             public bool InRange()
             {
                 VoiceCommand command = ToCommand();
                 if (command.Meters.HasValue)
-                    return command.Meters != 0 && Math.Abs(command.Meters.Value) <= 10;
+                    return command.Meters != 0 && Math.Abs(command.Meters.Value) <= VoiceLimits.MaxMoveMeters;
                 if (command.Radians.HasValue)
-                    return command.Amount != 0 && Math.Abs(command.Amount.Value) <= 360;
+                    return command.Amount != 0 && Math.Abs(command.Amount.Value) <= VoiceLimits.MaxTurnDegrees;
                 if (command.Factor.HasValue)
-                    return command.Factor >= 0.01 && command.Factor <= 100;
+                    return command.Factor >= VoiceLimits.MinScaleFactor && command.Factor <= VoiceLimits.MaxScaleFactor;
                 return true;
             }
 
             public VoiceCommand ToCommand() =>
-                new VoiceCommand(Kind, Target, Shape, Axis, Magnitude.HasValue ? (Negative ? -Magnitude : Magnitude) : null, Unit);
+                new VoiceCommand(Kind, Target, Shape, Axis, Magnitude.HasValue ? (NegativeAmount != NegativeAxis ? -Magnitude : Magnitude) : null, Unit);
         }
     }
 }

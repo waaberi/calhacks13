@@ -23,7 +23,12 @@ namespace SpatialModeling.VoiceCore
         public Axis? Axis;
         public double? Number;
         public SpokenUnit? Unit;
-        public bool Negative;
+
+        /// <summary>"Minus ten", "negative ninety": the number's own sign.</summary>
+        public bool NegativeAmount;
+
+        /// <summary>"Negative x", "down": the axis points the other way.</summary>
+        public bool NegativeAxis;
         public TargetRef Target;
         public SceneObject Named;
 
@@ -58,13 +63,16 @@ namespace SpatialModeling.VoiceCore
                 MatchName(words, used, objects, parsed);
 
             bool deictic = false, nameLike = false;
-            int negations = 0, numbers = 0;
+            int numbers = 0;
+            bool negation = false; // a "minus" or "negative" waiting for the axis or number it belongs to
             for (int i = 0; i < words.Count; i++)
             {
                 if (used[i])
                     continue;
                 string w = words[i];
                 int start = i;
+                bool negates = negation;
+                negation = false;
                 if (Vocabulary.Deictic.Contains(w))
                 {
                     deictic = true;
@@ -79,22 +87,25 @@ namespace SpatialModeling.VoiceCore
                         parsed.Shape = parsed.Shape ?? shape;
                 }
                 else if (Vocabulary.Axes.TryGetValue(w, out Axis axis))
+                {
                     parsed.Axis = parsed.Axis ?? axis;
+                    parsed.NegativeAxis ^= negates;
+                }
                 else if (Vocabulary.Negations.Contains(w))
-                    negations++;
+                    negation = !negates; // "minus minus" cancels out
                 else if (Vocabulary.Directions.TryGetValue(w, out int direction))
                 {
                     if (kind == CommandKind.Move)
                     {
                         parsed.Axis = parsed.Axis ?? Axis.Z;
-                        if (direction < 0)
-                            negations++;
+                        parsed.NegativeAxis ^= (direction < 0) ^ negates;
                     }
                 }
                 else if (NumberWords.TryRead(words, ref i, out double number))
                 {
                     numbers++;
                     parsed.Number = number;
+                    parsed.NegativeAmount = negates;
                     if (i < words.Count && Vocabulary.Units.TryGetValue(words[i], out SpokenUnit numberUnit))
                     {
                         parsed.Unit = numberUnit;
@@ -104,7 +115,9 @@ namespace SpatialModeling.VoiceCore
                 }
                 else if (Vocabulary.Units.TryGetValue(w, out SpokenUnit unit))
                     parsed.Unit = parsed.Unit ?? unit;
-                else if (!Vocabulary.Fillers.Contains(w) && !Vocabulary.Verbs.ContainsKey(w) && !IsNumberWord(w))
+                else if (Vocabulary.Fillers.Contains(w))
+                    negation = negates; // "minus the x axis"
+                else if (!Vocabulary.Verbs.ContainsKey(w) && !IsNumberWord(w))
                 {
                     parsed.HasUnknownWords = true;
                     nameLike = true;
@@ -115,8 +128,10 @@ namespace SpatialModeling.VoiceCore
             }
 
             if (numbers > 1)
+            {
                 parsed.Number = null; // "one eighty", or "to fifty" heard as "two fifty": ask for the amount
-            parsed.Negative = negations % 2 == 1;
+                parsed.NegativeAmount = false;
+            }
             if (parsed.Target == TargetRef.None && targetable)
                 parsed.Target = deictic ? TargetRef.Context : nameLike ? TargetRef.Unknown : TargetRef.None;
             return parsed;

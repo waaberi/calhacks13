@@ -65,6 +65,43 @@ namespace SpatialModeling.VoiceCore.Tests
         }
 
         [Fact]
+        public void SeveralSelectedObjectsAreAQuestionEvenWithAPointerTarget()
+        {
+            var f = new Fixture(Cube, Sphere);
+            f.Session.SetPointerTarget(Sphere.Id);
+            f.Select(Cube, Sphere);
+            VoiceTurn turn = f.Say("delete this");
+            Assert.Null(turn.Command);
+            Assert.Equal(new[] { "ask_target" }, Prompts(turn));
+        }
+
+        [Fact]
+        public void ASelectedObjectThatIsNotEligibleIsAQuestion()
+        {
+            // The camera is selected but not among the objects; the sole eligible object must not take its place.
+            var f = new Fixture(Cube);
+            f.Session.SetSelection(new[] { "id-camera" });
+            VoiceTurn turn = f.Say("delete this");
+            Assert.Null(turn.Command);
+            Assert.Equal(new[] { "ask_target" }, Prompts(turn));
+
+            // A selection that contains it alongside an eligible object is not a single object either.
+            var g = new Fixture(Cube, Sphere);
+            g.Session.SetSelection(new[] { Cube.Id, "id-camera" });
+            Assert.Equal(new[] { "ask_target" }, Prompts(g.Say("delete this")));
+            Assert.Equal(Cube.Id, g.Select(Cube).Command.TargetId);
+        }
+
+        [Fact]
+        public void SelectingByVoiceIgnoresTheCurrentSelection()
+        {
+            var f = new Fixture(Cube, Sphere);
+            f.Select(Cube);
+            f.Session.SetPointerTarget(Sphere.Id);
+            Assert.Equal(Sphere.Id, f.Say("select this").Command.TargetId);
+        }
+
+        [Fact]
         public void ResolvedTargetIsShownWhilePending()
         {
             var f = new Fixture(Cube, Sphere);
@@ -184,6 +221,43 @@ namespace SpatialModeling.VoiceCore.Tests
             VoiceTurn turn = f.Say(text);
             Assert.Null(turn.Command);
             Assert.Equal("out_of_range", turn.Prompts[0].Id);
+        }
+
+        [Theory]
+        [InlineData("move it minus twenty meters along x", "minus ten centimeters", -0.1)]
+        [InlineData("move it minus twenty meters along x", "ten centimeters", 0.1)]
+        [InlineData("move it twenty meters along negative x", "ten centimeters", -0.1)]
+        [InlineData("move it twenty meters along negative x", "minus ten centimeters", 0.1)]
+        [InlineData("move it down twenty meters", "five centimeters", -0.05)]
+        public void ACorrectedAmountBringsItsOwnSignAndKeepsTheAxisDirection(string first, string answer, double meters)
+        {
+            var f = new Fixture(Cube);
+            Assert.Equal(new[] { "out_of_range", "ask_distance" }, Prompts(f.Say(first)));
+            Assert.Equal(meters, f.Say(answer).Command.Meters.Value, 9);
+        }
+
+        [Fact]
+        public void ACorrectedAmountAsksForItsUnitAgain()
+        {
+            var f = new Fixture(Cube);
+            f.Say("move it twenty meters along x");
+            Assert.Equal(new[] { "ask_unit" }, Prompts(f.Say("five")));
+            Assert.Equal(0.05, f.Say("centimeters").Command.Meters.Value, 9);
+
+            f.Say("scale it by zero percent");
+            Assert.Equal(2.0, f.Say("two").Command.Factor.Value, 9); // two times, not two percent
+        }
+
+        [Fact]
+        public void NegationsBelongToTheFollowingAxisOrNumber()
+        {
+            var f = new Fixture(Cube);
+            Assert.Equal(-0.1, f.Say("move it minus ten centimeters along x").Command.Meters.Value, 9);
+            Assert.Equal(0.1, f.Say("move it minus ten centimeters along negative x").Command.Meters.Value, 9);
+            Assert.Equal(-0.1, f.Say("move it ten centimeters along the negative x axis").Command.Meters.Value, 9);
+            Assert.Equal(0.1, f.Say("move it minus minus ten centimeters along x").Command.Meters.Value, 9);
+            Assert.Equal(0.05, f.Say("move it down minus five centimeters").Command.Meters.Value, 9);
+            Assert.Equal(-Math.PI / 2, f.Say("rotate it minus ninety degrees around z").Command.Radians.Value, 9);
         }
 
         [Theory]
@@ -332,6 +406,18 @@ namespace SpatialModeling.VoiceCore.Tests
             Assert.Equal(new[] { "document_changed" }, Prompts(f.Session.DocumentChanged()));
             Assert.Null(f.Session.Pending);
             Assert.Empty(f.Session.Objects);
+        }
+
+        [Fact]
+        public void LostConnectionClearsThePendingCommandButKeepsTheObjects()
+        {
+            var f = new Fixture(Cube, Sphere);
+            f.Say("rotate this ninety degrees");
+            Assert.Equal(new[] { "connection_lost" }, Prompts(f.Session.ConnectionLost()));
+            Assert.Null(f.Session.Pending);
+            Assert.Equal(2, f.Session.Objects.Count);
+            Assert.Null(f.Select(Cube).Command);
+            Assert.Empty(f.Session.ConnectionLost().Prompts);
         }
 
         [Theory]
