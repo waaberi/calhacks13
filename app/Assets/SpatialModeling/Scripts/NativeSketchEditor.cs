@@ -74,6 +74,15 @@ namespace SpatialModeling
             var a = Sketch?["entities"] as JArray;
             return a != null && a.Count > 0 ? a[index % a.Count] as JObject : null;
         }
+        internal void SmokeChoose(string first, string second = null, string constraint = null)
+        {
+            if (Sketch?["entities"] is JArray a) for (int i = 0; i < a.Count; i++)
+            { if ((string)a[i]["id"] == first) entityA = i; if ((string)a[i]["id"] == second) entityB = i; }
+            int index = 0;
+            if (Sketch?["constraints"] is JArray c) foreach (var d in c)
+                if (d["value"] != null) { if ((string)d["id"] == constraint) dimension = index; index++; }
+            Changed();
+        }
         static string EntityName(JObject entity)
         {
             if (entity == null) return "None";

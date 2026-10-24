@@ -34,6 +34,7 @@ namespace SpatialModeling
         InputField focused;
         string tool = "", primitive = "cube", axis = "Z", localError = "";
         InputAction toggle;
+        Button sketchButton;
         bool heldTracked;
         Pose menuHand;
 
@@ -190,8 +191,8 @@ namespace SpatialModeling
             ButtonAt("Undo", 333, 255, 275, () => Tool("history.undo"));
             ButtonAt("Redo", 642, 255, 275, () => Tool("history.redo"));
             ButtonAt("Save", 24, 340, 275, () => Tool("document.save"));
-            var sketch = ButtonAt(Session.SketchAvailable ? "Sketch" : "Sketch unavailable", 333, 340, 275, () => BuildSketchPage?.Invoke(this));
-            sketch.interactable = Session.SketchAvailable && BuildSketchPage != null;
+            sketchButton = ButtonAt(Session.SketchAvailable ? "Sketch" : "Sketch unavailable", 333, 340, 275, () => BuildSketchPage?.Invoke(this));
+            sketchButton.interactable = Session.SketchAvailable && BuildSketchPage != null;
             ButtonAt("Settings", 642, 340, 275, Settings);
             ButtonAt("Select / Edit", 24, 425, 275, () => { SelectingNative = true; Home(); });
             Label(content, "Trigger selects a native target. Grip arranges your view only.\nNative axes: X / Y / Z (Blender Z is up).\nApply requests permission, then waits for Blender's receipt.", 24, 520, 890, 150, 27);
@@ -269,7 +270,7 @@ namespace SpatialModeling
         public void ShowError(string error) { localError = error; Refresh(); }
         internal bool SmokeClick(string title)
         {
-            if (!Array.Exists(Environment.GetCommandLineArgs(), arg => arg == "-p3-native-smoke")) return false;
+            if (!Array.Exists(Environment.GetCommandLineArgs(), arg => arg == "-p3-native-smoke" || arg == "-p3-sketch-smoke")) return false;
             foreach (var button in buttons) if (button != null && button.name == title && button.interactable) { button.onClick.Invoke(); return true; }
             return false;
         }
@@ -306,6 +307,12 @@ namespace SpatialModeling
         public void Refresh()
         {
             if (selected == null) return;
+            if (Page == "home" && sketchButton != null)
+            {
+                sketchButton.interactable = Session.SketchAvailable && BuildSketchPage != null;
+                sketchButton.name = Session.SketchAvailable ? "Sketch" : "Sketch unavailable";
+                sketchButton.GetComponentInChildren<Text>().text = sketchButton.name;
+            }
             string name = (string)Session.Selected?["name"] ?? "None";
             string saved = (bool?)Session.Document["dirty"] == true ? "Unsaved" : "Saved";
             selected.text = $"Target: {name} · revision {Session.Revision}\n{(SelectingNative ? "Native edit" : "Arrange view")} · {(WorkspaceHandPreference.Left ? "Left" : "Right")} hand · {(Pinned ? "Pinned" : "Held")} · {saved}";
