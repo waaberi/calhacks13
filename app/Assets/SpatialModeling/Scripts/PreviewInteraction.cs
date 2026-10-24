@@ -17,7 +17,7 @@ namespace SpatialModeling
     {
         public static PreviewInteraction Current { get; private set; }
         public static bool BlocksDesktopShortcuts => Current != null && (Current.inputEnabled || Current.focusRequested || Current.endAfterRelease
-            || (Current.Drawing != null && Current.Drawing.IsNativeUiOwned));
+            || Current.numbersShown || (Current.Drawing != null && Current.Drawing.IsNativeUiOwned));
         public static bool Requested => Environment.GetEnvironmentVariable("CALHACKS_P25") == "1"
             || Array.IndexOf(Environment.GetCommandLineArgs(), "--p25") >= 0;
         public bool CapturesScroll { get; private set; }
@@ -27,6 +27,10 @@ namespace SpatialModeling
         BlenderScreen screen;
         HostScene scene;
         RectTransform panel, keyboard, modelToolsPanel;
+        RectTransform shortcutPanel, numberPanel;
+        readonly List<Button> basicKeys = new List<Button>(), fullKeys = new List<Button>(), shortcutButtons = new List<Button>();
+        readonly List<Button> numberFields = new List<Button>();
+        Text numberFeedback, shortcutFeedback;
         Text feedback, objectTargetText;
         Button moveStepButton, turnStepButton, primitiveSizeButton;
         readonly List<Button> buttons = new List<Button>();
@@ -38,6 +42,11 @@ namespace SpatialModeling
         bool readingState, sendingEvent;
         bool inputEnabled, triggerWasDown, mouseHeld, keyboardShown, shiftText;
         bool focusRequested, endAfterRelease, releaseQueued, spatialRequested, objectsRequested, modelToolsShown;
+        bool numbersShown, shortcutsShown, fullKeyboard, editorPointSet;
+        int shortcutPage;
+        Vector2 editorPoint;
+        string editorInstance, editorGeometry, editorIdentity;
+        long editorGeneration;
         readonly HashSet<string> modifiers = new HashSet<string>();
         float nextPointer, nextScroll, nextHeartbeat;
         Vector2 lastPoint;
@@ -95,6 +104,8 @@ namespace SpatialModeling
             if (panel != null) Destroy(panel.gameObject);
             if (keyboard != null) Destroy(keyboard.gameObject);
             if (modelToolsPanel != null) Destroy(modelToolsPanel.gameObject);
+            if (shortcutPanel != null) Destroy(shortcutPanel.gameObject);
+            if (numberPanel != null) Destroy(numberPanel.gameObject);
         }
 
         void Update()
@@ -105,6 +116,8 @@ namespace SpatialModeling
             if (panel != null) panel.gameObject.SetActive(shown);
             if (keyboard != null) keyboard.gameObject.SetActive(shown && keyboardShown);
             if (modelToolsPanel != null) modelToolsPanel.gameObject.SetActive(shown && modelToolsShown);
+            if (shortcutPanel != null) shortcutPanel.gameObject.SetActive(shown && shortcutsShown);
+            if (numberPanel != null) numberPanel.gameObject.SetActive(shown && numbersShown);
             if (!shown || scene == null || !scene.IsCurrent) Suspend();
             if (focusRequested && !endAfterRelease && Drawing != null && Drawing.IsNativeUiOwned)
             {
@@ -137,6 +150,8 @@ namespace SpatialModeling
                     + " · " + (PrimaryHand == XRNode.RightHand ? "Right" : "Left") + " pointer\n" + Notice
                     + "\n" + (Drawing != null ? Drawing.StatusText : "Waiting for spatial bridge");
             if (modelToolsShown) RefreshObjectLabels();
+            if (numbersShown) RefreshNumbers();
+            if (shortcutsShown && shortcutFeedback != null) shortcutFeedback.text = "Page " + (shortcutPage + 1) + " / 2 · click the intended Blender editor before using these shortcuts\n" + Notice;
         }
 
         public void TrackingLost(XRNode hand)
@@ -149,6 +164,8 @@ namespace SpatialModeling
             inputEnabled = false;
             focusRequested = false;
             objectsRequested = spatialRequested = modelToolsShown = false;
+            numbersShown = shortcutsShown = editorPointSet = false;
+            Drawing?.Numeric.Invalidate();
             CapturesScroll = false;
             if (Drawing != null) { Drawing.Cancel(); Drawing.SetEnabled(false); Drawing.SetObjectToolsEnabled(false); }
         }
@@ -182,6 +199,9 @@ namespace SpatialModeling
             if (modelToolsPanel != null && modelToolsPanel.gameObject.activeInHierarchy && Hit(modelToolsPanel, ray, out var modelDistance)
                 && modelDistance <= nearest)
             { ReleasePointer(); distance = modelDistance; return true; }
+            foreach (var overlay in new[] { shortcutPanel, numberPanel })
+                if (overlay != null && overlay.gameObject.activeInHierarchy && Hit(overlay, ray, out var overlayDistance) && overlayDistance <= nearest)
+                { ReleasePointer(); distance = overlayDistance; return true; }
             if (panel != null && panel.gameObject.activeInHierarchy && Hit(panel, ray, out var panelDistance) && panelDistance <= nearest)
             { ReleasePointer(); distance = panelDistance; return true; }
             if (screen != null && screen.TryPreviewPoint(ray, out var point, out var imageDistance) && imageDistance <= nearest)
@@ -194,6 +214,7 @@ namespace SpatialModeling
                     { nextPointer = Time.unscaledTime + .025f; pendingPointer = At("pointer", point); }
                     if (pressed)
                     {
+                        if (mouseButton == "left") RememberEditor(point);
                         FlushPointer();
                         var e = At("button", point); e["button"] = mouseButton; e["action"] = "down";
                         Enqueue(e); mouseHeld = true;
@@ -243,6 +264,7 @@ namespace SpatialModeling
             if (state == null || (bool?)state["enabled"] != true || session.Length == 0)
             { Notice = "Start the P2.5 helper with input enabled and select the connected Blender window"; return; }
             objectsRequested = modelToolsShown = false;
+            numbersShown = shortcutsShown = editorPointSet = false; Drawing.Numeric.Invalidate();
             Drawing.Cancel(); Drawing.SetEnabled(false); Drawing.SetObjectToolsEnabled(false);
             focusRequested = true; spatialRequested = false;
             Drawing.BeginNativeUi();
@@ -262,6 +284,7 @@ namespace SpatialModeling
             if (Drawing.NativeModalActive)
             { Notice = "Finish the native operation with Enter or Escape before switching to VR drawing"; return; }
             objectsRequested = modelToolsShown = false;
+            numbersShown = shortcutsShown = editorPointSet = false; Drawing.Numeric.Invalidate();
             Drawing.SetObjectToolsEnabled(false);
             bool needsRelease = inputEnabled || focusRequested || Drawing.IsNativeUiOwned || Drawing.NativeUiTransitionPending;
             ReleaseNative(); inputEnabled = focusRequested = false;
@@ -271,6 +294,7 @@ namespace SpatialModeling
         void BeginObjects()
         {
             if (Drawing == null) return;
+            numbersShown = shortcutsShown = editorPointSet = false; Drawing.Numeric.Invalidate();
             if (Drawing.NativeModalActive) { Notice = "Finish or cancel the running Blender operation before Model tools"; return; }
             bool needsRelease = inputEnabled || focusRequested || Drawing.IsNativeUiOwned || Drawing.NativeUiTransitionPending;
             ReleaseNative(); inputEnabled = focusRequested = false;
@@ -278,6 +302,58 @@ namespace SpatialModeling
             if (needsRelease) RequestEndNativeUi();
             objectsRequested = true;
             Notice = "Opening Model tools after native input cleanup";
+        }
+        void RememberEditor(Vector2 point)
+        {
+            if (!Ready() || Drawing == null || !Drawing.NativeStateCurrent) return;
+            editorPoint = point; editorPointSet = true;
+            editorInstance = (string)state["capture_instance"]; editorGeometry = (string)state["capture_geometry"];
+            editorGeneration = (long)state["capture_generation"];
+            editorIdentity = Drawing.Session.RequestIdentity?.ToString(Newtonsoft.Json.Formatting.None);
+        }
+        bool EditorCurrent() => editorPointSet && Ready() && Drawing.NativeStateCurrent
+            && editorInstance == (string)state["capture_instance"] && editorGeometry == (string)state["capture_geometry"]
+            && editorGeneration == (long)state["capture_generation"]
+            && editorIdentity == Drawing.Session.RequestIdentity?.ToString(Newtonsoft.Json.Formatting.None);
+        void RunShortcut(string id)
+        {
+            if (!PreviewShortcutCatalog.TryGet(id, out var shortcut) || !inputEnabled || !Ready() || !Drawing.NativeStateCurrent)
+            { Notice = "Focus Blender with fresh native state before using preview shortcuts"; return; }
+            if (shortcut.RequiresEditorContext && !EditorCurrent())
+            { Notice = "Click the intended Blender editor again; the previous editor point is unavailable"; return; }
+            if (id.StartsWith("mesh.", StringComparison.Ordinal) && (string)Drawing.NativeState["mode"] != "EDIT_MESH")
+            { Notice = "Mesh shortcuts require native mesh Edit Mode"; return; }
+            if (Drawing.NativeModalActive && id != "cancel" && id != "confirm")
+            { Notice = "Confirm or cancel the running Blender operation first"; return; }
+            var batch = new List<JObject>();
+            if (mouseHeld) { var up = At("button", lastPoint); up["button"] = mouseButton; up["action"] = "up"; batch.Add(up); }
+            var held = new List<string>(modifiers); held.Sort(StringComparer.Ordinal);
+            foreach (string key in held) batch.Add(new JObject { ["type"] = "key", ["key"] = key, ["action"] = "up" });
+            if (shortcut.RequiresEditorContext) batch.Add(At("pointer", editorPoint));
+            foreach (var e in shortcut.BuildEvents()) batch.Add(e);
+            foreach (string key in held) batch.Add(new JObject { ["type"] = "key", ["key"] = key, ["action"] = "down" });
+            if (events.Count + batch.Count > 64)
+            { FailTransport("Shortcut backlog cancelled; cleanup is required before focusing again"); return; }
+            pendingPointer = null; mouseHeld = false;
+            foreach (var e in batch) events.Enqueue(e);
+            Notice = shortcut.Label + (shortcut.OpensModal ? " · continue in Blender; Enter confirms, Escape cancels" : " · sent to the chosen native editor");
+        }
+        void OpenKeyboard(bool full)
+        {
+            modelToolsShown = objectsRequested = numbersShown = shortcutsShown = false;
+            Drawing.SetObjectToolsEnabled(false); Drawing.Numeric.Invalidate();
+            keyboardShown = true; SetKeyboardPage(full);
+        }
+        void SetKeyboardPage(bool full)
+        {
+            fullKeyboard = full;
+            foreach (var button in basicKeys) button.gameObject.SetActive(!full);
+            foreach (var button in fullKeys) button.gameObject.SetActive(full);
+        }
+        void OpenNumbers(string mode)
+        {
+            if (!Drawing.LoadNumeric(mode)) { Notice = Drawing.Numeric.Notice; return; }
+            numbersShown = true; modelToolsShown = keyboardShown = shortcutsShown = false; RefreshNumbers();
         }
         static JObject At(string type, Vector2 p) => new JObject { ["type"] = type, ["x"] = p.x, ["y"] = p.y };
         void FlushPointer() { if (pendingPointer != null) { Enqueue(pendingPointer); pendingPointer = null; } }
@@ -476,7 +552,7 @@ namespace SpatialModeling
             panel = MakePanel("P2.5 controls", new Vector2(0, -1120), new Vector2(1840, 540));
             AddButton(panel, "Focus Blender", 0, 0, FocusNativeUi);
             AddButton(panel, "Disable input", 1, 0, Suspend);
-            AddButton(panel, "Keyboard", 2, 0, () => { modelToolsShown = objectsRequested = false; Drawing.SetObjectToolsEnabled(false); keyboardShown = !keyboardShown; });
+            AddButton(panel, "Keyboard", 2, 0, () => { if (keyboardShown) keyboardShown = false; else OpenKeyboard(false); });
             AddButton(panel, "Mouse left", 3, 0, () => { ReleaseNative(); mouseButton = "left"; });
             AddButton(panel, "Mouse right", 4, 0, () => { ReleaseNative(); mouseButton = "right"; });
             AddButton(panel, "Mouse middle", 5, 0, () => { ReleaseNative(); mouseButton = "middle"; });
@@ -496,10 +572,15 @@ namespace SpatialModeling
             AddButton(panel, "New XZ sketch", 5, 2, () => Drawing.CreateSketch("XZ"));
             AddButton(panel, "New YZ sketch", 6, 2, () => Drawing.CreateSketch("YZ"));
             AddButton(panel, "Model tools", 0, 3, BeginObjects);
+            AddButton(panel, "Preview tools", 1, 3, () => {
+                if (!inputEnabled || !Ready()) { Notice = "Focus Blender, then click the intended native editor first"; return; }
+                numbersShown = modelToolsShown = keyboardShown = false; shortcutsShown = true;
+            });
+            AddButton(panel, "Full keyboard", 2, 3, () => OpenKeyboard(true));
             feedback = MakeText(panel, new Vector2(0, -155), new Vector2(1780, 160), "", 25);
             // A temporary keyboard overlays the lower preview while typing. It
             // must not be placed metres below the screen (possibly below floor).
-            keyboard = MakePanel("P2.5 keyboard", new Vector2(0, -200), new Vector2(1840, 560));
+            keyboard = MakePanel("P2.5 keyboard", new Vector2(0, -200), new Vector2(1840, 640));
             keyboard.localPosition += Vector3.back * 8f;
             string[] rows = { "1234567890-+=", "qwertyuiop[]", "asdfghjkl;'\\", "zxcvbnm,./`" };
             for (int row = 0; row < rows.Length; row++) for (int col = 0; col < rows[row].Length; col++)
@@ -525,13 +606,24 @@ namespace SpatialModeling
             string[] extraKeys = { "DECIMAL", "NUMPAD0", "NUMPAD1", "NUMPAD3", "NUMPAD7", "PAGEUP", "PAGEDOWN" };
             for (int i = 0; i < extraKeys.Length; i++)
             { string key = extraKeys[i]; AddButton(keyboard, key, i + 5, 5, () => Key(key), 145, 12); }
-            keyboard.gameObject.SetActive(false);
+            AddButton(keyboard, "More keys", 0, 6, () => SetKeyboardPage(true), 145, 12);
+            basicKeys.AddRange(keyboard.GetComponentsInChildren<Button>(true));
+            for (int i = 0; i < PreviewShortcutCatalog.FullKeyboardKeys.Count; i++)
+            {
+                string key = PreviewShortcutCatalog.FullKeyboardKeys[i];
+                var button = AddButton(keyboard, "Full " + key, i % 7, i / 7, () => Key(key));
+                button.GetComponentInChildren<Text>().text = key; fullKeys.Add(button);
+            }
+            fullKeys.Add(AddButton(keyboard, "Letters", 0, 5, () => SetKeyboardPage(false)));
+            fullKeys.Add(AddButton(keyboard, "Close full keyboard", 1, 5, () => keyboardShown = false));
+            SetKeyboardPage(false); keyboard.gameObject.SetActive(false);
             BuildModelTools();
+            BuildCommonControls();
         }
 
         void BuildModelTools()
         {
-            modelToolsPanel = MakePanel("P2.5 model tools", new Vector2(0, -200), new Vector2(1840, 560));
+            modelToolsPanel = MakePanel("P2.5 model tools", new Vector2(0, -200), new Vector2(1840, 640));
             modelToolsPanel.localPosition += Vector3.back * 8f;
             AddButton(modelToolsPanel, "Previous object", 0, 0, () => Drawing.ObjectTools.SelectRelative(-1));
             AddButton(modelToolsPanel, "Next object", 1, 0, () => Drawing.ObjectTools.SelectRelative(1));
@@ -542,6 +634,10 @@ namespace SpatialModeling
             ObjectButton("Add cube", "add.cube", 0, 1);
             ObjectButton("Add sphere", "add.sphere", 1, 1);
             ObjectButton("Add cylinder", "add.cylinder", 2, 1);
+            AddButton(modelToolsPanel, "Exact move", 3, 1, () => OpenNumbers("move"));
+            AddButton(modelToolsPanel, "Set position", 4, 1, () => OpenNumbers("position"));
+            AddButton(modelToolsPanel, "Set rotation", 5, 1, () => OpenNumbers("rotation"));
+            AddButton(modelToolsPanel, "Scale factors", 6, 1, () => OpenNumbers("scale.by"));
             for (int axis = 0; axis < 3; axis++)
             {
                 string name = "XYZ"[axis].ToString(), id = name.ToLowerInvariant();
@@ -557,8 +653,54 @@ namespace SpatialModeling
             AddButton(modelToolsPanel, "Model Redo", 4, 4, () => Drawing.Redo());
             AddButton(modelToolsPanel, "Model Save", 5, 4, () => Drawing.Save());
             AddButton(modelToolsPanel, "Cancel pending", 6, 4, () => Drawing.Cancel());
-            objectTargetText = MakeText(modelToolsPanel, new Vector2(0, -202), new Vector2(1780, 100), "", 25);
+            AddButton(modelToolsPanel, "Set scale", 0, 5, () => OpenNumbers("scale.to"));
+            AddButton(modelToolsPanel, "Cube dimensions", 1, 5, () => OpenNumbers("add.cube"));
+            AddButton(modelToolsPanel, "Sphere dimensions", 2, 5, () => OpenNumbers("add.sphere"));
+            AddButton(modelToolsPanel, "Cylinder dimensions", 3, 5, () => OpenNumbers("add.cylinder"));
+            objectTargetText = MakeText(modelToolsPanel, new Vector2(0, -240), new Vector2(1780, 96), "", 25);
             RefreshObjectLabels(); modelToolsPanel.gameObject.SetActive(false);
+        }
+        void BuildCommonControls()
+        {
+            shortcutPanel = MakePanel("P2.5 preview tools", new Vector2(0, -200), new Vector2(1840, 640));
+            shortcutPanel.localPosition += Vector3.back * 8f;
+            AddButton(shortcutPanel, "Previous tools", 0, 0, () => SetShortcutPage((shortcutPage + 1) % 2));
+            AddButton(shortcutPanel, "Next tools", 1, 0, () => SetShortcutPage((shortcutPage + 1) % 2));
+            AddButton(shortcutPanel, "Close preview tools", 6, 0, () => shortcutsShown = false);
+            for (int i = 0; i < PreviewShortcutCatalog.All.Count; i++)
+            {
+                var item = PreviewShortcutCatalog.All[i];
+                shortcutButtons.Add(AddButton(shortcutPanel, "Shortcut " + item.Id, i % 7, 1 + i / 7 % 3, () => RunShortcut(item.Id)));
+                shortcutButtons[i].GetComponentInChildren<Text>().text = item.Label;
+            }
+            AddButton(shortcutPanel, "Preview Escape", 5, 4, () => RunShortcut("cancel"));
+            AddButton(shortcutPanel, "Preview Enter", 6, 4, () => RunShortcut("confirm"));
+            shortcutFeedback = MakeText(shortcutPanel, new Vector2(0, -230), new Vector2(1780, 120), "", 25);
+            SetShortcutPage(0); shortcutPanel.gameObject.SetActive(false);
+            numberPanel = MakePanel("P2.5 exact numbers", new Vector2(0, -200), new Vector2(1840, 640));
+            numberPanel.localPosition += Vector3.back * 8f;
+            for (int i = 0; i < 3; i++)
+            { int axis = i; numberFields.Add(AddButton(numberPanel, "Number " + "XYZ"[i], i, 0, () => Drawing.Numeric.SelectAxis(axis), 580, 3)); }
+            string[] keys = { "7", "8", "9", "4", "5", "6", "1", "2", "3", "0", ".", "sign", "back", "clear" };
+            for (int i = 0; i < keys.Length; i++)
+            { string key = keys[i]; AddButton(numberPanel, "Number " + key, i % 3, 1 + i / 3, () => { Drawing.Numeric.Enter(key); RefreshNumbers(); }); }
+            AddButton(numberPanel, "Apply numbers", 4, 1, () => { Drawing.ApplyNumeric(); RefreshNumbers(); });
+            AddButton(numberPanel, "Reload numbers", 4, 2, () => { Drawing.LoadNumeric(Drawing.Numeric.Mode); RefreshNumbers(); });
+            AddButton(numberPanel, "Close numbers", 6, 3, () => { numbersShown = false; modelToolsShown = true; Drawing.Numeric.Invalidate(); });
+            numberFeedback = MakeText(numberPanel, new Vector2(0, -240), new Vector2(1780, 100), "", 25);
+            numberPanel.gameObject.SetActive(false);
+        }
+        void SetShortcutPage(int page)
+        {
+            shortcutPage = page;
+            for (int i = 0; i < shortcutButtons.Count; i++) shortcutButtons[i].gameObject.SetActive(i / 21 == page);
+        }
+        void RefreshNumbers()
+        {
+            var values = Drawing.Numeric;
+            bool current = values.IsCurrent;
+            for (int i = 0; i < numberFields.Count; i++) numberFields[i].GetComponentInChildren<Text>().text = (values.Axis == i ? "> " : "") + "XYZ"[i] + ": " + values.Value(i);
+            if (numberFeedback != null) numberFeedback.text = values.Mode + " · " + values.Unit + "\n" + (current ? "Local values · Apply explicitly changes Blender" : "Draft needs reload") + "\n" + values.Notice;
         }
         void ObjectButton(string label, string action, int col, int row) =>
             AddButton(modelToolsPanel, label, col, row, () => Drawing.ApplyObjectAction(action));

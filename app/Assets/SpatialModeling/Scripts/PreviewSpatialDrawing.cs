@@ -14,6 +14,8 @@ namespace SpatialModeling
         public bool ObjectToolsEnabled { get; private set; }
         NativeObjectTools objectTools;
         public NativeObjectTools ObjectTools => objectTools ?? (objectTools = new NativeObjectTools(Session));
+        NativeNumericTools numeric;
+        public NativeNumericTools Numeric => numeric ?? (numeric = new NativeNumericTools(Session, ObjectTools));
         public bool NativeUiTransitionPending => beginId != null || endId != null || wantNativeUi;
         public JObject NativeState { get; private set; } = new JObject();
         public bool IsNativeUiOwned => NativeStateCurrent && (bool?)NativeState["input_allowed"] == true
@@ -79,6 +81,7 @@ namespace SpatialModeling
         void OnDestroy()
         {
             objectTools?.Dispose();
+            numeric?.Dispose();
             if (scene != null) scene.HostEventReceived -= Receive;
             ClearSolved();
             if (solvedMaterial != null) Destroy(solvedMaterial);
@@ -134,6 +137,7 @@ namespace SpatialModeling
                 && Session.Ready && Time.unscaledTime >= nextQuery)
             { scene.Link?.Send("preview.state.query", new JObject()); nextQuery = Time.unscaledTime + 0.4f; }
             if (objectRequestPending && !ObjectContextCurrent()) Session.Cancel();
+            if (ObjectToolsEnabled && !ObjectContextCurrent()) numeric?.Invalidate();
             if (Session.Busy && Time.unscaledTime - pendingAt > 10f) Session.Timeout();
             if ((beginId != null || endId != null) && Time.unscaledTime - pendingAt > 5f)
             {
@@ -153,6 +157,7 @@ namespace SpatialModeling
             {
                 Session.Disconnect(e.Text ?? "Native scene unavailable");
                 objectTools?.Reset(); ObjectToolsEnabled = objectRequestPending = false;
+                numeric?.Invalidate();
                 NativeState = new JObject(); stateAt = float.NegativeInfinity;
                 target.Reset();
                 beginId = endId = null; wantNativeUi = false; CancelLocal(); return;
@@ -205,6 +210,7 @@ namespace SpatialModeling
                 if ((string)p[name] != (string)identity[name])
                 {
                     if (objectRequestPending) Session.Cancel();
+                    numeric?.Invalidate();
                     NativeState = new JObject(); stateAt = float.NegativeInfinity;
                     target.Reset();
                     CancelLocal(); status = "Native tool state belongs to another session/document; preview input disabled"; return;
@@ -215,6 +221,7 @@ namespace SpatialModeling
             string after = (string)p["sketch_id"] + "/" + (string)p["native_tool"];
             if (before != after) { CancelLocal(); manualTool = ""; }
             if (objectRequestPending && !ObjectContextCurrent()) Session.Cancel();
+            if (!ObjectContextCurrent()) numeric?.Invalidate();
         }
 
         bool ObjectContextCurrent() => scene != null && scene.IsCurrent && scene.DisplayPlacementReady
@@ -242,6 +249,21 @@ namespace SpatialModeling
             if (!ObjectTools.Stage(action) || !Session.Apply()) return false;
             objectRequestPending = true; pendingAt = Time.unscaledTime;
             status = "Waiting for Blender to confirm the model edit";
+            return true;
+        }
+        public bool LoadNumeric(string mode)
+        {
+            if (!ObjectToolsEnabled || !ObjectContextCurrent()) { status = "Open Model tools with current native Object Mode first"; return false; }
+            return Numeric.Load(mode);
+        }
+        public bool ApplyNumeric()
+        {
+            if (!ObjectToolsEnabled || !ObjectContextCurrent() || !Session.CanEdit || Session.Busy || Session.OutcomeUnknown)
+            { numeric?.Invalidate(); status = "Wait for current native Object Mode and reload the numeric draft"; return false; }
+            if (!Numeric.Stage() || !Session.Apply()) { status = Numeric.Notice; return false; }
+            Numeric.Invalidate("Values submitted; wait for the native receipt, then reload");
+            objectRequestPending = true; pendingAt = Time.unscaledTime;
+            status = "Waiting for Blender to confirm the exact numeric edit";
             return true;
         }
 

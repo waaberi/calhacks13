@@ -29,10 +29,13 @@ public static class P25Checks
         RunTransport(message => Debug.Log(message));
         RunInputProtocol(message => Debug.Log(message));
         P25ObjectChecks.Run(message => Debug.Log(message));
+        P25ShortcutChecks.Run(message => Debug.Log(message));
+        P25NumericChecks.Run(message => Debug.Log(message));
         RunTargets(message => Debug.Log(message));
         RunSpatial(message => Debug.Log(message));
         RunPreviewOcclusion();
         P25ObjectUiChecks.Run();
+        P25CommonUiChecks.Run();
     }
 
     public static void RunCumulativeEditor()
