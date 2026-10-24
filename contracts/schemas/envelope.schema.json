@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "envelope.schema.json",
+  "title": "Envelope",
+  "description": "Every message on the host connection. Each <type>.schema.json refines `type` and `payload`. The $defs are shared by the other schemas.",
+  "type": "object",
+  "required": ["v", "type", "id", "payload"],
+  "properties": {
+    "v": { "const": 1 },
+    "type": { "type": "string", "pattern": "^[a-z]+(\\.[a-z_]+)?$" },
+    "id": { "$ref": "#/$defs/uuid" },
+    "re": { "$ref": "#/$defs/uuid" },
+    "payload": { "type": "object" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "uuid": {
+      "description": "UUID as 32 lowercase hex digits (Python uuid4().hex, C# Guid.ToString(\"N\")).",
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "revision": {
+      "description": "Document revision: the number of the latest accepted change in this open epoch.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "timestamp": {
+      "description": "Unix time in milliseconds.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "text": { "type": "string", "maxLength": 1024 },
+    "name": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "role": { "enum": ["vr", "blender-client", "host"] },
+    "app": {
+      "description": "The program on one end of the connection.",
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.-]+)?$" }
+      },
+      "additionalProperties": false
+    },
+    "actor": {
+      "description": "A participant: one connection, or the host's own Blender.",
+      "type": "object",
+      "required": ["actor_id", "name", "role"],
+      "properties": {
+        "actor_id": { "$ref": "#/$defs/uuid" },
+        "name": { "$ref": "#/$defs/name" },
+        "role": { "$ref": "#/$defs/role" }
+      },
+      "additionalProperties": false
+    },
+    "units": {
+      "description": "The Blender scene's unit settings, for display only. Numbers on the wire are always meters and radians.",
+      "type": "object",
+      "required": ["system", "length_unit", "rotation_unit", "scale_length"],
+      "properties": {
+        "system": { "enum": ["NONE", "METRIC", "IMPERIAL"] },
+        "length_unit": {
+          "enum": ["ADAPTIVE", "KILOMETERS", "METERS", "CENTIMETERS", "MILLIMETERS", "MICROMETERS", "MILES", "FEET", "INCHES", "THOU"]
+        },
+        "rotation_unit": { "enum": ["DEGREES", "RADIANS"] },
+        "scale_length": { "type": "number", "exclusiveMinimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "document": {
+      "description": "The document open in the host Blender.",
+      "type": "object",
+      "required": ["id", "open_epoch", "name", "revision", "dirty", "units"],
+      "properties": {
+        "id": { "$ref": "#/$defs/uuid" },
+        "open_epoch": { "$ref": "#/$defs/uuid" },
+        "name": { "description": "File name, or null if never saved.", "type": ["string", "null"], "maxLength": 256 },
+        "revision": { "$ref": "#/$defs/revision" },
+        "dirty": { "description": "Unsaved changes exist.", "type": "boolean" },
+        "units": { "$ref": "#/$defs/units" }
+      },
+      "additionalProperties": false
+    },
+    "error_code": {
+      "description": "The first six are transport-level and sent by server.py; the rest come from request handling.",
+      "enum": [
+        "invalid_message",
+        "unsupported_version",
+        "message_too_large",
+        "unknown_type",
+        "busy",
+        "internal_error",
+        "permission_denied",
+        "wrong_session",
+        "wrong_document",
+        "not_found",
+        "stale_revision",
+        "lease_conflict",
+        "duplicate_request",
+        "solver_conflict",
+        "failed"
+      ]
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "$ref": "#/$defs/error_code" },
+        "message": { "description": "Short, human-readable; safe to show to the user.", "$ref": "#/$defs/text" },
+        "details": { "description": "Code-specific data, see contracts/README.md.", "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "request": {
+      "description": "Identity fields every client request repeats, copied from `welcome`. Used with unevaluatedProperties: false.",
+      "type": "object",
+      "required": ["session_id", "host_epoch", "document_id", "open_epoch", "actor_id"],
+      "properties": {
+        "session_id": { "$ref": "#/$defs/uuid" },
+        "host_epoch": { "$ref": "#/$defs/uuid" },
+        "document_id": { "$ref": "#/$defs/uuid" },
+        "open_epoch": { "$ref": "#/$defs/uuid" },
+        "actor_id": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "vec2": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+    "vec3": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+    "quat": {
+      "description": "Rotation quaternion in Blender's order: [w, x, y, z].",
+      "type": "array",
+      "items": { "type": "number", "minimum": -1.000001, "maximum": 1.000001 },
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "color": {
+      "description": "Linear RGBA, 0 to 1.",
+      "type": "array",
+      "items": { "type": "number", "minimum": 0 },
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "transform": {
+      "description": "World space: location in meters, rotation quaternion, scale factors.",
+      "type": "object",
+      "required": ["location", "rotation", "scale"],
+      "properties": {
+        "location": { "$ref": "#/$defs/vec3" },
+        "rotation": { "$ref": "#/$defs/quat" },
+        "scale": { "$ref": "#/$defs/vec3" }
+      },
+      "additionalProperties": false
+    },
+    "coordinate": { "description": "Meters, bounded for command arguments.", "type": "number", "minimum": -1000, "maximum": 1000 },
+    "length": { "description": "Positive meters, bounded for command arguments.", "type": "number", "minimum": 0.000001, "maximum": 1000 },
+    "factor": { "description": "Scale factor, bounded for command arguments.", "type": "number", "minimum": 0.001, "maximum": 1000 },
+    "coordinate2": { "type": "array", "items": { "$ref": "#/$defs/coordinate" }, "minItems": 2, "maxItems": 2 },
+    "coordinate3": { "type": "array", "items": { "$ref": "#/$defs/coordinate" }, "minItems": 3, "maxItems": 3 },
+    "length3": { "type": "array", "items": { "$ref": "#/$defs/length" }, "minItems": 3, "maxItems": 3 },
+    "factor3": { "type": "array", "items": { "$ref": "#/$defs/factor" }, "minItems": 3, "maxItems": 3 },
+    "local_id": {
+      "description": "ID of a sketch entity or constraint, unique within its sketch and stable across Undo/Redo and save/reopen.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,64}$"
+    },
+    "solver": {
+      "description": "CAD solver state of a sketch. dof is the remaining degrees of freedom, null if the solver can't tell.",
+      "type": "object",
+      "required": ["status", "dof"],
+      "properties": {
+        "status": { "enum": ["free", "fully_constrained", "conflicting"] },
+        "dof": { "type": ["integer", "null"], "minimum": 0 }
+      },
+      "additionalProperties": false
+    }
+  }
+}

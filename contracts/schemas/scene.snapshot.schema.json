@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "scene.snapshot.schema.json",
+  "title": "scene.snapshot",
+  "description": "Host to client. The complete scene; replaces everything the client had. Sent after welcome and whenever the host can't describe a change as an update.",
+  "$ref": "envelope.schema.json",
+  "properties": {
+    "type": { "const": "scene.snapshot" },
+    "payload": {
+      "type": "object",
+      "required": ["document", "objects", "sketches"],
+      "properties": {
+        "document": { "$ref": "envelope.schema.json#/$defs/document" },
+        "objects": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/object", "required": ["mesh"] }
+        },
+        "sketches": { "type": "array", "items": { "$ref": "#/$defs/sketch" } }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "object": {
+      "description": "One Blender object. In scene.update, `mesh` may be left out when the mesh did not change.",
+      "type": "object",
+      "required": ["id", "name", "type", "parent", "generation", "visible", "transform", "color"],
+      "properties": {
+        "id": { "description": "Stable ID from the object's `spatial_modeling_id` custom property.", "$ref": "envelope.schema.json#/$defs/uuid" },
+        "name": { "$ref": "envelope.schema.json#/$defs/name" },
+        "type": { "description": "Blender object type, for example MESH, CURVE, FONT, EMPTY, CAMERA, LIGHT.", "type": "string", "pattern": "^[A-Z_]{1,32}$" },
+        "parent": { "anyOf": [{ "$ref": "envelope.schema.json#/$defs/uuid" }, { "type": "null" }] },
+        "generation": { "description": "Document revision at which this object last changed.", "$ref": "envelope.schema.json#/$defs/revision" },
+        "visible": { "type": "boolean" },
+        "transform": { "$ref": "envelope.schema.json#/$defs/transform" },
+        "color": {
+          "description": "Base color of the first material, or null if it has none.",
+          "anyOf": [{ "$ref": "envelope.schema.json#/$defs/color" }, { "type": "null" }]
+        },
+        "mesh": { "anyOf": [{ "$ref": "#/$defs/mesh" }, { "type": "null" }] }
+      },
+      "additionalProperties": false
+    },
+    "mesh": {
+      "description": "Evaluated, triangulated mesh in the object's local space, meters. Flat arrays: 3 numbers per vertex in positions and normals, 3 vertex indices per triangle, counter-clockwise seen from the front (Blender's winding).",
+      "type": "object",
+      "required": ["positions", "normals", "indices"],
+      "properties": {
+        "positions": { "type": "array", "items": { "type": "number" } },
+        "normals": { "type": "array", "items": { "type": "number" } },
+        "indices": { "type": "array", "items": { "type": "integer", "minimum": 0 } }
+      },
+      "additionalProperties": false
+    },
+    "sketch": {
+      "description": "A CAD Sketcher sketch: a plane with 2D entities and constraints. Kinds outside this contract are left out.",
+      "type": "object",
+      "required": ["id", "name", "generation", "plane", "solver", "entities", "constraints"],
+      "properties": {
+        "id": { "$ref": "envelope.schema.json#/$defs/uuid" },
+        "name": { "$ref": "envelope.schema.json#/$defs/name" },
+        "generation": { "$ref": "envelope.schema.json#/$defs/revision" },
+        "plane": {
+          "description": "World placement of the sketch plane. Sketch coordinates [u, v] are meters along the plane's local X and Y.",
+          "type": "object",
+          "required": ["location", "rotation"],
+          "properties": {
+            "location": { "$ref": "envelope.schema.json#/$defs/vec3" },
+            "rotation": { "$ref": "envelope.schema.json#/$defs/quat" }
+          },
+          "additionalProperties": false
+        },
+        "solver": { "$ref": "envelope.schema.json#/$defs/solver" },
+        "entities": { "type": "array", "items": { "$ref": "#/$defs/sketch_entity" } },
+        "constraints": { "type": "array", "items": { "$ref": "#/$defs/sketch_constraint" } }
+      },
+      "additionalProperties": false
+    },
+    "sketch_entity": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["id", "kind", "at"],
+          "properties": {
+            "id": { "$ref": "envelope.schema.json#/$defs/local_id" },
+            "kind": { "const": "point" },
+            "at": { "$ref": "envelope.schema.json#/$defs/vec2" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["id", "kind", "points"],
+          "properties": {
+            "id": { "$ref": "envelope.schema.json#/$defs/local_id" },
+            "kind": { "const": "line" },
+            "points": { "type": "array", "items": { "$ref": "envelope.schema.json#/$defs/local_id" }, "minItems": 2, "maxItems": 2 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["id", "kind", "center", "radius"],
+          "properties": {
+            "id": { "$ref": "envelope.schema.json#/$defs/local_id" },
+            "kind": { "const": "circle" },
+            "center": { "$ref": "envelope.schema.json#/$defs/local_id" },
+            "radius": { "type": "number", "exclusiveMinimum": 0 }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "constraint_kind": { "enum": ["coincident", "horizontal", "vertical", "distance", "angle", "diameter", "fixed"] },
+    "constraint_value_rule": {
+      "description": "distance, angle and diameter carry a value (meters or radians); the other kinds don't.",
+      "if": { "properties": { "kind": { "enum": ["distance", "angle", "diameter"] } }, "required": ["kind"] },
+      "then": { "required": ["value"] },
+      "else": { "not": { "required": ["value"] } }
+    },
+    "sketch_constraint": {
+      "type": "object",
+      "required": ["id", "kind", "entities"],
+      "properties": {
+        "id": { "$ref": "envelope.schema.json#/$defs/local_id" },
+        "kind": { "$ref": "#/$defs/constraint_kind" },
+        "entities": { "type": "array", "items": { "$ref": "envelope.schema.json#/$defs/local_id" }, "minItems": 1, "maxItems": 2 },
+        "value": { "type": "number" }
+      },
+      "$ref": "#/$defs/constraint_value_rule",
+      "additionalProperties": false
+    }
+  }
+}

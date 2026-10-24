@@ -1,0 +1,235 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "command.schema.json",
+  "title": "command",
+  "description": "Client to host. One native edit request; the envelope id is the request ID. The host answers with exactly one result.",
+  "$ref": "envelope.schema.json",
+  "properties": {
+    "type": { "const": "command" },
+    "payload": {
+      "type": "object",
+      "$ref": "envelope.schema.json#/$defs/request",
+      "required": ["base_revision", "source", "op", "args"],
+      "properties": {
+        "base_revision": { "description": "The latest document revision this client had applied.", "$ref": "envelope.schema.json#/$defs/revision" },
+        "source": { "description": "How the user asked for it, shown in receipts and activity.", "enum": ["ui", "voice"] },
+        "lease": { "description": "lease_id of a lease this actor holds that covers the target. Leave out to let the host check conflicts for this one command.", "$ref": "envelope.schema.json#/$defs/uuid" },
+        "op": { "$ref": "#/$defs/op" },
+        "target": { "$ref": "#/$defs/target" },
+        "args": { "type": "object" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "op": { "enum": ["object.add", "object.select", "history.undo", "history.redo", "document.save", "sketch.create"] } } },
+          "then": { "not": { "required": ["target"] } },
+          "else": { "required": ["target"] }
+        },
+        {
+          "if": { "properties": { "op": { "enum": ["object.delete", "history.undo", "history.redo", "document.save"] } } },
+          "then": { "properties": { "args": { "type": "object", "maxProperties": 0 } } }
+        },
+        { "if": { "properties": { "op": { "const": "object.add" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/add" } } } },
+        { "if": { "properties": { "op": { "const": "object.select" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/select" } } } },
+        { "if": { "properties": { "op": { "const": "object.move" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/move" } } } },
+        { "if": { "properties": { "op": { "const": "object.rotate" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/rotate" } } } },
+        { "if": { "properties": { "op": { "const": "object.scale" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/scale" } } } },
+        { "if": { "properties": { "op": { "const": "sketch.create" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/sketch_create" } } } },
+        { "if": { "properties": { "op": { "const": "sketch.add_line" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/sketch_line" } } } },
+        { "if": { "properties": { "op": { "const": "sketch.add_rectangle" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/sketch_rectangle" } } } },
+        { "if": { "properties": { "op": { "const": "sketch.add_circle" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/sketch_circle" } } } },
+        { "if": { "properties": { "op": { "const": "sketch.constrain" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/sketch_constrain" } } } },
+        { "if": { "properties": { "op": { "const": "sketch.set_dimension" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/sketch_set_dimension" } } } }
+      ],
+      "unevaluatedProperties": false
+    }
+  },
+  "$defs": {
+    "op": {
+      "enum": [
+        "object.add",
+        "object.select",
+        "object.move",
+        "object.rotate",
+        "object.scale",
+        "object.delete",
+        "history.undo",
+        "history.redo",
+        "document.save",
+        "sketch.create",
+        "sketch.add_line",
+        "sketch.add_rectangle",
+        "sketch.add_circle",
+        "sketch.constrain",
+        "sketch.set_dimension"
+      ]
+    },
+    "target": {
+      "description": "The object or sketch to change, with the generation the client last saw.",
+      "type": "object",
+      "required": ["id", "generation"],
+      "properties": {
+        "id": { "$ref": "envelope.schema.json#/$defs/uuid" },
+        "generation": { "$ref": "envelope.schema.json#/$defs/revision" }
+      },
+      "additionalProperties": false
+    },
+    "add": {
+      "description": "Add a primitive. location: world meters. dimensions: bounding box size in meters (a cylinder's diameter is X and Y, its depth Z).",
+      "type": "object",
+      "required": ["primitive", "location", "dimensions"],
+      "properties": {
+        "primitive": { "enum": ["cube", "sphere", "cylinder"] },
+        "location": { "$ref": "envelope.schema.json#/$defs/coordinate3" },
+        "dimensions": { "$ref": "envelope.schema.json#/$defs/length3" }
+      },
+      "additionalProperties": false
+    },
+    "select": {
+      "description": "Replace the host Blender's selection. The first id becomes the active object; [] deselects all.",
+      "type": "object",
+      "required": ["ids"],
+      "properties": {
+        "ids": { "type": "array", "items": { "$ref": "envelope.schema.json#/$defs/uuid" }, "uniqueItems": true, "maxItems": 256 }
+      },
+      "additionalProperties": false
+    },
+    "move": {
+      "description": "by: world offset in meters. to: new world location in meters.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["by"],
+          "properties": { "by": { "$ref": "envelope.schema.json#/$defs/coordinate3" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["to"],
+          "properties": { "to": { "$ref": "envelope.schema.json#/$defs/coordinate3" } },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "rotate": {
+      "description": "by: turn about a world axis through the object's origin, angle in radians. to: new world rotation quaternion [w, x, y, z].",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["by"],
+          "properties": {
+            "by": {
+              "type": "object",
+              "required": ["axis", "angle"],
+              "properties": {
+                "axis": { "enum": ["X", "Y", "Z"] },
+                "angle": { "type": "number", "minimum": -6.283186, "maximum": 6.283186 }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["to"],
+          "properties": { "to": { "$ref": "envelope.schema.json#/$defs/quat" } },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "scale": {
+      "description": "by: multiply the object's scale along its own axes. to: new scale factors.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["by"],
+          "properties": { "by": { "$ref": "envelope.schema.json#/$defs/factor3" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["to"],
+          "properties": { "to": { "$ref": "envelope.schema.json#/$defs/factor3" } },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "sketch_create": {
+      "description": "New sketch on a world plane through the origin.",
+      "type": "object",
+      "required": ["plane"],
+      "properties": { "plane": { "enum": ["XY", "XZ", "YZ"] } },
+      "additionalProperties": false
+    },
+    "sketch_line": {
+      "description": "Two new points joined by a line. Sketch coordinates in meters.",
+      "type": "object",
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "$ref": "envelope.schema.json#/$defs/coordinate2" },
+        "end": { "$ref": "envelope.schema.json#/$defs/coordinate2" }
+      },
+      "additionalProperties": false
+    },
+    "sketch_rectangle": {
+      "description": "Four lines sharing four corner points, with horizontal and vertical constraints.",
+      "type": "object",
+      "required": ["corner", "opposite"],
+      "properties": {
+        "corner": { "$ref": "envelope.schema.json#/$defs/coordinate2" },
+        "opposite": { "$ref": "envelope.schema.json#/$defs/coordinate2" }
+      },
+      "additionalProperties": false
+    },
+    "sketch_circle": {
+      "description": "A new center point and a circle.",
+      "type": "object",
+      "required": ["center", "radius"],
+      "properties": {
+        "center": { "$ref": "envelope.schema.json#/$defs/coordinate2" },
+        "radius": { "$ref": "envelope.schema.json#/$defs/length" }
+      },
+      "additionalProperties": false
+    },
+    "sketch_constrain": {
+      "description": "Add a constraint between entities of the target sketch. value: meters for distance and diameter, radians for angle.",
+      "type": "object",
+      "required": ["kind", "entities"],
+      "properties": {
+        "kind": { "$ref": "scene.snapshot.schema.json#/$defs/constraint_kind" },
+        "entities": { "type": "array", "items": { "$ref": "envelope.schema.json#/$defs/local_id" }, "minItems": 1, "maxItems": 2, "uniqueItems": true },
+        "value": { "type": "number" }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        { "$ref": "scene.snapshot.schema.json#/$defs/constraint_value_rule" },
+        {
+          "if": { "properties": { "kind": { "enum": ["distance", "diameter"] } }, "required": ["kind"] },
+          "then": { "properties": { "value": { "$ref": "envelope.schema.json#/$defs/length" } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "angle" } }, "required": ["kind"] },
+          "then": { "properties": { "value": { "type": "number", "exclusiveMinimum": 0, "maximum": 3.141593 } } }
+        },
+        {
+          "if": { "properties": { "kind": { "enum": ["coincident", "angle"] } }, "required": ["kind"] },
+          "then": { "properties": { "entities": { "minItems": 2 } } }
+        },
+        {
+          "if": { "properties": { "kind": { "enum": ["diameter", "fixed"] } }, "required": ["kind"] },
+          "then": { "properties": { "entities": { "maxItems": 1 } } }
+        }
+      ]
+    },
+    "sketch_set_dimension": {
+      "description": "Change the value of an existing distance, angle or diameter constraint. The host checks the range for the constraint's kind.",
+      "type": "object",
+      "required": ["constraint", "value"],
+      "properties": {
+        "constraint": { "$ref": "envelope.schema.json#/$defs/local_id" },
+        "value": { "type": "number", "exclusiveMinimum": 0, "maximum": 1000 }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "session.update.schema.json",
+  "title": "session.update",
+  "description": "Host to every client. The complete list of participants and leases; replaces the previous one. Sent after welcome and whenever either changes. Never changes the document revision.",
+  "$ref": "envelope.schema.json",
+  "properties": {
+    "type": { "const": "session.update" },
+    "payload": {
+      "type": "object",
+      "required": ["participants", "leases"],
+      "properties": {
+        "participants": { "type": "array", "items": { "$ref": "envelope.schema.json#/$defs/actor" } },
+        "leases": { "type": "array", "items": { "$ref": "#/$defs/lease" } }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "lease": {
+      "description": "Temporary permission for one actor to change the whole document (exclusive) or the listed objects and sketches (shared).",
+      "type": "object",
+      "required": ["lease_id", "mode", "owner", "targets", "acquired_at"],
+      "properties": {
+        "lease_id": { "$ref": "envelope.schema.json#/$defs/uuid" },
+        "mode": { "enum": ["exclusive", "shared"] },
+        "owner": { "$ref": "envelope.schema.json#/$defs/actor" },
+        "targets": { "type": "array", "items": { "$ref": "envelope.schema.json#/$defs/uuid" }, "uniqueItems": true },
+        "acquired_at": { "$ref": "envelope.schema.json#/$defs/timestamp" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

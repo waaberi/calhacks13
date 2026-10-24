@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lease.granted.schema.json",
+  "title": "lease.granted",
+  "description": "Host to client, answers lease.acquire. targets may include more than was asked for, for example other objects that share the mesh.",
+  "$ref": "envelope.schema.json",
+  "required": ["re"],
+  "properties": {
+    "type": { "const": "lease.granted" },
+    "payload": {
+      "type": "object",
+      "required": ["lease"],
+      "properties": { "lease": { "$ref": "session.update.schema.json#/$defs/lease" } },
+      "additionalProperties": false
+    }
+  }
+}

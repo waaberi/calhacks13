@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "activity.schema.json",
+  "title": "activity",
+  "description": "Host to every other client. The receipt of a command another participant had applied.",
+  "$ref": "envelope.schema.json",
+  "properties": {
+    "type": { "const": "activity" },
+    "payload": {
+      "$ref": "result.schema.json#/$defs/receipt",
+      "properties": { "outcome": { "const": "applied" } }
+    }
+  }
+}

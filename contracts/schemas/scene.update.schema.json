@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "scene.update.schema.json",
+  "title": "scene.update",
+  "description": "Host to client. Changes since the previous snapshot or update, in order. objects and sketches are full records that replace the ones with the same id; removed lists deleted object and sketch ids.",
+  "$ref": "envelope.schema.json",
+  "properties": {
+    "type": { "const": "scene.update" },
+    "payload": {
+      "type": "object",
+      "required": ["document", "objects", "sketches", "removed"],
+      "properties": {
+        "document": { "$ref": "envelope.schema.json#/$defs/document" },
+        "objects": { "type": "array", "items": { "$ref": "scene.snapshot.schema.json#/$defs/object" } },
+        "sketches": { "type": "array", "items": { "$ref": "scene.snapshot.schema.json#/$defs/sketch" } },
+        "removed": { "type": "array", "items": { "$ref": "envelope.schema.json#/$defs/uuid" }, "uniqueItems": true }
+      },
+      "additionalProperties": false
+    }
+  }
+}

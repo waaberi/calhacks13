@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pong.schema.json",
+  "title": "pong",
+  "description": "Either way. Answers a ping; `re` is the ping's id.",
+  "$ref": "envelope.schema.json",
+  "required": ["re"],
+  "properties": {
+    "type": { "const": "pong" },
+    "payload": { "type": "object", "additionalProperties": false }
+  }
+}
