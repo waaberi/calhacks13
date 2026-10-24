@@ -4,15 +4,15 @@ Edit a real Blender file in VR. A Quest headset shows your scene on a table in y
 
 Built at CalHacks 13 by Waaberi Ibrahim, Lee Jae-yeon, Jihyeon and Talia.
 
-## The demo
+## What it's like
 
-1. Open a part in Blender on the host PC: a 20 mm cube and a 10 × 30 mm cylinder.
-2. Put on the Quest and place the table. The parts appear on it at their real size.
-3. Move the cube in desktop Blender. It moves in the headset too.
-4. In VR, move the cube 10 mm along X and turn it 90° about Z. Blender's fields show the new values, and Ctrl+Z in Blender undoes it.
-5. Sketch a 100 × 60 mm rectangle and change its width to 120 mm. The constraint solver keeps it 60 mm tall.
-6. With nothing selected, say "rotate this object 90 degrees". The app asks which object, you point at one, and the command finishes.
-7. A teammate edits a different object from their own Blender. If you both grab the same object, the second edit is refused with a message saying who has it.
+You're in the headset, standing at a table you dropped into your living room. Your teammate is at their desk across the room, in plain Blender, working on the same file.
+
+They add a part. It appears on your table a moment later, at its real size. You pick it up, turn it over, and set it down where it actually fits. On their monitor it moves too, because your hands just moved it in their Blender.
+
+You want it exact, so you say "rotate this 90 degrees". It asks "around which axis?" You say "Z", and it's done. You never touched a keyboard.
+
+You both reach for the same part at once. Theirs is refused with "Talia is editing this", so nothing gets clobbered. When you take the headset off, everything you did is in the `.blend`, and Ctrl+Z walks back through it one step at a time.
 
 ## How it works
 
