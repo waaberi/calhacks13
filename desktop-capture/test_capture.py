@@ -224,6 +224,22 @@ class CaptureContractTests(unittest.TestCase):
         self.assertTrue(predicate(), "Actual graphics workers did not reach the expected state")
 
     @unittest.skipUnless(os.name == "nt", "Windows capture binding")
+    def test_empty_callback_reports_unavailable_then_valid_pixels_recover(self):
+        import numpy as np
+
+        with self.actual_graphics_workers() as run:
+            callback = run.captures[0].callbacks["on_frame_arrived"]
+            callback(SimpleNamespace(frame_buffer=np.empty((0, 12, 4), dtype=np.uint8)),
+                     SimpleNamespace(stop=lambda: None))
+            self.assertEqual(run.latest.snapshot()[0]["state"], "error")
+            self.assertIsNone(run.latest.snapshot()[1])
+            run.release.set()
+            callback(SimpleNamespace(frame_buffer=np.full((8, 12, 4), 64, dtype=np.uint8)),
+                     SimpleNamespace(stop=lambda: None))
+            self.wait_until(lambda: run.latest.snapshot()[1] is not None)
+            self.assertEqual(run.latest.snapshot()[0]["state"], "capturing")
+
+    @unittest.skipUnless(os.name == "nt", "Windows capture binding")
     def test_epoch_change_during_final_publication_cannot_resurrect_old_pixels(self):
         import numpy as np
 

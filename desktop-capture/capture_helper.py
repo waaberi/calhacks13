@@ -403,7 +403,15 @@ def graphics_capture_loop(api, latest, stop, fps):
             last_callback[0] = time.monotonic()
             # At most one owned waiting frame plus two being encoded. Release the
             # native mapping before returning; superseded CPU snapshots drop.
-            pixels = owned_capture_pixels(frame)
+            try:
+                pixels = owned_capture_pixels(frame)
+            except cv2.error:
+                # Resizing/minimizing can deliver an empty/unsupported native
+                # frame. Conversion must report unavailable, not kill capture.
+                with encoded_lock:
+                    if this_session == session[0]:
+                        latest.fail(generation, "error", "Capture returned an empty or unsupported pixel frame.")
+                return
             with raw_lock:
                 raw_slot[0] = (generation, selected, pixels, int(time.time() * 1000), this_session)
                 raw_ready.set()
