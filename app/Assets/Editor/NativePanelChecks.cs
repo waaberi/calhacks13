@@ -30,8 +30,6 @@ public static class NativePanelChecks
             table.SeedFromHead(new Vector3(0, 1.65f, 0), Vector3.forward);
             typeof(TablePlacement).GetMethod("CreatePanel", Private).Invoke(table, null);
             var panel = (Transform)typeof(TablePlacement).GetField("panel", Private).GetValue(table);
-            Check(panel.GetComponent<UnityEngine.UI.Image>() != null && panel.GetComponent<UnityEngine.UI.Image>().color.a >= 0.99f
-                && panel.GetComponent<Canvas>().sortingOrder > 0, "table controls need opaque backing and ordering above the live screen");
             table.SetControlsSuppressed(true);
             Check(panel.gameObject.activeSelf && !table.IsPlaced, "native menu must never hide initial Place Table");
             Check(!(bool)present.Invoke(menu, null) && !nativePanel.gameObject.activeSelf && panel.gameObject.activeSelf, "actual native menu must wait for initial placement");

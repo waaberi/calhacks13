@@ -261,15 +261,10 @@ namespace SpatialModeling
 
         void CreatePanel()
         {
-            panel = new GameObject("P2 table controls", typeof(RectTransform), typeof(Canvas), typeof(Image)).transform;
+            panel = new GameObject("P2 table controls", typeof(RectTransform), typeof(Canvas)).transform;
             panel.localScale = Vector3.one * 0.001f;
             var canvas = panel.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
-            canvas.overrideSorting = true;
-            canvas.sortingOrder = 20;
-            var backing = panel.GetComponent<Image>();
-            backing.color = new Color(0.015f, 0.03f, 0.05f, 1f);
-            backing.raycastTarget = false;
             panel.GetComponent<RectTransform>().sizeDelta = new Vector2(620, 600);
             var header = Label(panel, "Table", new Vector2(0, 230), new Vector2(620, 120));
             title = header;

@@ -88,8 +88,6 @@ namespace SpatialModeling
             panel.localScale = Vector3.one * 0.00065f;
             var canvas = panel.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
-            canvas.overrideSorting = true;
-            canvas.sortingOrder = 30;
             panel.GetComponent<Image>().color = new Color(0.015f, 0.03f, 0.05f, 0.97f);
             heading = Label(panel, "Edit Blender", 24, 20, 890, 55, 34);
             selected = Label(panel, "", 24, 78, 890, 80, 25);
