@@ -564,7 +564,6 @@ MonoBehaviour:
   port: 8765
   userName: 
   rootPosition: {x: 0, y: 1, z: 1.5}
-  displayScale: 5
   objectMaterial: {fileID: 2100000, guid: ea3fd61944234a3992880dc8ef2f1649, type: 2}
 --- !u!4 &1181473214
 Transform:

@@ -18,6 +18,9 @@ namespace SpatialModeling
         public float Height { get; private set; } = 0.8f;
         public float Distance { get; private set; } = 1.1f;
         public float Size { get; private set; } = 1f;
+        public bool IsActualSize => Mathf.Approximately(Size, 1f);
+        public string ScaleLabel => IsActualSize ? "Actual size · 1:1"
+            : $"Inspection size · {Size.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}×";
         public float Yaw { get; private set; }
         public Transform Display => display;
         public Transform Menu => panel;
@@ -25,7 +28,6 @@ namespace SpatialModeling
         public bool MenuDocked { get; private set; } = true;
         const float MenuScale = 0.00055f;
         Transform display, preview, panel;
-        float baseScale;
         bool seeded, pointing, cancelAllowed, menuTracked;
         Pose savedPose;
         float savedSize, savedHeight, savedDistance, savedYaw;
@@ -45,7 +47,10 @@ namespace SpatialModeling
         {
             if (display != null) return;
             display = target;
-            baseScale = display.localScale.x;
+            // Size is an explicit inspection multiplier relative to metres,
+            // never relative to a hidden scale inherited from the scene.
+            Size = 1f;
+            display.localScale = Vector3.one;
             // Clone an actual scene asset so its shader is retained in a Player.
             // Shader.Find alone can succeed in the Editor and be stripped in a build.
             material = new Material(previewMaterial);
@@ -149,7 +154,14 @@ namespace SpatialModeling
         {
             // Direct two-hand magnification stays on this display root. Keep
             // menu refresh/docking from restoring an older inspection size.
-            if(display!=null && baseScale>0) Size=display.localScale.x/baseScale;
+            if(display!=null) Size=display.localScale.x;
+        }
+
+        public void RestoreActualSize()
+        {
+            FindFirstObjectByType<WorkspaceInteraction>()?.CancelGrabs();
+            Size = 1f;
+            Refresh();
         }
 
         public void SeedFromHead(Vector3 head, Vector3 forward)
@@ -199,7 +211,7 @@ namespace SpatialModeling
         void Refresh()
         {
             if (display == null) return;
-            display.localScale = Vector3.one * baseScale * Size;
+            display.localScale = Vector3.one * Size;
             display.gameObject.SetActive(IsPlaced);
             if (panel != null) panel.gameObject.SetActive(seeded && (!MenuDocked || menuTracked));
             if (preview != null)
@@ -223,10 +235,10 @@ namespace SpatialModeling
             if (!seeded) return; // HostScene supplies the common settled tracked-head pose.
             if (panel == null) CreatePanel();
             var connection = GetComponent<HostScene>();
-            var arrangement=FindFirstObjectByType<WorkspaceArrangement>();
-            title.text = arrangement!=null ? (roomSetup!=null && roomSetup.IsOpen ? roomSetup.Heading : $"Arrange space · {(MenuDocked ? "left hand" : "in space")}\n{arrangement.SurfaceState}\nGrip menu to place it") : $"{(IsPlaced ? "Inspect table" : State == PlacementState.ConfirmTrackingReset ? "Tracking reset — confirm placement" : "Choose table position")}" +
+            var arrangement=GetComponent<WorkspaceArrangement>() ?? FindFirstObjectByType<WorkspaceArrangement>();
+            title.text = arrangement!=null ? (roomSetup!=null && roomSetup.IsOpen ? roomSetup.Heading : $"Arrange space · {(MenuDocked ? "left hand" : "in space")}\n{arrangement.SurfaceState}\n{ScaleLabel}\nGrip menu to place it") : $"{(IsPlaced ? "Inspect table" : State == PlacementState.ConfirmTrackingReset ? "Tracking reset — confirm placement" : "Choose table position")}" +
                 $" · {(MenuDocked ? "left hand" : "in space")}\nGrip menu, move, release to place" +
-                $"\nHeight {Height:F2} m · size {Size:F2}× · {connection.ConnectionText}";
+                $"\nHeight {Height:F2} m · {ScaleLabel} · {connection.ConnectionText}";
             var keyboard = Keyboard.current;
             if (keyboard != null)
             {
@@ -317,7 +329,7 @@ namespace SpatialModeling
             panel.localScale = Vector3.one * MenuScale;
             var canvas = panel.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
-            var arrangement=FindFirstObjectByType<WorkspaceArrangement>();
+            var arrangement=GetComponent<WorkspaceArrangement>() ?? FindFirstObjectByType<WorkspaceArrangement>();
             bool compact=arrangement!=null;
             panel.GetComponent<RectTransform>().sizeDelta = new Vector2(640, compact?580:650);
             panel.GetComponent<Image>().color = new Color(.015f,.025f,.04f,.96f);
@@ -350,7 +362,8 @@ namespace SpatialModeling
                 ("Auto detection on/off",arrangement.Surfaces.ToggleAutomatic),
                 ("Show/hide detected",arrangement.Surfaces.ToggleDetected),
                 ("Clear manual levels",arrangement.Surfaces.ClearLevels),
-                ("Pin menu here",PinMenu), ("Return to left hand",DockMenu)
+                ("Pin menu here",PinMenu), ("Return to left hand",DockMenu),
+                ("Actual size",RestoreActualSize)
             };
             if(compact && roomSetup.IsOpen) actions=new (string,Action)[] {
                 ("Load saved room",arrangement.Surfaces.Reload), ("Scan / update on Quest",roomSetup.Scan),
