@@ -45,6 +45,7 @@ namespace SpatialModeling
             go.AddComponent<NativeEditBridge>();
             go.AddComponent<WorkspaceNativeMenu>();
             go.AddComponent<NativeOwnershipOverlay>();
+            go.AddComponent<NativeSketchEditor>();
         }
 
         void OnEnable()
