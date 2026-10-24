@@ -90,9 +90,12 @@ def _context(purpose):
             "Run the LAN port without TLS, on an isolated network only."
         )
     ctx = ssl.SSLContext(purpose)
-    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     ctx.maximum_version = ssl.TLSVersion.TLSv1_3
-    ctx.set_ciphers(TLS12_CIPHERS)
+    try:
+        ctx.set_ciphers(TLS12_CIPHERS)  # TLS 1.2 only; TLS 1.3 suites are OpenSSL's defaults
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    except ssl.SSLError:  # an OpenSSL without that suite: TLS 1.3 only
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_3
     return ctx
 
 

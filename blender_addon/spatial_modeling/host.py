@@ -80,7 +80,7 @@ def _lan_listener(prefs):
     try:
         lan.normalize_token(token)
         tls = lan.server_tls_context(token) if prefs.lan_security == "TLS" else None
-    except (lan.TokenError, NotImplementedError) as e:
+    except (lan.TokenError, NotImplementedError, OSError) as e:  # OSError: ssl.SSLError
         lan_status = f"Not listening: {e}"
         return None
     address = prefs.lan_address.strip() or lan.ALL_INTERFACES
@@ -108,6 +108,7 @@ def start():
     if _server is not None:
         return
     _starting = True  # setting a generated token must not restart us from its update callback
+    extra = None
     try:
         extra = _lan_listener(_prefs())
         try:
@@ -120,7 +121,8 @@ def start():
             extra = None
     except OSError as e:
         status = f"Could not listen on {server.HOST}:{server.PORT}: {e}"
-        lan_status = "Off: the host server could not start" if lan_status != "Off" else "Off"
+        if extra is not None:
+            lan_status = "Not listening: the localhost port could not start"
         print("Spatial Modeling:", status)
         return
     finally:
