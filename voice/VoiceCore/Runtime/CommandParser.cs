@@ -39,6 +39,12 @@ namespace SpatialModeling.VoiceCore
         /// transcript of "move it up five millimeters" (#93). Only "undo", "redo", "cancel" and "apply" may name
         /// another command ("undo the move").</summary>
         public bool ConflictingVerbs;
+
+        /// <summary>Words after the verb other than fillers and "this"/"it": "apply the scale", but not "apply it".</summary>
+        public bool MoreAfterVerb;
+
+        /// <summary>Some word other than Vosk's "[unk]".</summary>
+        public bool HasWords;
     }
 
     /// <summary>
@@ -61,6 +67,10 @@ namespace SpatialModeling.VoiceCore
                 for (int i = 0; i <= verbAt; i++)
                     used[i] = true; // Words before the verb ("okay", "[unk]") are preamble.
             }
+            parsed.HasWords = words.Exists(w => w != Vocabulary.Unknown);
+            for (int i = verbAt + 1; i < words.Count && verbAt >= 0; i++)
+                if (!Vocabulary.Fillers.Contains(words[i]) && !Vocabulary.Deictic.Contains(words[i]))
+                    parsed.MoreAfterVerb = true;
 
             CommandKind? kind = parsed.Verb ?? pendingKind;
             bool targetable = kind.HasValue && Vocabulary.IsTargetable(kind.Value);
@@ -146,6 +156,16 @@ namespace SpatialModeling.VoiceCore
             if (parsed.Target == TargetRef.None && targetable)
                 parsed.Target = deictic ? TargetRef.Context : nameLike ? TargetRef.Unknown : TargetRef.None;
             return parsed;
+        }
+
+        /// <summary>The one object whose name the text says ("make the cube thicker"), whatever the verb; null when none
+        /// or several match.</summary>
+        public static SceneObject NamedObject(string text, IReadOnlyList<SceneObject> objects)
+        {
+            List<string> words = Vocabulary.Words(text);
+            var parsed = new ParsedUtterance();
+            MatchName(words, new bool[words.Count], objects, parsed);
+            return parsed.Target == TargetRef.Named ? parsed.Named : null;
         }
 
         static string At(List<string> words, int i) => i < words.Count ? words[i] : null;
