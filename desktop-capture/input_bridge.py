@@ -312,7 +312,14 @@ class InputBridge:
             state = self._snapshot()
             if (not state["ready"] or not state["focused"]
                     or self.clock() - self.last_event > 1.5 or self.release_error):
+                had_held_input = bool(self.held_keys or self.held_buttons)
                 self._release()
+                if had_held_input and not self.held_keys and not self.held_buttons and not self.release_error:
+                    # The client may still believe its modifier/drag is down.
+                    # Force a fresh logical gesture after watchdog cleanup, but
+                    # never rotate on failed retries or idle/no-held heartbeats.
+                    self.session = secrets.token_urlsafe(18)
+                    self.sequence = 0
         finally:
             self.lock.release()
 
@@ -326,7 +333,9 @@ class InputBridge:
     def _number(value, low, high):
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise InputRejected("invalid_number", 400)
-        if not math.isfinite(value) or not low <= value <= high:
+        # Check the integer bounds before math.isfinite converts to a double;
+        # valid JSON may contain integers too large for that conversion.
+        if not low <= value <= high or not math.isfinite(value):
             raise InputRejected("number_out_of_range", 400)
         return value
 
@@ -349,8 +358,9 @@ class InputBridge:
                 raise InputRejected("expected_json_object", 400)
             if not self.enabled:
                 raise InputRejected("input_disabled", 403)
-            if not isinstance(payload.get("token"), str) or not secrets.compare_digest(
-                    payload["token"], self.token):
+            supplied_token = payload.get("token")
+            if (not isinstance(supplied_token, str) or not supplied_token.isascii()
+                    or not secrets.compare_digest(supplied_token, self.token)):
                 raise InputRejected("invalid_input_token", 403)
             if payload.get("session") != self.session:
                 raise InputRejected("stale_input_session")
@@ -389,6 +399,8 @@ class InputBridge:
             hwnd = state["selection"]["hwnd"]
             if kind == "focus":
                 self._release()
+                if self.release_error:
+                    raise InputRejected("release_pending", 502)
                 if not self.native.focus(hwnd):
                     raise InputRejected("foreground_activation_denied")
                 self.last_event = self.clock()
@@ -400,6 +412,8 @@ class InputBridge:
                 self.last_event = self.clock()
                 return {"ok": True, "seq": seq}
             events = []
+            pending_button = pending_key = None
+            attempted = False
             if kind in ("pointer", "button", "scroll"):
                 events.append(self._pointer(payload, state))
             if kind == "button":
@@ -411,9 +425,8 @@ class InputBridge:
                     raise InputRejected("button_already_held_or_not_pressed")
                 if action != "up" and self.native.button_is_down(button):
                     raise InputRejected("button_held_by_other_input")
-                # Track every possible down before SendInput (partial sends can occur).
                 if action != "up":
-                    self.held_buttons.add(button)
+                    pending_button = button
                 actions = [action] if action in ("down", "up") else ["down", "up"] * (2 if action == "double_click" else 1)
                 events += [("button", button, a) for a in actions]
             elif kind == "scroll":
@@ -431,7 +444,7 @@ class InputBridge:
                 if action != "up" and self.native.key_is_down(key):
                     raise InputRejected("key_held_by_other_input")
                 if action != "up":
-                    self.held_keys.add(key)
+                    pending_key = key
                 events = [("key", key, a) for a in (["down", "up"] if action == "press" else [action])]
             elif kind == "text":
                 text = payload.get("text")
@@ -459,9 +472,18 @@ class InputBridge:
                 if any(live[k] != state["geometry"][k]
                        for k in ("window_rect", "visible_rect", "dpi")):
                     raise InputRejected("window_geometry_changed_wait_for_frame")
+                # Track possible downs only once dispatch is about to begin.
+                # A pre-dispatch context refusal must not emit phantom key-ups
+                # into the newly focused/changed window. A partial native send
+                # still needs cleanup of every possibly delivered down.
+                if pending_button:
+                    self.held_buttons.add(pending_button)
+                if pending_key:
+                    self.held_keys.add(pending_key)
+                attempted = True
                 self.native.send(events)
             except (InputRejected, OSError):
-                if kind == "text":
+                if kind == "text" and attempted:
                     try:
                         self.native.send([event for event in events if event[2] == "up"])
                     except (InputRejected, OSError):

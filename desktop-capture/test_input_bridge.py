@@ -356,6 +356,103 @@ class InputHttpTests(unittest.TestCase):
         self.assertEqual(self.request("POST", "/input", json.dumps(bad), headers)[0], 403)
         self.assertFalse(self.native.sent)
 
+    def post_event(self, payload):
+        code, body = self.request("POST", "/input", json.dumps(payload),
+                                  {"Content-Type": "application/json"})
+        return code, json.loads(body)
+
+    def test_non_ascii_or_surrogate_token_is_forbidden_without_breaking_http(self):
+        for token in ("\u00e9", "\ud800"):
+            with self.subTest(token=repr(token)):
+                code, result = self.post_event({**self.event("pointer", x=0, y=0), "token": token})
+                self.assertEqual((code, result["reason"]), (403, "invalid_input_token"))
+        self.assertFalse(self.native.sent)
+
+    def test_huge_json_integer_coordinates_and_scroll_are_bounded_without_overflow(self):
+        for kind, values in (("pointer", {"x": 10 ** 1000, "y": 0}),
+                             ("scroll", {"x": 0, "y": 0, "dy": 10 ** 1000})):
+            with self.subTest(kind=kind):
+                code, result = self.post_event(self.event(kind, **values))
+                self.assertEqual((code, result["reason"]), (400, "number_out_of_range"))
+        self.assertFalse(self.native.sent)
+
+    def test_focus_does_not_acknowledge_or_activate_window_when_held_release_failed(self):
+        self.assertEqual(self.post_event(self.event("key", key="CTRL", action="down"))[0], 200)
+        event = self.event("focus")
+        self.native.fail_next = True
+        code, result = self.post_event(event)
+        self.assertEqual((code, result["reason"]), (502, "release_pending"))
+        self.assertEqual(self.native.focus_calls, [])
+        self.assertTrue(self.bridge.release_error)
+        self.assertEqual(self.bridge.held_keys, {"CTRL"})
+        self.assertEqual(self.post_event(self.event("release"))[0], 200)
+        self.assertFalse(self.bridge.release_error)
+        self.assertFalse(self.bridge.held_keys)
+
+    def test_context_rejected_before_dispatch_never_sends_phantom_key_or_button_up(self):
+        for kind, values in (("key", {"key": "SHIFT", "action": "down"}),
+                             ("button", {"button": "left", "action": "down", "x": 0, "y": 0}),
+                             ("text", {"text": "a"})):
+            with self.subTest(kind=kind):
+                event = self.event(kind, **values)
+                original = dict(self.native.geometry)
+                resized = {**original, "dpi": original["dpi"] + 48}
+                with patch.object(self.native, "inspect", side_effect=[original, resized]):
+                    code, result = self.post_event(event)
+                self.assertEqual((code, result["reason"]), (409, "window_geometry_changed_wait_for_frame"))
+                self.assertFalse(self.bridge.held_keys)
+                self.assertFalse(self.bridge.held_buttons)
+                self.assertFalse(self.native.sent)
+
+    def test_context_rejection_still_releases_earlier_owned_inputs_without_new_phantom_ups(self):
+        self.assertEqual(self.post_event(self.event("key", key="CTRL", action="down"))[0], 200)
+        event = self.event("key", key="SHIFT", action="down")
+        original = dict(self.native.geometry)
+        with patch.object(self.native, "inspect", side_effect=[original, {**original, "dpi": 192}]):
+            code, result = self.post_event(event)
+        self.assertEqual((code, result["reason"]), (409, "window_geometry_changed_wait_for_frame"))
+        self.assertEqual(self.native.sent, [[("key", "CTRL", "down")], [("key", "CTRL", "up")]])
+        self.assertFalse(self.bridge.held_keys)
+
+    def test_watchdog_releases_and_invalidates_stale_held_gesture_once(self):
+        self.assertEqual(self.post_event(self.event("key", key="SHIFT", action="down"))[0], 200)
+        stale = self.event("key", key="A", action="press")
+        self.now += 2
+        self.bridge.watchdog()
+        code, body = self.request("GET", "/input/state")
+        state = json.loads(body)
+        self.assertEqual(code, 200)
+        self.assertNotEqual(state["session"], stale["session"])
+        self.assertEqual(state["next_seq"], 1)
+        self.assertEqual(self.post_event(stale), (409, {"ok": False, "reason": "stale_input_session"}))
+        self.assertEqual(self.native.sent, [[("key", "SHIFT", "down")], [("key", "SHIFT", "up")]])
+        self.bridge.watchdog()
+        self.assertEqual(self.bridge.state()["session"], state["session"])
+
+    def test_failed_watchdog_release_preserves_session_for_explicit_cleanup_then_stays_stable(self):
+        self.assertEqual(self.post_event(self.event("button", button="left", action="down", x=0, y=0))[0], 200)
+        before = self.bridge.state()["session"]
+        self.native.fail_next = True
+        self.now += 2
+        self.bridge.watchdog()
+        state = self.bridge.state()
+        self.assertTrue(state["release_error"])
+        self.assertEqual(state["session"], before)
+        self.assertEqual(self.post_event(self.event("release"))[0], 200)
+        self.bridge.watchdog()
+        self.assertEqual(self.bridge.state()["session"], before)
+        self.assertFalse(self.bridge.release_error)
+
+    def test_no_held_input_watchdog_and_heartbeats_preserve_session(self):
+        before = self.bridge.state()["session"]
+        self.now += 2
+        self.bridge.watchdog()
+        self.assertEqual(self.post_event(self.event("heartbeat"))[0], 200)
+        self.now += 2
+        self.bridge.watchdog()
+        self.assertEqual(self.bridge.state()["session"], before)
+        self.assertFalse(self.native.sent)
+
 
 class WindowsAdapterTests(unittest.TestCase):
     def test_process_creation_stamp_is_read_from_owned_handle_and_handle_is_released(self):

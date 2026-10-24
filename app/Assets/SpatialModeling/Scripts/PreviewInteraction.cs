@@ -216,6 +216,7 @@ namespace SpatialModeling
         bool MatchesNativeHost() => state != null && Drawing != null && Drawing.NativeProcessId > 0
             && (long?)state["selection"]?["pid"] == Drawing.NativeProcessId;
         bool Ready() => state != null && (bool?)state["ready"] == true && (bool?)state["focused"] == true
+            && (bool?)state["release_error"] == false
             && MatchesNativeHost() && Drawing.IsNativeUiOwned && screen != null
             && PreviewInputMapping.FrameMatches(screen.DisplayedCaptureInstance, screen.DisplayedSelectionGeneration,
                 (string)state["capture_instance"], (long?)state["capture_generation"] ?? -1)
@@ -338,44 +339,46 @@ namespace SpatialModeling
                 if (url != null)
                 {
                     readingState = true;
-                    using (var request = UnityWebRequest.Get(url + "/input/state"))
+                    try
                     {
-                        request.timeout = 2; yield return request.SendWebRequest();
-                        if (request.result == UnityWebRequest.Result.Success)
+                        using (var request = UnityWebRequest.Get(url + "/input/state"))
                         {
-                            JObject fresh = null;
-                            try { fresh = JObject.Parse(request.downloadHandler.text); }
-                            catch (Exception) { FailTransport("Input helper returned invalid state"); }
-                            if (fresh != null)
+                            request.timeout = 2; yield return request.SendWebRequest();
+                            if (request.result == UnityWebRequest.Result.Success)
                             {
-                                string nextSession = (string)fresh["session"] ?? "";
-                                if (session != nextSession)
+                                if (!PreviewInputProtocol.TryState(request.downloadHandler.text, out var fresh))
+                                    FailTransport("Input helper returned invalid state");
+                                else
                                 {
-                                    bool wasActive = inputEnabled || focusRequested || (Drawing != null && Drawing.IsNativeUiOwned);
-                                    events.Clear(); pendingPointer = null; mouseHeld = inputEnabled = false; modifiers.Clear();
-                                    releaseQueued = false;
-                                    session = nextSession;
-                                    Drawing?.Cancel();
-                                    if (wasActive) RequestEndNativeUi();
-                                }
-                                state = fresh; token = (string)fresh["token"] ?? "";
-                                if (session.Length != 0 && token.Length != 0 && (long?)fresh["next_seq"] >= 1)
-                                    transport.Observe(session, (long)fresh["next_seq"]);
-                                else transport.Unknown();
-                                if ((bool?)fresh["enabled"] != true) Notice = "Start this feature's helper with --enable-input";
-                                else if (!Ready())
-                                {
-                                    ReleaseNative();
-                                    string why = (string)fresh["reason"];
-                                    Notice = !MatchesNativeHost() ? "Capture must select the connected Blender host"
-                                        : !Drawing.IsNativeUiOwned ? "Use Focus Blender to begin native preview interaction"
-                                        : !string.IsNullOrEmpty(why) ? why : "Waiting for the selected window's displayed frame and focus";
+                                    string nextSession = (string)fresh["session"] ?? "";
+                                    if (session != nextSession)
+                                    {
+                                        bool wasActive = inputEnabled || focusRequested || (Drawing != null && Drawing.IsNativeUiOwned);
+                                        events.Clear(); pendingPointer = null; mouseHeld = inputEnabled = false; modifiers.Clear();
+                                        releaseQueued = false;
+                                        session = nextSession;
+                                        Drawing?.Cancel();
+                                        if (wasActive) RequestEndNativeUi();
+                                    }
+                                    state = fresh; token = (string)fresh["token"] ?? "";
+                                    if (session.Length != 0 && token.Length != 0 && (long?)fresh["next_seq"] >= 1)
+                                        transport.Observe(session, (long)fresh["next_seq"]);
+                                    else transport.Unknown();
+                                    if ((bool?)fresh["enabled"] != true) Notice = "Start this feature's helper with --enable-input";
+                                    else if (!Ready())
+                                    {
+                                        ReleaseNative();
+                                        string why = (string)fresh["reason"];
+                                        Notice = !MatchesNativeHost() ? "Capture must select the connected Blender host"
+                                            : !Drawing.IsNativeUiOwned ? "Use Focus Blender to begin native preview interaction"
+                                            : !string.IsNullOrEmpty(why) ? why : "Waiting for the selected window's displayed frame and focus";
+                                    }
                                 }
                             }
+                            else FailTransport("P2.5 input helper unavailable");
                         }
-                        else FailTransport("P2.5 input helper unavailable");
                     }
-                    readingState = false;
+                    finally { readingState = false; }
                 }
                 yield return new WaitForSecondsRealtime(.5f);
             }
@@ -404,6 +407,10 @@ namespace SpatialModeling
                     if (request.result != UnityWebRequest.Result.Success)
                     {
                         FailTransport("Input stopped: " + request.responseCode + ". Refresh/focus; the action was not retried.");
+                    }
+                    else if (!PreviewInputProtocol.Acknowledged(request.downloadHandler.text, (long)e["seq"]))
+                    {
+                        FailTransport("Input acknowledgement was invalid; pending actions cancelled. Refresh/focus before editing.");
                     }
                     else if ((string)e["type"] == "release" && endAfterRelease)
                     {

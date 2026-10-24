@@ -27,6 +27,7 @@ public static class P25Checks
     {
         RunMapping(message => Debug.Log(message));
         RunTransport(message => Debug.Log(message));
+        RunInputProtocol(message => Debug.Log(message));
         RunTargets(message => Debug.Log(message));
         RunSpatial(message => Debug.Log(message));
         RunPreviewOcclusion();
@@ -116,6 +117,45 @@ public static class P25Checks
             Check(refused, "invalid helper next sequence is refused");
         }
         report("P25_TRANSPORT_CHECK PASS unknown-barrier/authoritative-consumed-or-unconsumed-number/helper-restart; HTTP runtime not exercised");
+    }
+
+    public static void RunInputProtocol(Action<string> report)
+    {
+        var state = new JObject {
+            ["enabled"] = true, ["ready"] = true, ["focused"] = true, ["release_error"] = false,
+            ["session"] = "session-A", ["token"] = "test-token", ["next_seq"] = 1,
+            ["helper_pid"] = 123, ["capture_generation"] = 4, ["capture_instance"] = "capture-A",
+            ["capture_geometry"] = "geometry-A", ["reason"] = "",
+            ["selection"] = new JObject { ["hwnd"] = 456, ["pid"] = 789 }, ["windows"] = new JArray()
+        };
+        Check(PreviewInputProtocol.TryState(state.ToString(), out var parsed) && (string)parsed["session"] == "session-A",
+            "valid selected-window helper state is admitted");
+        var disabled = (JObject)state.DeepClone();
+        disabled["enabled"] = disabled["ready"] = disabled["focused"] = false;
+        disabled["token"] = disabled["selection"] = disabled["capture_geometry"] = null;
+        Check(PreviewInputProtocol.TryState(disabled.ToString(), out _), "disabled/no-window helper state remains readable for recovery");
+        foreach (var invalid in new[] {
+            new JObject { ["next_seq"] = "not-a-number" }, new JObject { ["next_seq"] = 0 },
+            new JObject { ["next_seq"] = true }, new JObject { ["ready"] = "true" },
+            new JObject { ["focused"] = 1 }, new JObject { ["session"] = new JObject() },
+            new JObject { ["token"] = "" }, new JObject { ["capture_generation"] = -1 },
+            new JObject { ["selection"] = new JObject { ["hwnd"] = "456", ["pid"] = 789 } },
+            new JObject { ["windows"] = new JArray("not-a-window") }, new JObject { ["release_error"] = "false" }
+        })
+        {
+            var bad = (JObject)state.DeepClone();
+            foreach (var property in invalid.Properties()) bad[property.Name] = property.Value.DeepClone();
+            Check(!PreviewInputProtocol.TryState(bad.ToString(), out _), "wrong-typed/invalid helper state fails closed without stopping its reader");
+        }
+        var huge = (JObject)state.DeepClone();
+        huge["next_seq"] = JToken.Parse("9223372036854775808");
+        Check(!PreviewInputProtocol.TryState(huge.ToString(), out _), "out-of-range sequence cannot overflow the input owner");
+        Check(PreviewInputProtocol.Acknowledged("{\"ok\":true,\"seq\":7}", 7), "matching explicit dispatch acknowledgement is accepted");
+        foreach (var invalid in new[] { "{}", "{\"ok\":false,\"seq\":7}", "{\"ok\":\"true\",\"seq\":7}",
+            "{\"ok\":true,\"seq\":8}", "{\"ok\":true,\"seq\":\"7\"}",
+            "{\"ok\":true,\"seq\":9223372036854775808}", "not-json", "[]" })
+            Check(!PreviewInputProtocol.Acknowledged(invalid, 7), "HTTP 200 without an exact positive acknowledgement never proves native release/focus");
+        report("P25_INPUT_PROTOCOL_CHECK PASS typed-state/no-window/recovery/overflow/exact-ack; no OS input or native GUI");
     }
 
     public static void RunSpatial(Action<string> report)

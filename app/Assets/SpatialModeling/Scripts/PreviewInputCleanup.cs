@@ -19,7 +19,7 @@ namespace SpatialModeling
         }
         IEnumerator Cleanup(string baseUrl, string captureInstance, Action released)
         {
-            if (baseUrl == null) { Destroy(gameObject); yield break; }
+            if (baseUrl == null) { Finish(); yield break; }
             for (int attempt = 0; attempt < 3; attempt++)
             {
                 JObject state = null;
@@ -27,7 +27,7 @@ namespace SpatialModeling
                 {
                     get.timeout = 2; yield return get.SendWebRequest();
                     if (get.result == UnityWebRequest.Result.Success)
-                    { try { state = JObject.Parse(get.downloadHandler.text); } catch (Exception) { } }
+                        PreviewInputProtocol.TryState(get.downloadHandler.text, out state);
                 }
                 if (state == null || string.IsNullOrEmpty((string)state["token"]) || string.IsNullOrEmpty((string)state["session"])) continue;
                 if (!string.IsNullOrEmpty(captureInstance) && captureInstance != (string)state["capture_instance"]) break;
@@ -37,14 +37,20 @@ namespace SpatialModeling
                     post.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(payload.ToString(Newtonsoft.Json.Formatting.None)));
                     post.downloadHandler = new DownloadHandlerBuffer(); post.SetRequestHeader("Content-Type", "application/json");
                     post.timeout = 2; yield return post.SendWebRequest();
-                    if (post.result == UnityWebRequest.Result.Success)
+                    if (post.result == UnityWebRequest.Result.Success
+                        && PreviewInputProtocol.Acknowledged(post.downloadHandler.text, (long)payload["seq"]))
                     {
-                        released?.Invoke(); Destroy(gameObject); yield break;
+                        released?.Invoke(); Finish(); yield break;
                     }
                 }
             }
             Debug.LogWarning("P2.5 input cleanup could not confirm release. Native reservation remains until connection cleanup/native modal completion.");
-            Destroy(gameObject);
+            Finish();
+        }
+        void Finish()
+        {
+            if (Application.isPlaying) Destroy(gameObject);
+            else DestroyImmediate(gameObject);
         }
     }
 }
