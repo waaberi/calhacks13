@@ -40,6 +40,7 @@ namespace SpatialModeling
         readonly HashSet<string> modifiers = new HashSet<string>();
         float nextPointer, nextScroll, nextHeartbeat;
         Vector2 lastPoint;
+        string ownedCaptureInstance = "";
         [DllImport("user32.dll")]
         static extern bool AllowSetForegroundWindow(uint processId);
 
@@ -71,6 +72,24 @@ namespace SpatialModeling
             OVRManager.HMDUnmounted -= Suspend;
             OVRManager.VrFocusLost -= Suspend;
             StopAllCoroutines();
+            if (endAfterRelease && Drawing != null)
+            {
+                var drawing = Drawing;
+                var link = scene != null ? scene.Link : null;
+                var identity = drawing.Session.RequestIdentity;
+                string uiToken = (string)drawing.NativeState["ui_session_id"];
+                new GameObject("P2.5 pending input release").AddComponent<PreviewInputCleanup>().Begin(
+                    BlenderScreen.CaptureBaseUrl, ownedCaptureInstance, () =>
+                    {
+                        if (drawing != null) drawing.EndNativeUi();
+                        else if (identity != null && !string.IsNullOrEmpty(uiToken))
+                        {
+                            identity["ui_session_id"] = uiToken;
+                            link?.SendEnvelope(NativeEditSession.Envelope("preview.ui.end", identity));
+                        }
+                        else link?.Reconnect(); // resolve a possible late begin grant after component destruction
+                    });
+            }
             if (Current == this) Current = null;
             if (panel != null) Destroy(panel.gameObject);
             if (keyboard != null) Destroy(keyboard.gameObject);
@@ -89,6 +108,7 @@ namespace SpatialModeling
                 if (MatchesNativeHost())
                 {
                     focusRequested = false; inputEnabled = true;
+                    ownedCaptureInstance = (string)state["capture_instance"] ?? "";
                     // Cooperatively pass our foreground privilege, if we have
                     // it. Never attach input queues or alter Windows settings.
                     if ((Application.platform == RuntimePlatform.WindowsPlayer || Application.platform == RuntimePlatform.WindowsEditor)
@@ -386,7 +406,12 @@ namespace SpatialModeling
                         FailTransport("Input stopped: " + request.responseCode + ". Refresh/focus; the action was not retried.");
                     }
                     else if ((string)e["type"] == "release" && endAfterRelease)
-                    { releaseQueued = endAfterRelease = false; Drawing.EndNativeUi(); Notice = "Native UI input released"; }
+                    {
+                        if (ownedCaptureInstance.Length != 0 && ownedCaptureInstance != (string)state?["capture_instance"])
+                        { Notice = "Input helper restarted; release status is unknown. Check native input and reconnect."; releaseQueued = true; }
+                        else
+                        { releaseQueued = endAfterRelease = false; ownedCaptureInstance = ""; Drawing.EndNativeUi(); Notice = "Native UI input released"; }
+                    }
                     else if ((string)e["type"] == "focus")
                     {
                         // The helper acknowledged exact-window foreground after
