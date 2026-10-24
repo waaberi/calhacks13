@@ -70,6 +70,7 @@ namespace SpatialModeling
                 else
                 {
                     entry.Target.SetPositionAndRotation(entry.Pose.position,entry.Pose.rotation); entry.Target.localScale=entry.Scale;
+                    if(scene!=null && entry.Target==scene.Placement) scene.Table.RememberDisplayScale();
                     foreach(var item in entry.Parts) if(item.Key!=null) item.Key.RestoreArrangement(item.Value.position,item.Value.rotation);
                 }
                 break;

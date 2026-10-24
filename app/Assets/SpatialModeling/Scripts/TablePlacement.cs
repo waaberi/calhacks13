@@ -144,6 +144,13 @@ namespace SpatialModeling
             ConfirmTrackingReset(); // Explicit Place confirmation after recenter/reset.
         }
 
+        public void RememberDisplayScale()
+        {
+            // Direct two-hand magnification stays on this display root. Keep
+            // menu refresh/docking from restoring an older inspection size.
+            if(display!=null && baseScale>0) Size=display.localScale.x/baseScale;
+        }
+
         public void SeedFromHead(Vector3 head, Vector3 forward)
         {
             forward.y = 0;

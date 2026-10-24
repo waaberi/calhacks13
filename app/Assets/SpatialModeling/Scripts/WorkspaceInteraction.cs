@@ -477,6 +477,7 @@ namespace SpatialModeling
             var pose=new Pose(midpoint+turn*(pairOffset*ratio),turn*pairRotation);
             var previousScale=pairTarget.lossyScale;
             pairTarget.localScale=pairScale*ratio;
+            if(pairTarget==scene.Placement) scene.Table.RememberDisplayScale();
             if(arrangement!=null) pose=arrangement.Apply(pairTarget,new Pose(pairTarget.position,pairTarget.rotation),pose,
                 left.alignRequested||right.alignRequested,left.freePlacement||right.freePlacement,previousScale);
             if(left.alignRequested||right.alignRequested)

@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Reflection;
+using UnityEditor;
 using SpatialModeling;
 using UnityEngine;
 using UnityEngine.UI;
@@ -68,6 +69,14 @@ public static class ArrangementChecks
             arrangement.UndoPlacement();
             Near(view.NativePosition,new Vector3(.06f,.02f,0),"placement Undo never undoes a newer native Blender generation");
             Near(view.PositionOffset,Vector3.zero,"placement Undo restores only viewer offsets");
+            var table=container.AddComponent<TablePlacement>();
+            var display=new GameObject("Direct magnification root"); display.transform.SetParent(container.transform);
+            display.transform.localScale=Vector3.one*5;
+            table.Initialize(display.transform,AssetDatabase.LoadAssetAtPath<Material>("Assets/SpatialModeling/Materials/HostObject.mat"));
+            display.transform.localScale=Vector3.one*7;
+            table.RememberDisplayScale();
+            table.DockMenu();
+            Near(display.transform.localScale,Vector3.one*7,"menu docking cannot undo direct two-hand build magnification");
             arrangement.Surfaces.BeginMark("desk");
             arrangement.Surfaces.CaptureMark(new Pose(new Vector3(.1f,.8f,.2f),Quaternion.identity),new Vector3(0,1.6f,0));
             Check(arrangement.Surfaces.Marking==null && arrangement.Surfaces.State=="Marked desk","manual fallback commits a touched desk without a room scan");
