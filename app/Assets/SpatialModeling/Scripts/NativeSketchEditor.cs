@@ -225,7 +225,7 @@ namespace SpatialModeling
                     if (vertices == null) continue;
                     var line = new GameObject("Solved " + kind).AddComponent<LineRenderer>(); line.transform.SetParent(root.transform, false);
                     line.sharedMaterial = material; line.useWorldSpace = false; line.positionCount = vertices.Length; line.SetPositions(vertices);
-                    line.startWidth = line.endWidth = 0.0004f;
+                    line.startWidth = line.endWidth = 0.0015f;
                 }
             }
         }
