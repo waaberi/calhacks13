@@ -276,3 +276,34 @@ The capture helper serves the newest frame of the selected Blender window. Only 
   | `message` | Why the state isn't `capturing`; empty while capturing. |
 
 Unity polls `/frame` at a modest rate. Start at 10 per second and measure.
+
+## Fakes
+
+**Test data only.** The fakes stand in for Blender or for a client while the real one isn't ready. Nothing seen through them counts as acceptance evidence: a mock response is not native acceptance ([PHASE_PLAN.md](../PHASE_PLAN.md)). They use only the standard library and run on Python 3.9 or newer, so the `python3` that comes with macOS will do.
+
+**Fake host** ([`fakes/fake_host.py`](fakes/fake_host.py)), for building the Unity app without Blender:
+
+```sh
+python3 contracts/fakes/fake_host.py            # 127.0.0.1:8765; Ctrl-C stops it
+```
+
+It serves the scene from the examples, with the same IDs, as `fake_bracket.blend`: Base plate (100 × 60 × 10 mm box), Shaft (cylinder, 20 mm diameter, 40 mm tall) standing on it as its child, a Camera without a mesh, and the 100 × 60 mm sketch. The meshes are real and render. It follows [Connecting](#connecting), answers `ping`, and applies `object.add`, `object.move`, `object.rotate`, `object.scale`, `object.delete`, `history.undo`, `history.redo` and `document.save` as [Commands](#commands) describes: scene.update to everyone, then result, then activity, with request-ID deduplication and `receipt.query`. Sketch ops get `rejected` with `failed`, and leases are not granted (`lease.*` gets `unknown_type`). Each run starts at revision 0 with a new `open_epoch`.
+
+| Flag | What it does | Tests the app's |
+| --- | --- | --- |
+| `--animate` | Turns Shaft about Z at 20°/s, one scene.update every 0.25 s. | Live updates |
+| `--drop-after S` | Closes each connection S seconds after it opens. The fresh snapshot keeps the changes made so far. | Disconnected, reconnect |
+| `--stall-after S` | S seconds after each connection opens, sends it nothing: no pong, no updates. The socket stays open. Add `--stall-for S2` to answer again after S2 seconds. | Not responding |
+| `--wrong-document` | Refuses every `hello` with `wrong_document`, then closes. | Wrong document error |
+| `--port N`, `--idle-timeout S`, `-v` | Another port; the heartbeat timeout (6 s, `0` turns it off); log every message. | |
+
+**Fake client** ([`fakes/fake_client.py`](fakes/fake_client.py)), for testing a host (this fake or the Host-role add-on) and for debugging. It does the handshake, pings every 2 s, and prints the snapshot and every update, activity, session and result message. Type commands while it runs, or give them as arguments:
+
+```sh
+python3 contracts/fakes/fake_client.py                                   # watch
+python3 contracts/fakes/fake_client.py "move Shaft 10mm 0 0" "undo" --exit
+```
+
+Shortcuts include `move OBJ DX DY DZ`, `rotate OBJ Z 90deg`, `scale OBJ 1 1 1.5`, `add cube X Y Z DX DY DZ`, `delete OBJ`, `undo`, `redo`, `save` and `again` (resend the last command with the same ID). JSON gives any command or message. Bare numbers are meters and radians, as on the wire; `--help` lists everything. `--reconnect` reconnects every 2 s, `--role blender-client` acts like the Client role, and `--check` validates every message against [`schemas/`](schemas/) (needs `pip install jsonschema`). It speaks plain TCP only: the [LAN port](#lan-port)'s TLS and token aren't in it yet, so it reaches the host's port 8765 or a fake host.
+
+**Check:** `pytest tests/backend/test_fakes.py` runs the two fakes against each other through a recording proxy and validates every message they send against the schemas.

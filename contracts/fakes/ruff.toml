@@ -1,0 +1,3 @@
+# The fakes run on the python3 that comes with macOS (3.9), not only on Blender's 3.13.
+extend = "../../ruff.toml"
+target-version = "py39"
