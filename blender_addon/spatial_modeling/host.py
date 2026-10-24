@@ -20,8 +20,9 @@ then answers the old host_epoch's requests as `unknown` (contracts/README.md,
 "Reconnecting"). They aren't kept on disk: every restart also starts a new open
 epoch, so an old receipt couldn't be checked against the scene anyway, and the
 fresh snapshot is what clients trust. Participants and leases live as long too
-(session.py, leases.py; in memory). may_write() is where the host desktop's own
-edits ask for permission (#77).
+(session.py, leases.py; in memory). may_write() and blocked() are where the host
+desktop's own edits ask for permission; gate.py asks them before Blender's own
+tools change anything, and its poll() runs in the drain timer (#77).
 
 Undo: operators run from a timer don't push their own undo step, so an edit
 silently merges into the previous one and a single Undo reverts both. Every
@@ -39,7 +40,7 @@ import uuid
 import bpy
 from bpy.app.handlers import persistent
 
-from . import commands, document, edits, lan, leases, server, session
+from . import commands, document, edits, gate, lan, leases, server, session
 from . import sync as scene_sync  # host.sync() is the role switch below
 
 DRAIN_INTERVAL = 0.02  # seconds between queue drains
@@ -103,6 +104,60 @@ def may_write(objects=(), whole=False):
     return _leases.may_write(ids, whole=whole)
 
 
+def others_hold_leases():
+    """Does any participant other than the host desktop hold a lease? Cheap: no flush.
+
+    False while the host isn't running. When it is False nothing the desktop does
+    can be refused, so gate.py lets Blender behave exactly as without the add-on.
+    """
+    if _session is None:
+        return False
+    me = _session.host["actor_id"]
+    return any(x["owner"]["actor_id"] != me for x in _session.store.leases())
+
+
+def blocked(objects=(), whole=False):
+    """(lease, reason) if another participant's lease forbids this desktop edit now, else None.
+
+    objects and whole as for may_write(). reason is the line the desktop shows,
+    such as "Lee is editing Cube" or "Talia is editing — wait for Apply".
+    """
+    if not others_hold_leases():
+        return None
+    objects = [o for o in objects if o is not None]
+    lease = may_write(objects, whole=whole)
+    if lease is None:
+        return None
+    return lease, leases.Leases.desktop_reason(lease, _leased_name(lease, objects), whole)
+
+
+def blocked_ids(object_ids=(), whole=False):
+    """The lease that forbids changing the objects with these IDs, or None. No flush needed:
+    removed objects count too. For gate.py's check of changes it didn't stop."""
+    if _leases is None or not others_hold_leases():
+        return None
+    return _leases.may_write(list(object_ids), whole=whole)
+
+
+def _leased_name(lease, objects):
+    """The name to show for what lease covers: its first target (what its owner asked for;
+    linked data follows), or else the first of objects."""
+    for target in lease["targets"]:
+        obj = scene_sync.find_object(target)
+        if obj is not None:
+            return obj.name
+    return objects[0].name if objects and lease["mode"] == "shared" else None
+
+
+def stop_writes(why):
+    """Refuse commands until the scene is re-read and every client has a fresh snapshot.
+
+    As after an unknown outcome; the drain timer reconciles straight away.
+    """
+    if _commands is not None:
+        _commands.stop_writes(why)
+
+
 def _prefs():
     addon = bpy.context.preferences.addons.get(__package__)
     return addon.preferences if addon else None
@@ -151,6 +206,7 @@ def _drain():
     _document.tick()
     _server.drain()
     scene_sync.poll()  # direct edits in this Blender reach clients as scene.update
+    gate.poll()  # after an ungated edit of leased data, stop writes (#77)
     _commands.poll()  # after an unknown outcome, retry the fresh snapshot until it goes out
     return DRAIN_INTERVAL
 
