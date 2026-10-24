@@ -209,6 +209,24 @@ the paths of `fetch-model.sh` and `fetch-whisper.sh`; `log` (for example `Debug.
 | `Vosk` | Vosk alone, VoiceCore's behaviour before Whisper. Use it for an open microphone: the fast path answers on release only. |
 | `Whisper` | Whisper for every utterance. For measurements. |
 
+**When Vosk answers alone.** The fast path takes Vosk's result when it is one grammar phrase with every word at 0.9
+or more, or a phrase of two or more words followed by a count phrase ("add an array" + "five copies", "... level
+two"), since Vosk chains phrases. It also takes a result whose only unsure word is a weak "add" at the start, which is
+how Vosk's small model often hears it: "add a monkey" with "add" at 0.83, "it a mirror modifier", or "a donut" when the
+start was cut off. It goes out as the "add" phrase (`FastPathRecognizer.RestoreLeadingAdd`; `LastRestoredFrom` keeps
+what Vosk wrote), only when all other words are sure and Vosk's words span at least 70% of the speech, so nothing
+else was said: real chatter that Vosk heard as "a camera" at the end of 1.6 s of speech spans 44% and still goes to
+Whisper. These used to take 0.6-1.2 s through Whisper in the Unity run instead of about 0.2 s. Measured with real Vosk
+in the real `FastPathRecognizer` through `VoiceInput`, with the host grammar of #147, 3 runs each (Vosk's results
+vary a little from run to run):
+
+| | Fast path before | Now |
+| --- | --- | --- |
+| The Unity run's four "add" phrases (add a monkey, add a donut, add a mirror modifier, add an array five copies), 23 TTS clips | 14 | 22 |
+| TTS corpus and the Unity cue cards, 314 clips | 204-205 | 215-216, all 11 new ones as said |
+| Degraded TTS (cut-off start, far microphone, phone band, all three), 810 commands | 388-393 | 404-410; every new one is the operation that was said ("a donut" for "add a torus": Vosk has no "torus") |
+| Chatter: 320 real SLURP clips and 108 TTS clips | 3-4 taken (by the one-phrase rule, as before) | none more |
+
 **What Whisper's text turns into.** Whisper is trained on real speech, so it hears real voices better than Vosk's small
 model, but it writes free text ("At a cone.", "Rotate it 90°."). `PhraseSnapper` maps it onto the grammar with the
 parser's tokenizer: either the closest single phrase by character similarity, or a split into consecutive grammar
