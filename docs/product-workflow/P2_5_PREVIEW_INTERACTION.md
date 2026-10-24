@@ -1,6 +1,6 @@
 # P2.5: full native Blender preview interaction and spatial drawing
 
-This feature is developed on `codex/talia-p2-5-blender-interaction`, based on P2 workspace arrangement `54bd597`. P2 continues to own workspace layout, Arrange controls, room helpers, the left-hand setup menu and accepted grip/placement behavior. P2.5 consumes the actual preview image rectangle and existing stabilized ray. Main is not merged and P2's test runtime is not replaced.
+This feature is developed on `codex/talia-p2-5-blender-interaction`, starting from P2 workspace arrangement `54bd597`. Its published surface/visible-level update `e880714` is forward-merged on this feature through `8937c95`; a closer movable level also bounds native preview input. P2 continues to own workspace layout, Arrange controls, room helpers, the left-hand setup menu and accepted grip/placement behavior. P2.5 consumes the actual preview image rectangle and existing stabilized ray. Main is not merged and P2's test runtime is not replaced. Review is tracked in [draft PR #140](https://github.com/waaberi/calhacks13/pull/140).
 
 ## What is implemented
 
@@ -53,4 +53,4 @@ The normal P2 launch stays unchanged. A P2.5 build requires this branch's add-on
 
 Do not use the existing P2 headset session to validate this branch without coordination. Existing P2 menu acceptance is retained, not requested again. See [verification and remaining runtime gates](P2_5_RESULTS.md) and [spatial/native integration contract](P2_5_SPATIAL_BRIDGE.md).
 
-The preserved P2.5 software checkpoint is the complete external `artifacts/p25-preview-spatial-v6` directory, built from app source `e4d3108`. Keep its executable, data directory and runtime dependencies together. It has been built and checked without launching a competing Player. P2's subsequently published surface controls are being reconciled separately; the results document identifies the later integrated candidate when available.
+The integrated Windows candidate is the complete external `artifacts/p25-preview-spatial-v7` directory, built from app source `ccb2c56`, including published P2 surfaces `e880714`. Keep its executable, data directory and runtime dependencies together. The preceding isolated P2.5 checkpoint `artifacts/p25-preview-spatial-v6` from `e4d3108` is preserved. Both were built and checked without launching a Player. P2's separately reported XR startup failure remains an open runtime gate; these software passes do not establish a startup or physical interaction pass.
