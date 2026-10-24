@@ -43,9 +43,11 @@ Undo/Redo) is remembered until the next file load and given back.
 Change observation: depsgraph_update_post marks the scene as changed and notes
 whose geometry changed; undo_post and redo_post mark everything, since Undo
 replaces data-blocks. A flush looks every object up again, diffs its record
-(name, parent, visibility, transform, color) with what clients have, and
-re-evaluates only meshes that may have changed, comparing them by digest. An
-update leaves out `mesh` when the mesh didn't change. poll() flushes at most
+(name, parent, visibility, transform, color) and the collections holding it
+with what clients have, and re-evaluates only meshes that may have changed,
+comparing them by digest. An update leaves out `mesh` when the mesh didn't
+change; one after a move to another collection only has a new generation,
+since the wire has no collections. poll() flushes at most
 every MIN_INTERVAL, and waits COST_FACTOR times as long as the last flush took,
 so a drag in Blender streams small updates and a heavy mesh can't stall
 Blender. It also diffs every RESCAN_INTERVAL as a safety net. A flush that
@@ -81,13 +83,14 @@ _assigned = {}  # session_uid -> the ID we gave that object; cleared when a file
 class _Entry:
     """One object as clients have it."""
 
-    __slots__ = ("generation", "mesh", "record", "uid")
+    __slots__ = ("collections", "generation", "mesh", "record", "uid")
 
-    def __init__(self, record, mesh, generation, uid):
+    def __init__(self, record, mesh, generation, uid, collections=frozenset()):
         self.record = record  # scene.record(): everything but generation and mesh
         self.mesh = mesh  # scene.Mesh or None
         self.generation = generation
         self.uid = uid  # the object's session_uid when we last saw it
+        self.collections = collections  # session_uids of the scene's collections holding it
 
     def wire(self, with_mesh):
         """The object in scene.snapshot.schema.json's order; `mesh` only if with_mesh."""
@@ -250,6 +253,22 @@ def _document_state(doc):
     return doc["name"], doc["dirty"]
 
 
+def _memberships(scn):
+    """{object session_uid: frozenset of the session_uids of the scene's collections holding it}.
+
+    Not sent: the wire has no collections. A move to another collection (the
+    Outliner's drag and drop) still changes the object, so it gets a new
+    generation, and gate.py sees it (#80). Collections by session_uid, so
+    renaming one changes nothing.
+    """
+    holders = {}
+    for coll in (scn.collection, *scn.collection.children_recursive):
+        uid = coll.session_uid
+        for obj in coll.objects:
+            holders.setdefault(obj.session_uid, set()).add(uid)
+    return {k: frozenset(v) for k, v in holders.items()}
+
+
 def _flush(st):
     depsgraph = bpy.context.evaluated_depsgraph_get()  # evaluates; our handler notes changes
     full, dirty = st.full or not st.started, st.dirty
@@ -264,6 +283,7 @@ def _flush(st):
 
     ids = _identify(st, view_layer.objects)
     id_of = {obj.session_uid: oid for oid, obj in ids}
+    memberships = _memberships(scn)
     current = {}
     for oid, obj in ids:
         parent = obj.parent
@@ -284,7 +304,8 @@ def _flush(st):
                 mesh = scene.evaluated_mesh(obj, depsgraph, scale)
             except Exception:  # one odd object must not stop the sync of all the others
                 log.exception("could not read %s's mesh; clients keep the last one", obj.name)
-        current[oid] = _Entry(record, mesh, old.generation if old else 0, obj.session_uid)
+        current[oid] = _Entry(record, mesh, old.generation if old else 0, obj.session_uid,
+                              memberships.get(obj.session_uid, frozenset()))
 
     if not st.started:  # what the file had when the server started is revision 0
         st.objects, st.units, st.started = current, units, True
@@ -298,7 +319,7 @@ def _flush(st):
             changed.append((oid, True))
             continue
         new_mesh = not _same_mesh(old.mesh, entry.mesh)
-        if new_mesh or entry.record != old.record:
+        if new_mesh or entry.record != old.record or entry.collections != old.collections:
             changed.append((oid, new_mesh))
     removed = [oid for oid in st.objects if oid not in current]
     if resnapshot or changed or removed:

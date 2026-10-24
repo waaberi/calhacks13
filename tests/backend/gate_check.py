@@ -10,8 +10,9 @@ test_blender.py runs it:
 Lee, a VR client, leases Cube (which also covers Twin, sharing its mesh). Every
 supported route must then be refused with nothing changed and a reason, while
 an unrelated object stays editable; changes by routes the gate doesn't cover
-(the Python console's RNA path, an operator, Undo from a script) must be
-recorded as bypasses, with a fresh snapshot for Lee. Then the same with an
+(the Python console's RNA path, an operator, Undo from a script, a drag to
+another collection in the Outliner) must be recorded as bypasses, with a fresh
+snapshot for Lee. Then the same with an
 exclusive lease, the automatic unlock on release and on disconnect, and
 disabling the add-on while the gate runs.
 
@@ -112,6 +113,7 @@ def state():
             tuple((m.name, m.type, getattr(m, "levels", None), m.show_viewport)
                   for m in obj.modifiers),
             mesh and (len(mesh.vertices), mesh.name),
+            tuple(sorted(c.name for c in obj.users_collection)),
         )
     return out
 
@@ -221,6 +223,29 @@ def find_field(ui, region, obj, xs=(0.55, 0.75)):
                 bpy.ops.ed.undo_push(message="Put the field back")
                 return ui.x, ui.y
     return None
+
+
+def outliner_rows(screen, ui, *names):
+    """{name: window y} of these objects' and collections' Outliner rows, found by clicking down
+    its rows (selecting is never refused). Ends with nothing selected and Collection active."""
+    region = screen.region("OUTLINER")
+    layer = bpy.context.view_layer
+    x, top = center(region, 0.3, 1.0)
+    rows = {}
+    for dy in range(8, region.height, 6):
+        select_only()
+        layer.active_layer_collection = layer.layer_collection.children["Collection"]
+        ui.click(x, top - dy)
+        yield from pause(0.05)
+        hit = layer.objects.active or layer.active_layer_collection.collection
+        if hit.name in names:
+            rows.setdefault(hit.name, top - dy)
+        if len(rows) == len(names):
+            break
+    select_only()
+    layer.active_layer_collection = layer.layer_collection.children["Collection"]
+    assert len(rows) == len(names), f"found only {rows} of {names} in the Outliner"
+    return rows
 
 
 def refused(gate, what, act, reason):
@@ -398,6 +423,8 @@ def shared_mode(gate, host, screen, ui, lee, lease, sidebar_field, props_field):
                               ("Ctrl+A (Apply menu)", "A", {"ctrl": 1}),
                               ("right-click (object context menu)", "RIGHTMOUSE", {}),
                               ("Ctrl+1 (Subdivision Set)", "ONE", {"ctrl": 1}),
+                              ("M (move to collection)", "M", {}),
+                              ("Shift+M (link to collection)", "M", {"shift": 1}),
                               ("Tab (Edit Mode)", "TAB", {}),
                               ("Ctrl+Z (Undo)", "Z", {"ctrl": 1}),
                               ("Ctrl+Shift+Z (Redo)", "Z", {"ctrl": 1, "shift": 1})):
@@ -524,10 +551,10 @@ def shared_mode(gate, host, screen, ui, lee, lease, sidebar_field, props_field):
                    "left at the next tick, before any edit", gate.refusals[-1][1]))
     log("Edit Mode entered by an ungated route was left before anything could change")
 
-    yield from bypasses(gate, host, screen, lee, lease)
+    yield from bypasses(gate, host, screen, ui, lee, lease)
 
 
-def bypasses(gate, host, screen, lee, lease):
+def bypasses(gate, host, screen, ui, lee, lease):
     """Routes the gate doesn't cover: each is a recorded bypass and Lee gets a fresh snapshot."""
     sync = mod("sync")
     cube = bpy.data.objects["Cube"]
@@ -578,6 +605,16 @@ def bypasses(gate, host, screen, lee, lease):
         bpy.ops.ed.undo()  # what Edit > Undo and Undo History run
 
     yield from detected("Undo from the Edit menu (bpy.ops.ed.undo)", undo, history=True)
+
+    scene_collection = bpy.context.scene.collection.name
+    rows = yield from outliner_rows(screen, ui, "Cube", scene_collection)
+    x = center(screen.region("OUTLINER"), 0.3)[0]
+
+    def drop():  # only the collections holding Cube change (#80)
+        ui.drag(x, rows["Cube"], x, rows[scene_collection], steps=10)
+
+    yield from detected("dragging Cube onto Scene Collection in the Outliner", drop)
+    assert [c.name for c in bpy.data.objects["Cube"].users_collection] == [scene_collection]
 
 
 def exclusive_mode(gate, screen, ui, sidebar_field):
