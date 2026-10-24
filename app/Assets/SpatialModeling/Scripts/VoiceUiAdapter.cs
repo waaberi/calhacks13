@@ -73,8 +73,8 @@ namespace SpatialModeling
             cancel = new InputAction("CancelPending", InputActionType.Button);
             cancel.AddBinding("<XRController>{LeftHand}/triggerPressed");
             cancel.AddBinding("<Keyboard>/escape");
-            talk.started += _ => input?.StartUtterance();
-            talk.canceled += _ => input?.StopUtterance();
+            talk.started += _ => { Debug.Log("TALK down. ready=" + input?.Ready + " error=" + input?.Error); input?.StartUtterance(); };
+            talk.canceled += _ => { Debug.Log("TALK up"); input?.StopUtterance(); };
             confirm.started += _ => ConfirmDelete();
             cancel.started += _ => Handle(session.Cancel());
             talk.Enable(); confirm.Enable(); cancel.Enable();
@@ -124,7 +124,11 @@ namespace SpatialModeling
             {
                 if (input.Error != null && Time.time > noteUntil) Note("Voice off: " + input.Error);
                 while (input.TryGetResult(out RecognitionResult result))
+                {
+                    Debug.Log("HEARD: " + result);
+                    Note("Heard: " + result.Text);
                     Handle(session.Hear(result));
+                }
             }
             Handle(session.Tick());
             UpdatePointer();
