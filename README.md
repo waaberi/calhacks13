@@ -53,14 +53,34 @@ In open PRs: editing from VR with the hand menu, edit modes and lock warnings in
 
 Progress is on the [project board](https://github.com/users/waaberi/projects/3).
 
-## Running it
+## Using it
 
-You need Windows, a Quest 3S with Quest Link, Blender 5.2.2 and Unity 6000.6.5f1.
+You need:
+
+- a Windows PC with the Meta Horizon Link app
+- a Quest 3S, connected with a Link cable or Air Link
+- Blender 5.2.2
+- optionally, a second PC with Blender 5.2.2 for a second editor
+
+There's no packaged Windows build yet, so for now you run the app from source (see below).
 
 1. Link `blender_addon/spatial_modeling` into Blender's `extensions/user_default/` folder, enable Spatial Modeling under Preferences › Add-ons, and choose Host.
-2. Open [`samples/mechanical/p0_reference_v2.blend`](samples/mechanical/).
-3. Open `app/` in Unity, connect the Quest with Quest Link, and press Play.
+2. Open a `.blend` file, for example [`samples/mechanical/p0_reference_v2.blend`](samples/mechanical/).
+3. Start the VR app with the Quest connected through Link.
 4. For a second editor: on the host, turn on "Let a Client-role Blender join over the LAN" in the add-on preferences and note the session token. On the other PC, install the add-on, choose Client, and enter the host's address and the token.
+
+## Building from source
+
+On top of the above:
+
+- **VR app:** Unity 6000.6.5f1. Its packages are pinned in `app/Packages/manifest.json`. Before you open `app/` for the first time, fetch the speech libraries and model from Git Bash:
+  ```sh
+  voice/fetch-vosk.sh
+  voice/fetch-model.sh app/Assets/StreamingAssets
+  ```
+  Then open `app/` and press Play.
+- **Tests:** Python 3.13 with `pip install ruff pytest jsonschema`, then `ruff check .` and `pytest tests`. VoiceCore's tests need the .NET 10 SDK: run `voice/fetch-model.sh`, then `dotnet test tests/voice`. CI runs both on every PR.
+- **SpacetimeDB (optional):** Node.js and the SpacetimeDB CLI; see [spacetime/README.md](spacetime/README.md). If no SpacetimeDB server is running, the host keeps session state in memory.
 
 The full script is in [docs/demo/DEMO_STEPS.md](docs/demo/DEMO_STEPS.md). Team notes and repo rules are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
