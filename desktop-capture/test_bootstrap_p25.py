@@ -16,6 +16,7 @@ from bootstrap_p25 import (
     configure_private_server,
     isolated_port,
     prepare,
+    private_temporary_files,
     require_factory_process,
     safe_session,
     validated_wheel,
@@ -130,6 +131,16 @@ class BootstrapPreparationTests(unittest.TestCase):
 
 
 class BootstrapRuntimeGuardTests(unittest.TestCase):
+    def test_private_temp_overrides_environment_and_cached_tempfile_before_cad_import(self):
+        with tempfile.TemporaryDirectory(prefix="p25-temp-guard-") as session:
+            env = {"TMP": "personal", "TEMP": "personal", "TMPDIR": "personal"}
+            fake_tempfile = SimpleNamespace(tempdir="cached-personal")
+            private = private_temporary_files(session, env, fake_tempfile)
+            self.assertEqual(private.parent, Path(session).resolve())
+            self.assertTrue(private.is_dir())
+            self.assertEqual(set(env.values()), {str(private)})
+            self.assertEqual(fake_tempfile.tempdir, str(private))
+
     def test_only_factory_empty_clean_blender52_process_is_allowed(self):
         fake = SimpleNamespace(data=SimpleNamespace(filepath="", is_dirty=False),
                                app=SimpleNamespace(version=(5, 2, 0)))

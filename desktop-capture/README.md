@@ -70,3 +70,38 @@ The view-only and GET-only descriptions above apply to the default P1/P2 launch.
 Use the separate P2.5 Player opt-in and a matching branch add-on. The controller maps only the actual displayed RawImage/crop to native pixels. Captured image instance, selection generation and geometry fingerprints bind the displayed JPEG to input; a fresh heartbeat is not a substitute for source identity or live pixels. Input uses exact selected Blender HWND/process validation, explicit focus, finite bounded coordinates and a held-input release watchdog. Other same-process Blender GHOST windows can be explicitly selected; non-GHOST OS dialogs have no desktop fallback.
 
 See [P2.5 controls, supported routes and remaining coverage](../docs/product-workflow/P2_5_PREVIEW_INTERACTION.md). `launch_p25.py` requires explicit isolated native/capture ports and refuses competing Players. It does not start Blender, install add-ons, start helpers or steal focus during preflight.
+
+### Isolated P2.5 native host
+
+`bootstrap_p25.py` starts the branch add-on in a **new factory-startup Blender process**, using a new directory outside Git worktrees and OneDrive. Set `BLENDER_USER_RESOURCES` to that directory's future `blender-resources` child; do not create or reuse the session directory first. It refuses an open file, dirty scene, wrong Blender version, personal profile override, default P2 ports or previously loaded project packages. The source `.blend` and add-on package are copied before use; only `working.blend` is opened. Embedded file scripts are disabled. External assets referenced by the original `.blend` are not automatically copied.
+
+Run from this feature branch's repository root, with actual source paths:
+
+```powershell
+$p25Repo = (Resolve-Path .).Path
+$p25Session = 'C:\path\outside-Git-and-OneDrive\NEW-p25-native-session'
+$p25PreviousResources = $env:BLENDER_USER_RESOURCES
+try {
+    $env:BLENDER_USER_RESOURCES = Join-Path $p25Session 'blender-resources'
+    & 'C:\Program Files\Blender Foundation\Blender 5.2\blender.exe' `
+        --factory-startup --python-exit-code 1 `
+        --python "$p25Repo\desktop-capture\bootstrap_p25.py" -- `
+        --session-dir $p25Session `
+        --blend 'C:\path\to\saved-source.blend' `
+        --addon-root "$p25Repo\blender_addon\spatial_modeling" `
+        --host-port 8769 `
+        --cad-extension 'C:\path\to\CAD_Sketcher-0.32.1'
+} finally {
+    $env:BLENDER_USER_RESOURCES = $p25PreviousResources
+}
+```
+
+Omit `--cad-extension` and its value for native preview interaction without CAD. When supplied, the source must be CAD Sketcher **0.32.1** containing `wheels/slvs-3.2-cp313-cp313-win_amd64.whl`. Both the extension and validated solver wheel are copied into the session; no personal extension installation or preferences save occurs. Its temporary files and CAD log are redirected into `SESSION/temp`, including Python's cached temporary directory. The host binds only `127.0.0.1:8769`, with LAN off; a private in-process server wrapper supplies the explicit port because the base class's default captured 8765 when defined.
+
+After a successful start, `SESSION/bootstrap.json` records `status: host_ready`, the process ID, explicit port, CAD availability and source/copy digests. Select this process's Blender window in a separately started input helper on a different explicit port, then use `launch_p25.py` to validate matching native/capture identities before launching the P2.5 Player. The bootstrap itself starts no helper or Player and never stops another process. Adding `--background` before `--factory-startup` validates startup without a GUI and exits automatically after the script completes.
+
+### Bootstrap verification — 2026-10-24
+
+Eleven pure bootstrap tests cover private copies, unchanged sources, fresh directory/profile guards, safe pinned-wheel extraction, factory/dirty-file guards, temporary-directory isolation and the frozen-default-port regression. An isolated background Blender **5.2.2 LTS** run at **2026-10-24T17:45:51.938Z** loaded a private copy of the existing native CAD evidence, registered the private extension/add-on, reported `P25_PRIVATE_HOST_READY` on `127.0.0.1:8769` with CAD available and LAN off, then exited **0**. Its CAD log resolved under the new session's `temp` directory. No new Blender process or port-8769 listener remained. The source `.blend` SHA256 stayed `1d208f9064e880ce25880523069d02bab23735fdc185c04b5dc5b60bb57769b5`.
+
+The first background observation succeeded at host startup but exposed CAD's default log in shared Windows TEMP. That observation is preserved; the private-temp change above was validated in one separately authorized follow-up run. The initial artifact's `194200Z` filename suffix is a label, not a verified execution time. Local evidence prefixes are `p25-bootstrap-background-20261024T194200Z` and `p25-bootstrap-private-temp-20261024T174551Z` under the external `calhacks13-p0/evidence` directory, with logs, result JSON and private session manifests. No GUI, capture helper, Player, headset test or native input injection was run for these checks. Interactive focus, button coverage and physical drawing acceptance remain pending.

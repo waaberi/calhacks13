@@ -179,11 +179,26 @@ def configure_private_server(server, port):
     server.Server = PrivateServer
 
 
+def private_temporary_files(session, environ=None, tempfile_module=None):
+    """CAD's logger uses gettempdir(), independently of Blender resources."""
+    if tempfile_module is None:
+        import tempfile as tempfile_module
+    environ = os.environ if environ is None else environ
+    directory = Path(session).resolve() / "temp"
+    directory.mkdir(exist_ok=False)
+    for key in ("TMP", "TEMP", "TMPDIR"):
+        environ[key] = str(directory)
+    # tempfile may already have cached the old Windows TEMP during startup.
+    tempfile_module.tempdir = str(directory)
+    return directory
+
+
 def run(args, argv=None):
     import bpy  # Blender-only entry point; pure prepare/tests never import this.
 
     require_factory_process(bpy, sys.argv if argv is None else argv)
     record = prepare(args)
+    record["temporary_files"] = str(private_temporary_files(args.session_dir))
     package = Path(record["addon_package"])
     sys.path.insert(0, str(package.parent))
     if record["cad"]:
