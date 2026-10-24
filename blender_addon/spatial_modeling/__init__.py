@@ -154,9 +154,13 @@ def register():
     gate.register()
     from . import ownership
     ownership.register()
+    from . import remote_test_ui
+    remote_test_ui.register()
 
 
 def unregister():
+    from . import remote_test_ui
+    remote_test_ui.unregister()
     from . import ownership
     ownership.unregister()
     gate.unregister()

@@ -205,7 +205,9 @@ def test_stop_closes_everything_and_restart_reuses_the_port():
         assert client.recv() is None
         client.close()
         with pytest.raises(ConnectionRefusedError):
-            socket.create_connection(("127.0.0.1", port), timeout=1)
+            # Windows may take about two seconds to report a refused loopback
+            # connection. Still require refusal (not a timeout or a live socket).
+            socket.create_connection(("127.0.0.1", port), timeout=5)
 
         srv.start()  # same port, no "address already in use"
         assert srv.port == port and srv.running

@@ -16,6 +16,7 @@ import time
 import traceback
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 import bpy
 
@@ -66,6 +67,7 @@ def native_objects():
         if o.type == "MESH" else None,
         "materials": [m.name for m in o.data.materials] if o.type == "MESH" else [],
         "uv_layers": [uv.name for uv in o.data.uv_layers] if o.type == "MESH" else [],
+        "unrelated_marker": o.get("preserve_me"),
     } for o in bpy.data.objects}
 
 
@@ -165,6 +167,8 @@ def apply(peer, op, target=None, args=None, watcher=None):
     updates = [m["payload"] for m in before if m["type"] == "scene.update"]
     assert len(updates) == 1, (op, before)
     assert updates[0]["document"]["revision"] == receipt["revision"], (updates, receipt)
+    if op == "document.save":
+        assert updates[0]["document"]["dirty"] is False, updates[0]
     yield from release(peer, lease_id)
     if watcher is not None:
         seen = yield from off_thread(watcher.barrier)
@@ -216,7 +220,17 @@ def remote_process(token, target, enabled, output):
 
 def remote_command():
     """Executed only inside the throwaway background Blender client process."""
+    from spatial_modeling import remote_control, remote_test_ui
+
     enabled = os.environ["P3A_REMOTE_ENABLED"] == "1"
+    remote_test_ui.register()
+    operator_type = bpy.ops.spatial_modeling.remote_move_test.get_rna_type()
+    assert operator_type.name == "Move host object +10 mm X", operator_type.name
+    assert bpy.context.window_manager.spatial_remote_test_enabled is False
+    assert remote_test_ui.SPATIAL_OT_remote_move_test.poll(bpy.context) is False
+    # The test's preflight mirror is acquired over a real authenticated snapshot.
+    # Main's remote_client is a stub, so adapt only P2's settings/state interface;
+    # the registered operator, worker, network and native mutation remain real.
     with Peer(port=int(os.environ["P3A_REMOTE_PORT"]),
               token=os.environ["P3A_REMOTE_TOKEN"], timeout=20) as peer:
         _, welcome = peer.ask(hello("P3A real remote Blender", "blender-client"))
@@ -227,33 +241,62 @@ def remote_command():
         assert w["can_edit"] is enabled, w
         target = os.environ["P3A_REMOTE_TARGET"]
         native_target = next(o for o in snapshot["payload"]["objects"] if o["id"] == target)
-        fields = {"session_id": w["session_id"], "host_epoch": w["host_epoch"],
-                  "document_id": w["document"]["id"],
-                  "open_epoch": w["document"]["open_epoch"], "actor_id": w["actor_id"]}
-        lease_id = None
-        if enabled:
-            _, granted = peer.ask(protocol.message("lease.acquire", {
-                **fields, "mode": "exclusive", "targets": []}))
-            assert granted["type"] == "lease.granted", granted
-            lease_id = granted["payload"]["lease"]["lease_id"]
-        payload = {**fields, "base_revision": snapshot["payload"]["document"]["revision"],
-                   "source": "ui", "op": "object.move", "args": {"by": [0.01, 0, 0]},
-                   "target": {"id": target, "generation": native_target["generation"]}}
-        if lease_id:
-            payload["lease"] = lease_id
-        before, result = peer.ask(protocol.message("command", payload))
-        assert result["type"] == "result", result
-        receipt = result["payload"]
-        if enabled:
-            assert receipt["outcome"] == "applied", receipt
-            assert [m["type"] for m in before] == ["scene.update"], before
-            peer.send(protocol.message("lease.release", {"lease_id": lease_id}))
-            peer.barrier()
-        else:
-            assert receipt["error"]["code"] == "permission_denied", receipt
-        print("P3A_REMOTE_RESULT " + json.dumps({"blender": bpy.app.version_string,
-              "pid": os.getpid(), "can_edit": w["can_edit"], "receipt": receipt,
-              "messages": REPORT["messages"]}), flush=True)
+    config = remote_control.RemoteConfig("127.0.0.1", int(os.environ["P3A_REMOTE_PORT"]),
+        os.environ["P3A_REMOTE_TOKEN"], session.APP["version"], "P3A real remote Blender")
+    expected = {k: snapshot["payload"]["document"][k] for k in ("id", "open_epoch")}
+    default_off = remote_test_ui.run_controlled_move(config, expected, target,
+                                                     native_target["generation"])
+    assert default_off.code == "feature_disabled" and default_off.receipt is None
+    mirror_state = SimpleNamespace(current=True, document=snapshot["payload"]["document"],
+        objects={o["id"]: o for o in snapshot["payload"]["objects"]})
+    prefs = SimpleNamespace(role="CLIENT", client_address=config.address, client_port=config.port,
+        client_token=config.token, client_tls=config.tls, host_name=config.name)
+    real_state, real_prefs = remote_test_ui._state, remote_test_ui._prefs
+    remote_test_ui._state = lambda: mirror_state
+    remote_test_ui._prefs = lambda _context: prefs
+    assert not bpy.ops.spatial_modeling.remote_move_test.poll()
+    bpy.context.window_manager.spatial_remote_test_enabled = True
+    assert bpy.ops.spatial_modeling.remote_move_test.poll()
+    queued = bpy.ops.spatial_modeling.remote_move_test(target_id=target)
+    assert queued == {"FINISHED"} and remote_test_ui._job is not None
+    assert "Waiting for host confirmation" in bpy.context.window_manager.spatial_remote_test_status
+    assert not bpy.ops.spatial_modeling.remote_move_test.poll(), "second command admitted while pending"
+    deadline = time.monotonic() + 35
+    while remote_test_ui._job is not None:
+        assert time.monotonic() < deadline, "registered remote operator didn't finish"
+        remote_test_ui._finish()  # background Blender does not service GUI timers
+        time.sleep(0.01)
+    outcome = remote_test_ui._last_outcome
+    assert bpy.context.window_manager.spatial_remote_test_status == outcome.message
+    if enabled:
+        assert outcome.outcome == "applied" and not outcome.blocked, outcome
+    else:
+        assert outcome.code == "permission_denied" and outcome.outcome == "rejected", outcome
+    final_status = bpy.context.window_manager.spatial_remote_test_status
+    # UI component check: inject a completed unknown outcome, not a native edit.
+    # Real lost-receipt and unknown-native transport cases live in test_remote_control.
+    remote_test_ui._results.put((remote_control.MoveOutcome("unknown", "d" * 32,
+        "outcome_unknown", "Outcome unknown. Reconnect and verify."), mirror_state))
+    remote_test_ui._finish()
+    assert not bpy.ops.spatial_modeling.remote_move_test.poll()
+    assert not bpy.ops.spatial_modeling.remote_retry_after_reconnect.poll()
+    mirror_state = SimpleNamespace(current=True, document=mirror_state.document,
+                                   objects=mirror_state.objects)
+    assert not bpy.ops.spatial_modeling.remote_move_test.poll(), "reconnect alone cleared unknown"
+    assert bpy.ops.spatial_modeling.remote_retry_after_reconnect.poll()
+    assert bpy.ops.spatial_modeling.remote_retry_after_reconnect() == {"FINISHED"}
+    assert bpy.ops.spatial_modeling.remote_move_test.poll()
+    remote_test_ui._state, remote_test_ui._prefs = real_state, real_prefs
+    remote_test_ui.unregister()
+    print("P3A_REMOTE_RESULT " + json.dumps({"blender": bpy.app.version_string,
+          "pid": os.getpid(), "can_edit": w["can_edit"], "outcome": outcome.outcome,
+          "code": outcome.code, "receipt": outcome.receipt,
+          "registered_operator": operator_type.identifier, "default_ui_flag": False,
+          "invoked": "bpy.ops.spatial_modeling.remote_move_test(target_id=real_snapshot_id)",
+          "pending_blocked": True, "final_status": final_status,
+          "ui_unknown_latch": "injected completed unknown; reconnect plus explicit retry required",
+          "p2_adapter": "test-only settings/state from actual TLS snapshot; main P2 module is a stub",
+          "messages": REPORT["messages"]}), flush=True)
 
 
 def checks():
@@ -261,7 +304,8 @@ def checks():
     assert os.environ.get("BLENDER_USER_RESOURCES"), "throwaway Blender resources required"
     assert not bpy.app.background, "real GUI Undo/Redo event loop required"
     REPORT.update(blender=bpy.app.version_string, python=sys.version,
-                  binary=bpy.app.binary_path, source_hashes=source_hashes())
+                  binary=bpy.app.binary_path, source_hashes=source_hashes(),
+                  harness_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
     scale = float(os.environ.get("P3A_UNIT_SCALE", "0.001"))
     REPORT["unit_scale"] = scale
     units = bpy.context.scene.unit_settings
@@ -371,7 +415,7 @@ def checks():
     log("duplicate stale missing invalid receipt recovery", duplicate=conflict,
         stale=reply, missing=missing_reply, invalid=invalid_reply, receipts=recovered)
     off_result = yield from remote_process(token, created["sphere"], False, output)
-    assert off_result["receipt"]["error"]["code"] == "permission_denied", off_result
+    assert off_result["code"] == "permission_denied", off_result
     assert native_objects() == before_native
     yield from off_thread(vr.barrier)
     yield from off_thread(watcher.barrier)
@@ -389,7 +433,9 @@ def checks():
         enabled=remote_result, transport="two real Blender processes, TLS localhost, same PC")
     assert native_objects()[unrelated_id] == unrelated_before, "unrelated object changed"
     yield from off_thread(watcher.barrier)
+    assert SESS.document()["dirty"] is True, "native edits weren't marked dirty"
     saved, _ = yield from apply(vr, "document.save", watcher=watcher)
+    assert bpy.data.is_dirty is False, "GUI Blender didn't clear dirty after Save"
     saved_objects = native_objects()
     REPORT["saved_objects"] = saved_objects
     REPORT["saved_blend"] = str(blend)

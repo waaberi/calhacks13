@@ -24,6 +24,38 @@ two-computer networking, VR numeric entry, menu usability and physical tests.
 Save on an unnamed file still requires the host's native Save As dialog first;
 clients cannot choose arbitrary server filesystem paths.
 
+## Opt-in Client move operator
+
+The Spatial sidebar's Controlled remote test panel is disabled by default.
+With a current P2 Client mirror and its connection preferences available, enable
+the local test switch, choose the host object by its actual name, and request
+one +10 mm X move. The host must also enable Client edits (test only).
+`remote_control.py` creates a separate authenticated TLS connection, checks the
+document/open epoch and target generation, obtains a shared reservation, sends
+exactly one command and waits for the matching native receipt. It never changes
+the local mirrored geometry directly. Ordinary P2 mirror traffic stays read-only.
+
+Pending requests disable another move. A lost/invalid acknowledgement is unknown
+and blocks further edits until the mirror reconnects, the user checks the scene,
+and explicitly allows a new request. Neither the command nor an unknown outcome
+is retried automatically. The native shared commit protects the lease through an
+executing transaction even if this independent connection closes.
+
+Fourteen transport tests passed, including TLS flag-off, wrong/stale/missing
+target, conflicting lease, changed target after grant, lost/invalid receipt and
+no automatic resend. A second actual Blender process invoked the registered
+`bpy.ops.spatial_modeling.remote_move_test` entry point: local switch off, host
+switch off, pending state and the applied native 10 mm result passed in both
+unit scales. Only the P2 state/preferences interface was adapted in this bounded
+test from an authenticated real snapshot; full cumulative P2 UI integration
+remains the coordinator's separate check.
+
+`tests/backend/p3_host_smoke.py` supplies a long-lived isolated real Blender host
+for the Windows app/menu integration check. Set fresh output/resources paths and
+an unused loopback port; `ready.json` identifies the host, `report.json` reads
+actual native state, and `stop.signal` cleanly ends only that test host. It passed
+startup, leased native add, numerical readback, Save and clean shutdown.
+
 ## Bounded receipt safety
 
 The host formerly accepted an ID again after its receipt or missing-request
@@ -33,7 +65,9 @@ hosting session starts. Retained identical receipts still replay without a
 second edit. The 10,000-entry bound is retained; no unbounded tombstone list is
 introduced. A read-only participant can exhaust this shared history and cause
 new edits to require a hosting-session restart. Save the document before
-restarting. Reconnecting just the client does not reset the safety boundary.
+restarting. Use File > Save in host Blender; remote/VR Save commands are refused
+after capacity exhaustion too. Reconnecting just the client does not reset the
+safety boundary.
 
 `tests/backend/test_receipt_capacity.py` exercises evicted applied IDs, evicted
 query fences, new writes after capacity, and retained receipt replay. The
