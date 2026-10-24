@@ -371,6 +371,7 @@ namespace SpatialModeling
         {
             var go=new GameObject("Visible surface grid",typeof(LineRenderer)); go.transform.SetParent(parent,false);
             var line=go.GetComponent<LineRenderer>(); line.sharedMaterial=material; line.useWorldSpace=false;
+            line.alignment=LineAlignment.TransformZ; // Flat on the plane; camera-facing ribbons can cover their own bright core.
             line.startWidth=line.endWidth=width;
             line.shadowCastingMode=UnityEngine.Rendering.ShadowCastingMode.Off; line.receiveShadows=false;
             return line;
