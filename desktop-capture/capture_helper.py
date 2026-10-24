@@ -5,6 +5,7 @@ import ctypes as C
 import io
 import json
 import os
+import secrets
 import socket
 import threading
 import time
@@ -174,6 +175,7 @@ class LatestFrame:
         self.last_success = 0
         self.input_bridge = None  # P2.5 is explicit opt-in; capture behavior stays the default.
         self.input_geometry = None
+        self.capture_instance = secrets.token_urlsafe(18)
         self.status = {
             "state": "no_window",
             "window": None,
@@ -242,6 +244,10 @@ class LatestFrame:
             return True
 
     def snapshot(self):
+        return self.snapshot_with_identity()[:3]
+
+    def snapshot_with_identity(self):
+        """Identity and pixels must share one lock, including a queued HTTP reply."""
         with self.lock:
             status = dict(self.status)
             jpeg = self.jpeg
@@ -250,7 +256,7 @@ class LatestFrame:
                     state="error", fps=0.0, message="Capture stalled. Last frame is unavailable."
                 )
                 jpeg = None
-            return status, jpeg, self.captured_ms
+            return status, jpeg, self.captured_ms, self.generation, self.capture_instance
 
 
 def capture_refresh_due(last_callback, now):
@@ -506,7 +512,7 @@ def make_server(latest, port, input_bridge=None):
             if self.headers.get("Host", "").split(":")[0] not in ("127.0.0.1", "localhost"):
                 self.send_error(403)
                 return
-            status, jpeg, captured = latest.snapshot()
+            status, jpeg, captured, generation, instance = latest.snapshot_with_identity()
             headers = {}
             if self.path == "/input/state":
                 if not self.input_request_allowed():
@@ -534,6 +540,8 @@ def make_server(latest, port, input_bridge=None):
                         "ETag": etag,
                         "X-Captured-At": str(captured),
                         "X-Capture-Alive": str(int(time.time() * 1000)),
+                        "X-Selection-Generation": str(generation),
+                        "X-Capture-Instance": instance,
                         "X-Window": (status["window"] or "")
                         .encode("ascii", "replace")
                         .decode()

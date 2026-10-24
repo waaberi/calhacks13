@@ -298,6 +298,9 @@ class InputHttpTests(unittest.TestCase):
         code, body = self.request("GET", "/input/state")
         self.assertEqual(code, 200)
         self.assertTrue(json.loads(body)["ready"])
+        self.assertEqual(json.loads(body)["capture_generation"], self.latest.generation)
+        self.assertEqual(json.loads(body)["capture_instance"], self.latest.capture_instance)
+        self.assertEqual(json.loads(body)["frame"], self.latest.sequence)
         payload = self.event("key", key="ESC", action="press")
         code, body = self.request("POST", "/input", json.dumps(payload),
                                   {"Content-Type": "application/json"})

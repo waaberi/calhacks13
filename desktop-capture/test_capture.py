@@ -62,8 +62,37 @@ class CaptureContractTests(unittest.TestCase):
         self.assertEqual(headers["Content-Type"], "image/jpeg")
         self.assertEqual(headers["X-Size"], "64x48")
         self.assertTrue(body.startswith(b"\xff\xd8"))
-        code, _, body = self.get("/frame", {"If-None-Match": headers["ETag"]})
+        self.assertEqual(headers["X-Selection-Generation"], "0")
+        self.assertEqual(headers["X-Capture-Instance"], self.latest.capture_instance)
+        code, cached_headers, body = self.get("/frame", {"If-None-Match": headers["ETag"]})
         self.assertEqual((code, body), (304, b""))
+        self.assertEqual(cached_headers["X-Capture-Instance"], headers["X-Capture-Instance"])
+        self.assertEqual(cached_headers["X-Selection-Generation"], "0")
+
+    def test_http_frame_identity_stays_bound_to_pixels_during_selection_race(self):
+        self.publish()
+        old_jpeg = self.latest.snapshot()[1]
+        original = self.latest.snapshot_with_identity
+
+        def snapshot_then_change_selection():
+            old = original()
+            self.latest.select({"hwnd": 123, "pid": 456, "title": "New Blender window"})
+            return old
+
+        with patch.object(self.latest, "snapshot_with_identity", snapshot_then_change_selection):
+            code, headers, body = self.get("/frame")
+        self.assertEqual((code, body), (200, old_jpeg))
+        self.assertEqual(headers["X-Selection-Generation"], "0")
+        self.assertEqual(self.latest.generation, 1)
+        self.publish()
+        code, new_headers, _ = self.get("/frame")
+        self.assertEqual(code, 200)
+        self.assertEqual(new_headers["X-Selection-Generation"], "1")
+        self.assertEqual(new_headers["X-Capture-Instance"], headers["X-Capture-Instance"])
+
+    def test_new_helper_instance_cannot_match_old_display_even_at_same_generation(self):
+        self.assertEqual(self.latest.generation, LatestFrame().generation)
+        self.assertNotEqual(self.latest.capture_instance, LatestFrame().capture_instance)
 
     def test_failure_invalidates_previous_image(self):
         self.publish()
