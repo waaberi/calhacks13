@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "type": "hello",
+  "id": "0c5d3f9a7e2b4c18a6d4e9f1b3a5c7d9",
+  "payload": {
+    "role": "blender-client",
+    "name": "Lee Jae-yeon",
+    "app": { "name": "spatial_modeling", "version": "0.1.0" },
+    "token": "abcd-efgh-jkmn-pqrs-tuvw-xyz2",
+    "document": { "id": "15e12b8b8c12437098bb8a090659c8cb", "open_epoch": "7c3f0a5be2d94e1f9a6b8c4d2e0f1a3b" }
+  }
+}

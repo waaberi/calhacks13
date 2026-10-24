@@ -1,4 +1,9 @@
-"""Host role's localhost server: JSON lines over TCP, served from a background thread.
+"""Host role's server: JSON lines over TCP, served from a background thread.
+
+It always listens on the localhost port for the Unity app, plain TCP on
+127.0.0.1 only. Extra listeners, such as the LAN port for Client-role add-ons
+(lan.py), share its reader, queue and handlers; each has its own address and
+optionally TLS or a hello token.
 
 The network thread only reads, decodes and writes. Decoded messages go on a
 queue, and drain() runs their handlers on whichever thread calls it: Blender's
@@ -13,9 +18,12 @@ Error codes sent in `error` payloads:
 - unknown_type: no handler for this `type`.
 - busy: too many messages are waiting for Blender. The message is dropped.
 - internal_error: the handler failed.
+- permission_denied: on a listener with a token, the first message wasn't `hello`
+  with that token. The connection is closed.
 """
 
 import asyncio
+import functools
 import itertools
 import json
 import logging
@@ -23,8 +31,9 @@ import queue
 import threading
 
 try:
-    from . import protocol
+    from . import lan, protocol
 except ImportError:  # imported directly by the tests, outside Blender
+    import lan
     import protocol
 
 HOST = "127.0.0.1"  # never 0.0.0.0: this port must not reach the LAN
@@ -63,12 +72,31 @@ def _rejection(line, exc):
     return error("invalid_message", str(exc), re), False
 
 
-class Server:
-    """One listening socket and its connections, on an asyncio loop in a daemon thread."""
+class Listener:
+    """One address the server listens on.
 
-    def __init__(self, host=HOST, port=PORT, handlers=None):
+    ssl: an ssl.SSLContext (lan.server_tls_context) to require TLS, or None for plain TCP.
+    token: only without TLS: the first message must be `hello` carrying this session
+        token, or the host replies permission_denied and closes. Until then the
+        connection can't reach the queue or receive anything sent to clients.
+    """
+
+    def __init__(self, host, port, ssl=None, token=None):
         self.host = host
-        self.port = port  # the bound port after start(), useful with port=0
+        self.port = port  # the bound port after Server.start(), useful with port=0
+        self.ssl = ssl
+        self.token = token
+
+
+class Server:
+    """Listening sockets and their connections, on an asyncio loop in a daemon thread.
+
+    The first listener is always the plain localhost one (host, port);
+    extra_listeners come after it.
+    """
+
+    def __init__(self, host=HOST, port=PORT, handlers=None, extra_listeners=()):
+        self.listeners = [Listener(host, port), *extra_listeners]
         self.handlers = HANDLERS if handlers is None else handlers
         self.inbox = queue.Queue(MAX_PENDING)  # (connection id, message)
         self._ids = itertools.count(1)
@@ -76,6 +104,14 @@ class Server:
         self._loop = None
         self._thread = None
         self._start_error = None
+
+    @property
+    def host(self):
+        return self.listeners[0].host
+
+    @property
+    def port(self):
+        return self.listeners[0].port
 
     @property
     def running(self):
@@ -150,34 +186,47 @@ class Server:
 
     def _run(self, ready):
         loop = self._loop
+        servers = []
         try:
-            server = loop.run_until_complete(
-                asyncio.start_server(
-                    self._serve, self.host, self.port, limit=protocol.MAX_LINE_BYTES - 1
-                )
-            )
+            for listener in self.listeners:  # all or nothing
+                servers.append(loop.run_until_complete(self._listen(listener)))
         except OSError as e:
             self._start_error = e
             ready.set()
+            loop.run_until_complete(self._close(servers))
             loop.close()
             return
-        self.port = server.sockets[0].getsockname()[1]
         ready.set()
         try:
             loop.run_forever()
         finally:
-            loop.run_until_complete(self._close(server))
+            loop.run_until_complete(self._close(servers))
             loop.close()
 
-    async def _close(self, server):
-        server.close()  # stop listening
-        server.abort_clients()
+    async def _listen(self, listener):
+        tls = {}
+        if listener.ssl is not None:
+            tls = {"ssl": listener.ssl, "ssl_handshake_timeout": lan.HANDSHAKE_TIMEOUT}
+        server = await asyncio.start_server(
+            functools.partial(self._serve, listener),
+            listener.host,
+            listener.port,
+            limit=protocol.MAX_LINE_BYTES - 1,
+            **tls,  # a failed handshake closes that connection; _serve never sees it
+        )
+        listener.port = server.sockets[0].getsockname()[1]
+        return server
+
+    async def _close(self, servers):
+        for server in servers:
+            server.close()  # stop listening
+            server.abort_clients()
         tasks = asyncio.all_tasks() - {asyncio.current_task()}
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         try:
-            await asyncio.wait_for(server.wait_closed(), 1)
+            await asyncio.wait_for(asyncio.gather(*(s.wait_closed() for s in servers)), 1)
         except TimeoutError:
             log.warning("host server connections did not close within 1 s")
 
@@ -190,18 +239,67 @@ class Server:
             log.warning("connection %s is not reading its replies; dropping it", conn)
             writer.transport.abort()
 
-    async def _serve(self, reader, writer):
+    async def _serve(self, listener, reader, writer):
         conn = next(self._ids)
-        self._writers[conn] = writer
         try:
-            await self._read_lines(conn, reader)
-        except ConnectionError:
+            hello = None
+            if listener.token is not None:
+                hello = await self._admit(listener, reader, writer)
+                if hello is None:
+                    return
+            self._writers[conn] = writer
+            try:
+                if hello is not None:
+                    self._enqueue(conn, hello)
+                await self._read_lines(conn, reader)
+            finally:
+                del self._writers[conn]
+        except OSError:  # the client went away; on the LAN port also ssl.SSLError
             pass
         except Exception:
             log.exception("connection %s failed", conn)
         finally:
-            del self._writers[conn]
             writer.close()  # flushes any error reply first
+
+    async def _admit(self, listener, reader, writer):
+        """Return the first message if it's `hello` with the listener's token, else refuse.
+
+        A refusal writes one `error` and returns None; the caller closes the connection.
+        """
+        try:
+            async with asyncio.timeout(lan.HANDSHAKE_TIMEOUT):
+                line = b""
+                while not line.strip():
+                    line = await reader.readuntil(b"\n")
+        except (asyncio.IncompleteReadError, TimeoutError):
+            return None
+        except asyncio.LimitOverrunError:
+            text = f"line is longer than {protocol.MAX_LINE_BYTES} bytes"
+            writer.write(protocol.encode(error("message_too_large", text)))
+            return None
+        try:
+            msg = protocol.decode(line)
+        except protocol.ProtocolError as e:
+            writer.write(protocol.encode(_rejection(line, e)[0]))
+            return None
+        token = msg["payload"].pop("token", None) if msg["type"] == "hello" else None
+        if msg["type"] != "hello":
+            text = "send hello with the session token first"
+        elif token is None:
+            text = "hello has no session token"
+        elif not lan.tokens_match(listener.token, token):
+            text = "wrong session token"
+        else:
+            return msg
+        writer.write(protocol.encode(error("permission_denied", text, msg["id"])))
+        return None
+
+    def _enqueue(self, conn, msg):
+        try:
+            self.inbox.put_nowait((conn, msg))
+        except queue.Full:
+            text = "too many messages are waiting for Blender; try again"
+            self._write(conn, protocol.encode(error("busy", text, msg["id"])))
 
     async def _read_lines(self, conn, reader):
         while True:
@@ -223,8 +321,6 @@ class Server:
                 if close:
                     return
                 continue
-            try:
-                self.inbox.put_nowait((conn, msg))
-            except queue.Full:
-                text = "too many messages are waiting for Blender; try again"
-                self._write(conn, protocol.encode(error("busy", text, msg["id"])))
+            if msg["type"] == "hello":
+                msg["payload"].pop("token", None)  # checked by _admit; no handler or log sees it
+            self._enqueue(conn, msg)

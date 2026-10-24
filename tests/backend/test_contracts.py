@@ -136,6 +136,8 @@ INVALID = [
     ("hello.json", {"payload.role": "host"}),
     ("hello.json", {"payload.name": DELETE}),
     ("hello.json", {"payload.app.version": "latest"}),
+    ("hello.token.json", {"payload.token": ""}),
+    ("hello.token.json", {"payload.token": 12345678901234567890}),
     ("welcome.json", {"payload.document.units.scale_length": 0}),
     ("welcome.json", {"payload.actor_id": DELETE}),
     ("error.json", {"payload.code": "malformed"}),

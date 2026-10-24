@@ -16,9 +16,9 @@ pytestmark = pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExce
 
 
 @contextlib.contextmanager
-def running(handlers=None, pump=True):
+def running(handlers=None, pump=True, extra_listeners=()):
     """A server on a free port; with pump, a thread drains it like Blender's timer."""
-    srv = server.Server(port=0, handlers=handlers)
+    srv = server.Server(port=0, handlers=handlers, extra_listeners=extra_listeners)
     srv.start()
     stop = threading.Event()
 

@@ -13,6 +13,12 @@
         "role": { "enum": ["vr", "blender-client"] },
         "name": { "description": "Display name of the person, shown to the others.", "$ref": "envelope.schema.json#/$defs/name" },
         "app": { "$ref": "envelope.schema.json#/$defs/app" },
+        "token": {
+          "description": "The session token from the host's add-on preferences. Required on the LAN port when it runs without TLS; ignored elsewhere. Case, spaces and dashes don't matter.",
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 256
+        },
         "document": {
           "description": "Optional: the document this client expects. If the host has another one open, it replies error wrong_document and closes.",
           "type": "object",

@@ -10,7 +10,7 @@ The wire formats between our processes (see "Architecture" in [PHASE_PLAN.md](..
 
 Used by the Unity app and by Client-role add-ons to talk to the Host-role add-on.
 
-- **Transport:** TCP. The Unity app connects to `127.0.0.1:8765`. Client-role add-ons connect to the host's LAN address on port `8767` over TLS, using the session token as a pre-shared key.
+- **Transport:** TCP. The Unity app connects to `127.0.0.1:8765`: plain TCP, localhost only. Client-role add-ons connect to the host's LAN address on port `8767` (see [LAN port](#lan-port)).
 - **Framing:** one UTF-8 JSON object per line, ending in `\n`. A line longer than 16 MiB closes the connection. `NaN` and `Infinity` aren't JSON; receivers reject them.
 - **Coordinates and units:** Blender's own: right-handed, Z up, meters, radians. Unity converts in one place. Details under [Identity, revisions and units](#identity-revisions-and-units).
 - **Implementation:** [`blender_addon/spatial_modeling/protocol.py`](../blender_addon/spatial_modeling/protocol.py).
@@ -29,7 +29,7 @@ Every message has this envelope:
 
 | Type | Direction | Payload | Phase |
 | --- | --- | --- | --- |
-| `hello` | client → host | `role` (`vr` or `blender-client`), `name` of the person, `app` name and version; optional `document` it expects | P1 |
+| `hello` | client → host | `role` (`vr` or `blender-client`), `name` of the person, `app` name and version; optional `document` it expects; `token` on the LAN port without TLS | P1 |
 | `welcome` | host → client, answers `hello` | `session_id`, `host_epoch`, this connection's `actor_id`, `can_edit`, host `app`, `document` (ID, open epoch, file name, revision, dirty, units) | P1 |
 | `error` | either way | `code`, `message`, optional `details` | P0 |
 | `ping` | either way | `{}`. Also the heartbeat | P0 |
@@ -48,9 +48,18 @@ Every message has this envelope:
 
 There is no voice message type and no frame message type; see [Voice](#voice) and [Blender screen](#blender-screen).
 
+### LAN port
+
+The host listens on `8767` only while "Let a Client-role Blender join over the LAN" is on in its add-on preferences, on all interfaces unless a single address is entered there. The preferences also show the **session token**: generated when the port first starts, or typed in (at least 16 characters). Case, spaces and dashes in it don't matter. Keep it out of Git and logs. [`lan.py`](../blender_addon/spatial_modeling/lan.py) implements both ends; clients use `lan.connect()` or `lan.client_tls_context()`.
+
+- **TLS (default):** TLS 1.3 with the token as an external pre-shared key, no certificates. TLS 1.2 is accepted only with `ECDHE-PSK-CHACHA20-POLY1305`. PSK identity `spatial_modeling/1`; key = PBKDF2-HMAC-SHA256 of the token (lowercase, without spaces and dashes), salt `spatial_modeling LAN PSK v1`, 200,000 rounds, 32 bytes. A wrong or missing token fails the handshake, and the client must refuse a host that presents a certificate instead. The host drops a handshake that takes over 10 s.
+- **Without TLS (fallback):** for a network where TLS-PSK fails, and only on an isolated route, because the token and every message can be read on the network. The first message must be a `hello` carrying `token` within 10 s (see [Connecting](#connecting)).
+
 ## Connecting
 
 1. The client connects and sends `hello`. Until it has been welcomed, the host answers only `hello` and `ping`; anything else gets `error` `permission_denied`.
+   - On the LAN port with TLS, the handshake has already checked the token.
+   - On the LAN port without TLS, the first message must be `hello` with the right `token`. Otherwise the host replies `error` `permission_denied` (`invalid_message` if it isn't a message at all) and closes, before any other check. The host removes `token` before any handler sees the `hello`, and ignores it on the other ports.
 2. The host replies `welcome`, then sends `scene.snapshot`, then `session.update`. The client is connected once it has the snapshot. It sends no `command` or `lease.acquire` before that.
 3. If the host refuses the `hello`, it replies `error` (with `re`) and closes the connection:
    - `unsupported_version`: the envelope's `v` differs, or a Client-role add-on's `app.version` differs from the host's (P5-M1-3).
@@ -86,7 +95,7 @@ The first six codes are the transport-level codes that [`server.py`](../blender_
 | `unknown_type` | Nothing handles this `type`. | |
 | `busy` | Too many messages are waiting for Blender. The message was dropped and never applied. | The same message can be sent again later. |
 | `internal_error` | The handler failed. | For a command, the outcome is unknown (see [Outcomes](#outcomes)). |
-| `permission_denied` | Not welcomed yet, read-only (`can_edit` is false), `actor_id` isn't this connection's, or the host has stopped writes while it reconciles. | |
+| `permission_denied` | Not welcomed yet, read-only (`can_edit` is false), `actor_id` isn't this connection's, or the host has stopped writes while it reconciles. On the LAN port without TLS: the first message wasn't `hello` with the right `token`. | After a token failure, host closes. |
 | `wrong_session` | `session_id` or `host_epoch` is not the current one: the request was built before the host restarted. | Reconnect. |
 | `wrong_document` | `document_id` or `open_epoch` is not the open document, or `hello` expected another document. `details.document`: the open one. | |
 | `not_found` | The target, lease or sketch entity doesn't exist (for example it was deleted). | |
