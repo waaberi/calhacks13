@@ -91,7 +91,7 @@ UNTARGETED_OPS = ("object.add", "history.undo", "history.redo", "document.save",
 NO_ARGS_OPS = ("object.delete", "history.undo", "history.redo", "document.save")
 OPTIONAL_TARGET_OPS = ("voice.run",)
 VOICE_EXPIRES_IN = 30  # seconds a voice.candidates resolution can be run
-REQUEST_FIELDS =("session_id", "host_epoch", "document_id", "open_epoch", "actor_id")
+REQUEST_FIELDS = ("session_id", "host_epoch", "document_id", "open_epoch", "actor_id")
 PRIMITIVES = {"cube": "Cube", "sphere": "Sphere", "cylinder": "Cylinder"}
 
 # Bounds from contracts/schemas/envelope.schema.json and command.schema.json.
