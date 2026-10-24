@@ -86,7 +86,11 @@ class Proxy:
                 downstream, _ = self.listener.accept()
             except OSError:
                 return
-            upstream = socket.create_connection(("127.0.0.1", self.upstream))
+            try:
+                upstream = socket.create_connection(("127.0.0.1", self.upstream))
+            except OSError:  # the host has stopped (this or an earlier test): hang up, as it would
+                downstream.close()
+                continue
             self._sockets += [downstream, upstream]
             for src, dst, way in ((downstream, upstream, "up"), (upstream, downstream, "down")):
                 threading.Thread(target=self._pump, args=(number, src, dst, way), daemon=True).start()
