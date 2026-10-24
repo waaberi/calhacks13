@@ -22,6 +22,7 @@ import uuid
 from collections import ChainMap
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import bpy
 
@@ -41,6 +42,24 @@ LAST_REPORT = 0.0
 RECEIPTS = []
 REPORT = {"status": "starting", "physical_headset": "not tested", "second_pc": "not tested",
           "mode": "isolated GUI Blender, production native command path, loopback only"}
+
+
+def prepare_cad():
+    """Opt in only with the real pinned adapter/solver; never advertise a stub."""
+    if os.environ.get("P3_SMOKE_CAD") != "1":
+        return {"sketch": False}
+    extension = os.environ.get("P3_SMOKE_CAD_EXTENSION")
+    if extension:
+        # Reuse the CAD worker's isolated, non-addon_utils bootstrap. It extracts
+        # the pinned wheel inside this run's output, never into shared resources.
+        sys.path.insert(0, str(ROOT / "tests" / "native-sketch"))
+        from check_sketch import setup
+        REPORT["cad_bootstrap"] = setup(SimpleNamespace(
+            extension=Path(extension).resolve(), output=OUTPUT / "cad-runtime"))
+    capabilities = host._capabilities()
+    if not capabilities["sketch"]:
+        raise RuntimeError("P3_SMOKE_CAD requires the pinned native CAD adapter and solver")
+    return capabilities
 
 
 def utc_now():
@@ -210,6 +229,7 @@ def start():
     # --factory-startup is mandatory: all scene changes below belong to this process only.
     if "--factory-startup" not in sys.argv:
         raise ValueError("Launch with --factory-startup to preserve personal Blender work")
+    capabilities = prepare_cad()
     for obj in list(bpy.data.objects):
         bpy.data.objects.remove(obj, do_unlink=True)
     bpy.ops.mesh.primitive_cube_add(size=0.02, location=(0, 0, 0))
@@ -223,7 +243,9 @@ def start():
     bpy.ops.wm.save_as_mainfile(filepath=str(fixture))
     bpy.ops.ed.undo_push(message="P3 smoke saved baseline")
     SESS = session.Session(sync.describe, sync.snapshot, uuid.uuid4().hex,
-                           name="P3 isolated host", client_can_edit=False)
+                           name="P3 isolated host", client_can_edit=False,
+                           capabilities=(host._capabilities if capabilities["sketch"]
+                                         else lambda: {"sketch": False}))
     sync.register()
     sync.start(DOC, SESS)
     editor = edits.Editor(sync, host.undoable, DOC)
@@ -240,7 +262,7 @@ def start():
     ready = {k: REPORT[k] for k in ("status", "pid", "blender", "binary", "host", "port",
              "started_utc", "source_commit", "harness_sha256", "fixture", "maximum_seconds")}
     ready.update(document=DOC.describe(), session_id=SESS.session_id, host_epoch=SESS.host_epoch,
-                 can_edit_vr=True, capabilities={"sketch": False},
+                 can_edit_vr=True, capabilities=capabilities,
                  reference_id=bpy.context.object.get(sync.ID_PROPERTY))
     write_json("ready.json", ready)
     print("P3_SMOKE_READY " + json.dumps(ready), flush=True)
