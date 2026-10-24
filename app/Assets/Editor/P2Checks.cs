@@ -26,9 +26,9 @@ public static class P2Checks
         try
         {
             var scene = container.AddComponent<HostScene>();
-            typeof(HostScene).GetMethod("Awake", BindingFlags.Instance|BindingFlags.NonPublic).Invoke(scene,null);
             var material = AssetDatabase.LoadAssetAtPath<Material>("Assets/SpatialModeling/Materials/HostObject.mat");
             typeof(HostScene).GetField("objectMaterial", BindingFlags.Instance|BindingFlags.NonPublic).SetValue(scene,material);
+            typeof(HostScene).GetMethod("Awake", BindingFlags.Instance|BindingFlags.NonPublic).Invoke(scene,null);
             var table = container.GetComponent<TablePlacement>();
             var preview = (Transform)typeof(TablePlacement).GetField("preview",BindingFlags.Instance|BindingFlags.NonPublic).GetValue(table);
             Check(!preview.gameObject.activeSelf && table.NeedsSeed,"preview waits for the common settled head pose");

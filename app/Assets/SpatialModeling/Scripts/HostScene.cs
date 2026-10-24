@@ -79,7 +79,7 @@ namespace SpatialModeling
             root.gameObject.SetActive(false); // Wait for an actual tracked pose, not the startup origin.
             block = new MaterialPropertyBlock();
             table = GetComponent<TablePlacement>() ?? gameObject.AddComponent<TablePlacement>();
-            table.Initialize(root);
+            table.Initialize(root, ObjectMaterial);
         }
 
         internal static bool TryResolvePort(string configured, int fallback, out int resolved)

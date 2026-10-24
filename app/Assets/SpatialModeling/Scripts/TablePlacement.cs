@@ -36,12 +36,14 @@ namespace SpatialModeling
             else DestroyImmediate(value);
         }
 
-        public void Initialize(Transform target)
+        public void Initialize(Transform target, Material previewMaterial)
         {
             if (display != null) return;
             display = target;
             baseScale = display.localScale.x;
-            material = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
+            // Clone an actual scene asset so its shader is retained in a Player.
+            // Shader.Find alone can succeed in the Editor and be stripped in a build.
+            material = new Material(previewMaterial);
             material.color = new Color(0.15f, 0.65f, 0.85f, 1);
             var table = GameObject.CreatePrimitive(PrimitiveType.Cube);
             table.name = "Table preview — local inspection only";
