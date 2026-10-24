@@ -3,8 +3,9 @@
 Every test runs a host with both listeners, as host.py does: the VR app's plain
 localhost port and a LAN port for the Client role (TLS with the session token,
 or the fallback with the token in hello), both on 127.0.0.1. A fake document
-stands in for document.py; scene.snapshot is the real one. Every message the
-host sends is checked against its schema in contracts/schemas.
+stands in for document.py and the scene of contracts/examples for sync.py (which
+needs Blender; test_scene.py covers it). Every message the host sends is checked
+against its schema in contracts/schemas.
 """
 
 import contextlib
@@ -16,13 +17,12 @@ import time
 import lan
 import protocol
 import pytest
-import scene
 import server
 import session
 from hello_client import hello, join
 from jsonschema import Draft202012Validator
 from ping_client import Client
-from test_contracts import REGISTRY, SCHEMAS
+from test_contracts import REGISTRY, SCHEMAS, load
 
 pytestmark = pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 
@@ -37,7 +37,13 @@ DOCUMENT = {
     "units": {"system": "METRIC", "length_unit": "MILLIMETERS", "rotation_unit": "DEGREES",
               "scale_length": 0.001},
 }
+EXAMPLE_SCENE = load("scene.snapshot.json")["payload"]
 RECEIVED = []  # by every Peer in the current test
+
+
+def snapshot(document):
+    """The example scene for `document`, standing in for sync.snapshot."""
+    return {**EXAMPLE_SCENE, "document": document}
 
 
 def assert_valid(msg):
@@ -94,7 +100,7 @@ def hosting(tls=True, document=DOCUMENT):
         token=None if tls else TOKEN,
         roles=("blender-client",),
     )
-    sess = session.Session(lambda: dict(document), scene.snapshot, SESSION_ID,
+    sess = session.Session(lambda: dict(document), snapshot, SESSION_ID,
                            on_change=lambda: changes.append(list(sess.participants.values())))
     srv = sess.attach(server.Server(port=0, extra_listeners=[lan_listener]))
     srv.start()
@@ -148,7 +154,7 @@ def test_handshake():
     assert w["document"] == DOCUMENT
 
     assert snapshot["type"] == "scene.snapshot"
-    assert snapshot["payload"] == {"document": DOCUMENT, "objects": [], "sketches": []}
+    assert snapshot["payload"] == {**EXAMPLE_SCENE, "document": DOCUMENT}
 
     assert update["type"] == "session.update"
     assert update["payload"]["participants"] == [
@@ -205,6 +211,26 @@ def test_client_role_joins_on_the_lan_port_read_only_and_everyone_sees_it(tls):
         assert names(talia.recv()) == both  # across listeners
         lee.close()
         assert names(talia.recv()) == both[:2]
+
+
+@pytest.mark.parametrize("tls", [True, False], ids=["tls", "no-tls"])
+def test_client_role_gets_the_same_snapshot_and_every_update_read_only(tls):
+    update = load("scene.update.json")
+    with hosting(tls) as host, host.vr() as talia, host.lee() as lee:
+        vr_snapshot = talia.join(name="Talia")[1]
+        welcome, lee_snapshot, _ = lee.join(**host.lee_hello())
+        talia.recv()  # session.update for Lee
+        assert welcome["payload"]["can_edit"] is False
+        assert lee_snapshot["payload"] == vr_snapshot["payload"]
+        assert lee_snapshot["payload"]["objects"] == EXAMPLE_SCENE["objects"]
+        host.sess.broadcast(update)  # what sync.flush() does after a change
+        assert talia.recv() == update and lee.recv() == update
+
+        command = load("command.json")  # until P3A-W-3 the Client role can't edit
+        lee.send(command)
+        reply = lee.recv()
+        assert reply["type"] == "error" and reply["re"] == command["id"], reply
+        assert reply["payload"]["code"] in ("permission_denied", "unknown_type"), reply
 
 
 def test_the_token_never_reaches_the_session_or_any_message(caplog):

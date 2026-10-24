@@ -1,4 +1,6 @@
-"""Install the add-on into a real Blender and check the Host role: lifecycle, ping, LAN port, Connecting.
+"""Install the add-on into a real Blender and check the Host role: lifecycle, ping, LAN port,
+Connecting and the live scene (snapshots and scene.update for direct edits, Undo/Redo, add,
+duplicate and delete, on both ports).
 
 BLENDER_USER_RESOURCES must point at a throwaway directory, so your own Blender
 preferences and extensions are untouched:
@@ -6,8 +8,9 @@ preferences and extensions are untouched:
   BLENDER_USER_RESOURCES=$(mktemp -d) python tests/backend/blender_check.py   # bpy module
   BLENDER_USER_RESOURCES=$(mktemp -d) blender --factory-startup --python tests/backend/blender_check.py
 
-In bpy-module mode timers never fire, so this script calls the add-on's drain
-function itself. In GUI Blender the add-on's own timer does it. If
+In bpy-module mode timers never fire and nothing evaluates the depsgraph, so this
+script calls the add-on's drain function and evaluates the depsgraph itself. In
+GUI Blender the add-on's own timer and Blender's event loop do it. If
 SPATIAL_MODELING_CHECK_MESSAGES names a file, every message received is written
 there as JSON lines, so test_blender.py can check them against contracts/schemas
 (Blender has no jsonschema). test_blender.py runs both modes from pytest. Exits 0
@@ -46,7 +49,10 @@ MODULE = "bl_ext.user_default.spatial_modeling"
 PORT = 8765
 LAN_PORT = lan.PORT
 GUI = not bpy.app.background
+ID = "spatial_modeling_id"
+GEOMETRY_TYPES = {"MESH", "CURVE", "SURFACE", "FONT", "META"}
 RECEIVED = []  # every message any Peer got, for the schema check
+SNAPSHOTS = {}  # name of whoever joined -> the objects of their snapshot, by object name
 
 
 def log(*args):
@@ -153,10 +159,22 @@ def joined(name, via=None, **hello_args):
                                  f"{name}'s welcome")
     assert [m and m["type"] for m in msgs] == ["welcome", "scene.snapshot", "session.update"], msgs
     welcome, snapshot, update = msgs
-    assert snapshot["payload"] == {
-        "document": welcome["payload"]["document"], "objects": [], "sketches": []
-    }, snapshot
+    SNAPSHOTS[name] = assert_scene(snapshot["payload"], welcome["payload"]["document"])
     return peer, welcome["payload"], update
+
+
+def assert_scene(payload, doc):
+    """payload is a snapshot of this Blender's view layer for doc; returns its objects by name."""
+    assert payload["document"] == doc and payload["sketches"] == [], (payload["document"], doc)
+    objects = {o["name"]: o for o in payload["objects"]}
+    view_layer = bpy.context.view_layer
+    assert set(objects) == {o.name for o in view_layer.objects}, sorted(objects)
+    for obj in view_layer.objects:
+        record = objects[obj.name]
+        assert record["id"] == obj.get(ID) and record["type"] == obj.type, (obj.name, record)
+        assert (record["mesh"] is not None) == (obj.type in GEOMETRY_TYPES), obj.name
+        assert record["generation"] <= doc["revision"], record
+    return objects
 
 
 def refused(code, via=None, **hello_args):
@@ -220,13 +238,17 @@ def connecting():
     assert welcome["can_edit"] is True and welcome["app"] == session.APP
     assert session.is_uuid(doc["id"]) and session.is_uuid(doc["open_epoch"])
     assert scene["spatial_modeling_document_id"] == doc["id"], "document ID not stored in the scene"
-    assert doc["name"] is None and doc["revision"] == 0 and doc["dirty"] is dirty, doc
+    # The unit change above is a change like any other: a fresh snapshot at revision 1.
+    assert doc["name"] is None and doc["revision"] == 1 and doc["dirty"] is dirty, doc
+    cube = SNAPSHOTS["Talia"]["Cube"]
+    assert cube["generation"] == 1 and cube["mesh"]["positions"][:3] == [0.001] * 3, cube
     assert bpy.data.is_dirty is dirty, "storing the document ID marked the file as changed"
     assert doc["units"] == {"system": "METRIC", "length_unit": "MILLIMETERS",
                             "rotation_unit": "RADIANS", "scale_length": 0.001}, doc["units"]
     assert names(update) == ["Host Blender", "Talia"], update
     assert [a["name"] for a in host.participants()] == ["Talia"]
-    log("hello -> welcome, scene.snapshot, session.update; document", doc["id"], doc["units"])
+    log("hello -> welcome, scene.snapshot, session.update; document", doc["id"], doc["units"],
+        "objects", sorted(SNAPSHOTS["Talia"]))
 
     other, _, update = yield from joined("Second")
     assert names(update) == ["Host Blender", "Talia", "Second"]
@@ -352,12 +374,17 @@ def lan_checks(prefs):
         "closed; no message ever carried the token")
 
     prefs.lan_security = "TLS"
-    if GUI:  # the background clipboard is not the desktop's; restore the user's afterwards
-        saved = bpy.context.window_manager.clipboard
+    clipboard = GUI and owns_clipboard()
+    if clipboard:  # the background clipboard is not the desktop's; restore the user's afterwards
+        wm = bpy.context.window_manager
+        saved = wm.clipboard
         bpy.ops.spatial_modeling.copy_session_token()
-        copied = bpy.context.window_manager.clipboard
-        bpy.context.window_manager.clipboard = saved
+        copied = wm.clipboard
+        wm.clipboard = saved
         assert copied == token, "Copy did not put the token on the clipboard"
+    elif GUI:
+        log("NOTE: skipped the Copy Session Token check: this Blender can't own the clipboard "
+            "(no focused window, for example on a headless display)")
     bpy.ops.spatial_modeling.new_session_token()
     assert prefs.session_token != token and listening(LAN_PORT)
     yield from ping(LAN_PORT, token=prefs.session_token)
@@ -367,7 +394,188 @@ def lan_checks(prefs):
     except lan.HandshakeError:
         pass
     log("New Session Token restarts the LAN port; the old token stops working"
-        + ("; Copy puts the token on the clipboard" if GUI else ""))
+        + ("; Copy puts the token on the clipboard" if clipboard else ""))
+
+
+def owns_clipboard():
+    """Whether a value written to the clipboard reads back, which needs a focused window."""
+    wm = bpy.context.window_manager
+    saved = wm.clipboard
+    probe = f"spatial_modeling clipboard probe {time.monotonic()}"
+    wm.clipboard = probe
+    owned = wm.clipboard == probe
+    wm.clipboard = saved
+    return owned
+
+
+class Watcher:
+    """Collects everything a joined peer receives, on its own thread, like a client's reader."""
+
+    def __init__(self, peer):
+        self.peer = peer
+        self.messages = []
+        peer.sock.settimeout(None)
+        threading.Thread(target=self._read, daemon=True).start()
+
+    def _read(self):
+        try:
+            while (msg := self.peer.recv()) is not None:
+                self.messages.append(msg)
+        except OSError:
+            pass
+
+    def updates(self, since=0):
+        return [m["payload"] for m in self.messages[since:] if m["type"] == "scene.update"]
+
+
+def by_name(update):
+    return {o["name"]: o for o in update["objects"]}
+
+
+def scene_update(watchers, marks, what, test):
+    """Yield until each watcher got a scene.update passing test() after its mark; return it.
+
+    Every watcher must get the same updates, in the same order.
+    """
+    def found():
+        return all(any(test(u) for u in w.updates(m)) for w, m in zip(watchers, marks))
+
+    yield from wait(found, what)
+    first = [next(u for u in w.updates(m) if test(u)) for w, m in zip(watchers, marks)]
+    assert all(u == first[0] for u in first), f"clients got different updates for {what}"
+    return first[0]
+
+
+def select_only(obj):
+    view_layer = bpy.context.view_layer
+    for other in view_layer.objects:
+        other.select_set(other == obj)
+    view_layer.objects.active = obj
+
+
+def live_scene(prefs):
+    """Direct edits in this Blender reach the VR app and the Client role as scene.update."""
+    server, sync = mod("server"), mod("sync")
+    server.HEARTBEAT_TIMEOUT = 120.0  # the watchers don't ping
+    try:
+        yield from watched_edits(prefs, sync)
+    finally:
+        server.HEARTBEAT_TIMEOUT = 6.0
+
+
+def watched_edits(prefs, sync):
+    talia, _, _ = yield from joined("Talia")
+    via_tls = {"port": LAN_PORT, "token": prefs.session_token}
+    lee, welcome, _ = yield from joined("Lee", via=via_tls, role="blender-client")
+    assert welcome["can_edit"] is False, welcome
+    assert SNAPSHOTS["Lee"] == SNAPSHOTS["Talia"], "the Client role got another snapshot"
+    watchers = [Watcher(talia), Watcher(lee)]
+    scale = bpy.context.scene.unit_settings.scale_length
+    log("Client role over TLS gets the same snapshot as the VR app, read-only")
+
+    def marks():
+        return [len(w.messages) for w in watchers]
+
+    def changes(name, key=None):
+        return lambda u: name in by_name(u) and (key is None or key(by_name(u)[name]))
+
+    cube = bpy.data.objects["Cube"]
+    cube_id = cube[ID]
+    m = marks()
+    revision = mod("host")._document.revision
+    cube.location.x += 10  # a direct edit, made by this timer-driven script
+    x = round(cube.location.x * scale, 6)
+    u = yield from scene_update(watchers, m, "the Cube's move", changes("Cube"))
+    moved = by_name(u)["Cube"]
+    assert moved["id"] == cube_id and "mesh" not in moved, moved
+    assert moved["transform"]["location"][0] == x, moved
+    assert moved["generation"] == u["document"]["revision"] > revision, u["document"]
+    log("a direct edit reaches both clients as scene.update, without the mesh")
+
+    bpy.ops.ed.undo_push(message="Before drag")
+    m = marks()
+    started = time.monotonic()
+    for step in range(1, 41):  # 40 mouse moves, one per Blender event loop turn
+        cube.location.y = step
+        yield
+    took = time.monotonic() - started
+    final = round(40 * scale, 6)
+    yield from scene_update(watchers, m, "the end of the drag",
+                            changes("Cube", lambda o: o["transform"]["location"][1] == final))
+    stream = [u for u in watchers[0].updates(m[0]) if "Cube" in by_name(u)]
+    revisions = [u["document"]["revision"] for u in stream]
+    assert revisions == sorted(set(revisions)), revisions
+    assert all(len(u["objects"]) == 1 and "mesh" not in u["objects"][0] for u in stream), stream
+    assert 2 <= len(stream) <= took / sync.MIN_INTERVAL + 3, (len(stream), took)
+    sizes = sorted(len(protocol.encode(protocol.message("scene.update", u))) for u in stream)
+    log(f"drag: 40 moves in {took:.2f} s -> {len(stream)} scene.updates of "
+        f"{sizes[0]}-{sizes[-1]} bytes, revisions {revisions[0]}..{revisions[-1]}")
+
+    bpy.ops.ed.undo_push(message="Drag")
+    m = marks()
+    bpy.ops.ed.undo()
+    u = yield from scene_update(watchers, m, "the Undo of the drag", changes("Cube"))
+    assert by_name(u)["Cube"]["transform"]["location"][1] == 0, u
+    m = marks()
+    bpy.ops.ed.redo()
+    u = yield from scene_update(watchers, m, "the Redo of the drag", changes("Cube"))
+    assert by_name(u)["Cube"]["transform"]["location"][1] == final, u
+    assert sync.find_object(cube_id).location.y == 40
+    log("Undo and Redo send the Cube back and forth with the same ID")
+
+    m = marks()
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=5, location=(0, 0, 50))
+    bpy.ops.ed.undo_push(message="Add Sphere")
+    u = yield from scene_update(watchers, m, "the new Sphere", changes("Sphere"))
+    sphere = by_name(u)["Sphere"]
+    assert sphere["mesh"] and len(sphere["mesh"]["indices"]) > 0, sphere
+    sphere_id = sphere["id"]
+
+    select_only(sync.find_object(cube_id))  # Undo/Redo replaced the Cube: look it up again
+    m = marks()
+    bpy.ops.object.duplicate()
+    copy_name = bpy.context.view_layer.objects.active.name
+    bpy.ops.ed.undo_push(message="Duplicate")
+    u = yield from scene_update(watchers, m, "the duplicate", changes(copy_name))
+    copy = by_name(u)[copy_name]
+    assert copy["id"] not in (cube_id, sphere_id) and copy["mesh"] is not None, copy
+    assert bpy.data.objects["Cube"][ID] == cube_id, "the original lost its ID to the duplicate"
+
+    m = marks()
+    bpy.data.objects.remove(bpy.data.objects["Sphere"])
+    bpy.ops.ed.undo_push(message="Delete Sphere")
+    u = yield from scene_update(watchers, m, "the deletion", lambda u: sphere_id in u["removed"])
+    assert u["objects"] == [], u
+    log("add, duplicate (new ID) and delete reach both clients")
+
+    m = marks()
+    bpy.ops.ed.undo()  # the Sphere comes back with its ID
+    u = yield from scene_update(watchers, m, "the Undo of the deletion", changes("Sphere"))
+    assert by_name(u)["Sphere"]["id"] == sphere_id and by_name(u)["Sphere"]["mesh"], u
+    m = marks()
+    bpy.ops.ed.undo()  # and the duplicate goes away
+    u = yield from scene_update(watchers, m, "the Undo of the duplicate",
+                                lambda u: copy["id"] in u["removed"])
+    m = marks()
+    bpy.ops.ed.redo()
+    u = yield from scene_update(watchers, m, "the Redo of the duplicate", changes(copy_name))
+    assert by_name(u)[copy_name]["id"] == copy["id"], "the duplicate got another ID on Redo"
+    log("Undo/Redo of delete and duplicate: the objects come back with the same IDs")
+
+    m = marks()
+    bpy.data.objects["Cube"].modifiers.new("Bevel", "BEVEL")
+    u = yield from scene_update(watchers, m, "the Bevel", changes("Cube", lambda o: "mesh" in o))
+    assert len(by_name(u)["Cube"]["mesh"]["indices"]) > 36, u
+    log("a modifier sends the evaluated mesh")
+
+    command = protocol.message("command", {})  # the Client role can't edit (P3A-W-3)
+    lee.send(command)
+    yield from wait(lambda: any(msg.get("re") == command["id"] for msg in watchers[1].messages),
+                    "the reply to Lee's command")
+    reply = next(msg for msg in watchers[1].messages if msg.get("re") == command["id"])
+    assert reply["type"] == "error", reply
+    talia.close()
+    lee.close()
 
 
 def role_switch(prefs):
@@ -390,6 +598,7 @@ def document_identity(prefs):
     host = mod("host")
     held, welcome, _ = yield from joined("Before load")
     before = welcome["document"]
+    ids = {name: o["id"] for name, o in SNAPSHOTS["Before load"].items()}
 
     blend = Path(tempfile.mkdtemp()) / "other.blend"
     bpy.ops.wm.save_as_mainfile(filepath=str(blend), copy=True)
@@ -411,13 +620,16 @@ def document_identity(prefs):
     assert loaded["id"] == before["id"], "the document ID did not survive save and reopen"
     assert loaded["open_epoch"] != before["open_epoch"]
     assert loaded["name"] == "other.blend" and loaded["revision"] == 0, loaded
+    assert {name: o["id"] for name, o in SNAPSHOTS["After load"].items()} == ids, (
+        "object IDs did not survive save and reopen")
+    assert all(o["generation"] == 0 for o in SNAPSHOTS["After load"].values())
     # bpy-module Blender keeps is_dirty set across this load after the Undo check above;
     # GUI Blender clears it. Either way the host must report Blender's own flag.
     assert loaded["dirty"] is bpy.data.is_dirty, loaded
     if GUI:
         assert loaded["dirty"] is False, loaded
     log("loading another .blend closes connections on both ports and restarts them; "
-        "same document ID, new open epoch")
+        "same document ID and object IDs, new open epoch, revision 0")
 
     stale = {"id": before["id"], "open_epoch": before["open_epoch"]}
     via_tls = {"port": LAN_PORT, "token": prefs.session_token}
@@ -472,6 +684,7 @@ def checks():
     yield from edits_are_undo_steps()
     prefs = bpy.context.preferences.addons[MODULE].preferences
     yield from lan_checks(prefs)
+    yield from live_scene(prefs)
     yield from role_switch(prefs)
     yield from document_identity(prefs)
 
@@ -482,9 +695,14 @@ def checks():
         assert host._on_load_pre not in bpy.app.handlers.load_pre
         assert host._on_save_pre not in bpy.app.handlers.save_pre
         assert host._on_load_post not in bpy.app.handlers.load_post
+        sync = mod("sync")
+        assert sync._on_depsgraph_update not in bpy.app.handlers.depsgraph_update_post
+        assert sync._on_undo_redo not in bpy.app.handlers.undo_post and sync._state is None
         addon_utils.enable(MODULE, default_set=True)
         assert listening()
         assert bpy.app.handlers.load_pre[:].count(host._on_load_pre) == 1
+        assert bpy.app.handlers.depsgraph_update_post[:].count(
+            mod("sync")._on_depsgraph_update) == 1
         yield from ping()
     addon_utils.disable(MODULE, default_set=True)
     assert_stopped()
@@ -526,6 +744,7 @@ def main():
         for _ in steps:
             host = sys.modules.get(f"{MODULE}.host")
             if host is not None:
+                bpy.context.evaluated_depsgraph_get()  # what Blender's event loop does
                 host._drain()  # what the add-on's timer does in GUI Blender
             time.sleep(0.005)
     except Exception:  # noqa: BLE001 - any failure fails the check
