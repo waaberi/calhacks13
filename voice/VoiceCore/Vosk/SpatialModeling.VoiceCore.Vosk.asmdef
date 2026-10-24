@@ -1,0 +1,6 @@
+{
+    "name": "SpatialModeling.VoiceCore.Vosk",
+    "rootNamespace": "SpatialModeling.VoiceCore.Vosk",
+    "references": ["SpatialModeling.VoiceCore"],
+    "noEngineReferences": true
+}
