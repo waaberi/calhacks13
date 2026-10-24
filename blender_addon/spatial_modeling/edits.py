@@ -25,6 +25,8 @@ Scene sync is sync.py: every edit ends with sync.flush() inside its Undo step,
 so IDs given during the flush are part of it and every client has the
 scene.update before the sender has the result; the flush's revision goes into
 the receipt. generation(), find_object() and object_id() come from it too.
+
+linked() tells leases.py what else a lease on some objects must cover (P3B).
 """
 
 import logging
@@ -80,6 +82,40 @@ class Editor:
 
     def generation(self, object_id):
         return self.sync.generation(object_id)  # None: no such object
+
+    def linked(self, ids):
+        """The IDs of the objects that changing the objects `ids` can change too.
+
+        Followed transitively from each object: the other objects that share its
+        data (a mesh or curve: editing it edits theirs), its children (their world
+        transforms follow it; deleting it re-parents them), and the objects whose
+        modifiers or constraints use it (a Boolean cutter, a Mirror or Array
+        object, a constraint target, Geometry Nodes object inputs). IDs that
+        aren't objects, such as sketches, add nothing: a sketch is leased by its ID.
+        """
+        start = [o for o in (self.sync.find_object(i) for i in ids) if o is not None]
+        if not start:
+            return []
+        users, children, dependents = {}, {}, {}
+        for obj in bpy.context.view_layer.objects:
+            if obj.data is not None:
+                users.setdefault(obj.data.session_uid, []).append(obj)
+            if obj.parent is not None:
+                children.setdefault(obj.parent.session_uid, []).append(obj)
+            for used in _references(obj):
+                dependents.setdefault(used.session_uid, []).append(obj)
+        found = {o.session_uid: o for o in start}
+        queue = list(start)
+        while queue:
+            obj = queue.pop()
+            near = children.get(obj.session_uid, []) + dependents.get(obj.session_uid, [])
+            if obj.data is not None:
+                near += users.get(obj.data.session_uid, [])
+            for other in near:
+                if other.session_uid not in found:
+                    found[other.session_uid] = other
+                    queue.append(other)
+        return [self.sync.object_id(o) for o in found.values()]
 
     def apply(self, op, target_id, args):
         mode = bpy.context.mode
@@ -324,6 +360,23 @@ class Editor:
         done = Applied(f"Saved {name}")
         done.revision = self.sync.flush()  # sends the dirty flag; the revision stays
         return done
+
+
+# Linked data
+
+
+def _references(obj):
+    """The objects obj's modifiers and constraints use (through Object or Collection fields)."""
+    for item in (*obj.modifiers, *obj.constraints):
+        values = [getattr(item, prop.identifier, None) for prop in item.bl_rna.properties
+                  if prop.type == "POINTER" and prop.identifier != "rna_type"]
+        if getattr(item, "type", None) == "NODES":  # Geometry Nodes inputs are ID properties
+            values += [value for _key, value in item.items()]
+        for value in values:
+            if isinstance(value, bpy.types.Object) and value != obj:
+                yield value
+            elif isinstance(value, bpy.types.Collection):
+                yield from (o for o in value.all_objects if o != obj)
 
 
 # Reading and writing transforms

@@ -81,14 +81,18 @@ def overlaps(a_mode, a_targets, b_mode, b_targets):
 
 
 def session_payload(participant_rows, lease_rows, now):
-    """Rows of the participant and lease tables as a `session.update` payload. Only live leases."""
+    """Rows of the participant and lease tables as a `session.update` payload. Only live leases.
+
+    Participants in joining order and leases in acquiring order; rows from the same
+    millisecond keep the order they came in (MemoryStore's is the order they were added).
+    """
     actors = {}
-    for p in sorted(participant_rows, key=lambda p: (p["joined_at"], p["actor_id"])):
+    for p in sorted(participant_rows, key=lambda p: p["joined_at"]):
         actors[p["actor_id"]] = {"actor_id": p["actor_id"], "name": p["name"], "role": p["role"]}
     leases = []
-    for row in sorted(lease_rows, key=lambda r: (r["acquired_at"], r["lease_id"])):
+    for row in sorted(lease_rows, key=lambda r: r["acquired_at"]):
         owner = actors.get(row["owner_id"])
-        if row["expires_at"] > now and owner is not None:
+        if _live(row, now) and owner is not None:
             leases.append(
                 {
                     "lease_id": row["lease_id"],
@@ -99,6 +103,10 @@ def session_payload(participant_rows, lease_rows, now):
                 }
             )
     return {"participants": list(actors.values()), "leases": leases}
+
+
+def _live(row, now):
+    return row["expires_at"] is None or row["expires_at"] > now
 
 
 def _require_uuid(field, value):
@@ -225,7 +233,12 @@ class SessionStore:
 
 
 class MemoryStore(SessionStore):
-    """Session state in this process: the fallback. Gone when Blender quits."""
+    """Session state in this process: the fallback. Gone when Blender quits.
+
+    lease_ttl_ms=None: leases never lapse on a timer, only by release() and leave(). The host
+    uses that, because its server already closes a connection it hasn't heard from for 6 s,
+    on its own thread, so a busy Blender (a render) can't time out a client that is pinging.
+    """
 
     def __init__(self, lease_ttl_ms=LEASE_TTL_MS, clock=now_ms, max_receipts=10_000):
         self.lease_ttl_ms = lease_ttl_ms
@@ -265,8 +278,8 @@ class MemoryStore(SessionStore):
             now = self._clock()
             row["last_seen"] = now
             for lease in self._leases.values():
-                if lease["owner_id"] == actor_id and lease["expires_at"] > now:
-                    lease["expires_at"] = now + self.lease_ttl_ms
+                if lease["owner_id"] == actor_id and _live(lease, now):
+                    lease["expires_at"] = self._expiry(now)
 
     def acquire(self, owner_id, mode, targets, lease_id=None):
         targets = list(targets)
@@ -294,14 +307,14 @@ class MemoryStore(SessionStore):
                 "owner_id": owner_id,
                 "targets": targets,
                 "acquired_at": now,
-                "expires_at": now + self.lease_ttl_ms,
+                "expires_at": self._expiry(now),
             }
             return next(x for x in self._payload(now)["leases"] if x["lease_id"] == lease_id)
 
     def release(self, lease_id, owner_id):
         with self._lock:
             row = self._leases.get(lease_id)
-            if row is None or row["expires_at"] <= self._clock():
+            if row is None or not _live(row, self._clock()):
                 raise SessionError("not_found", f"no lease {lease_id}")
             if row["owner_id"] != owner_id:
                 raise SessionError("permission_denied", f"lease {lease_id} belongs to someone else")
@@ -346,8 +359,11 @@ class MemoryStore(SessionStore):
         return _found_and_missing(request_ids, rows)
 
     def _drop_expired(self, now):
-        for lease_id in [k for k, v in self._leases.items() if v["expires_at"] <= now]:
+        for lease_id in [k for k, v in self._leases.items() if not _live(v, now)]:
             del self._leases[lease_id]
+
+    def _expiry(self, now):
+        return None if self.lease_ttl_ms is None else now + self.lease_ttl_ms
 
     def _payload(self, now):
         return session_payload(self._participants.values(), self._leases.values(), now)

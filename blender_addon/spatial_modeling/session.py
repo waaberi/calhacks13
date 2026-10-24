@@ -4,8 +4,13 @@ Implements "Connecting" in contracts/README.md. A Session lives as long as the
 host's servers, so host_epoch is new for each. It runs on Blender's main thread
 inside Server.drain(). This module must not import bpy: host.py passes in the
 document and scene snapshot as functions, so the tests can run it outside Blender.
+
+Participants and leases live in a session_store.SessionStore (in memory unless
+host.py passes another), which builds every session.update. leases.py grants
+and releases leases; a connection that closes takes its leases with it.
 """
 
+import contextlib
 import logging
 import re
 import tomllib
@@ -14,10 +19,11 @@ from collections import ChainMap
 from pathlib import Path
 
 try:
-    from . import protocol, server
+    from . import protocol, server, session_store
 except ImportError:  # imported directly by the tests, outside Blender
     import protocol
     import server
+    import session_store
 
 
 def _manifest_version():
@@ -90,10 +96,14 @@ class Session:
     client_can_edit: the add-on preference that lets Client-role connections send
     commands (P3A-W-3, off by default). welcome's can_edit and conn.can_edit
     follow it; the Unity app can always edit.
+    store: where participants and leases live. By default in memory, where leases
+    end only when released or when their owner's connection closes (server.py
+    closes a connection it hasn't heard from for 6 s).
+    on_change also runs after leases change.
     """
 
     def __init__(self, document, snapshot, session_id, on_change=None, name=None,
-                 client_can_edit=False):
+                 client_can_edit=False, store=None):
         self.document = document
         self.snapshot = snapshot
         self.session_id = session_id
@@ -102,7 +112,11 @@ class Session:
         self.client_can_edit = client_can_edit
         self.participants = {}  # joined Connection -> actor, in joining order
         self.on_change = on_change
+        self.store = session_store.MemoryStore(lease_ttl_ms=None) if store is None else store
+        self.store.join(self.host)
         self._server = None
+        self._committing = 0  # native commits in progress (one at a time; see commit())
+        self._left_during_commit = []  # actor IDs whose leases end when the commit does
 
     def attach(self, srv):
         """Serve this session on srv: hello, and leaving when a connection closes. Returns srv.
@@ -156,26 +170,62 @@ class Session:
         conn.joined = True
         conn.can_edit = can_edit
         self.participants[conn] = actor
+        self.store.join(actor)
         self._changed()
         return None
 
     def left(self, conn):
-        """A connection closed. If it had joined, tell everyone else."""
-        if self.participants.pop(conn, None) is not None:
-            self._changed()
+        """A connection closed. If it had joined, end its leases and tell everyone else.
+
+        During a native commit its leases end only when the commit has finished.
+        """
+        actor = self.participants.pop(conn, None)
+        if actor is None:
+            return
+        if self._committing:
+            self._left_during_commit.append(actor["actor_id"])
+            return
+        self.store.leave(actor["actor_id"])
+        self._changed()
+
+    @contextlib.contextmanager
+    def commit(self):
+        """Wrap each native commit: no lease of anyone who leaves meanwhile ends before it does.
+
+        Commits run one at a time on Blender's main thread, as does everything that
+        ends a lease, so this only makes the contract's rule explicit: expiry never
+        interrupts a commit in progress.
+        """
+        self._committing += 1
+        try:
+            yield
+        finally:
+            self._committing -= 1
+            if not self._committing and self._left_during_commit:
+                gone, self._left_during_commit = self._left_during_commit, []
+                for actor_id in gone:
+                    self.store.leave(actor_id)
+                self._changed()
+
+    @property
+    def committing(self):
+        return self._committing > 0
+
+    def leases_changed(self):
+        """Leases were granted or ended: everyone gets session.update."""
+        self._changed()
 
     def rename_host(self, name):
         """Set the host participant's name; everyone gets session.update if it changed."""
         name = host_name(name)
         if name != self.host["name"]:
             self.host = {**self.host, "name": name}
+            self.store.join(self.host)
             self._changed()
 
     def session_update(self):
-        return protocol.message("session.update", {
-            "participants": [self.host, *self.participants.values()],
-            "leases": [],  # P3B
-        })
+        """Every participant (the host's own first) and every lease, from the store."""
+        return protocol.message("session.update", self.store.session())
 
     def broadcast(self, msg, exclude=None):
         """Send msg to every participant except `exclude`, on every listener."""
