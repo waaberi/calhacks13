@@ -111,7 +111,8 @@ class ReadOnlyLink:
                                 if code in ("wrong_document", "unsupported_version", "permission_denied"):
                                     self._stop.set()
                                     break
-                            elif kind in ("welcome", "scene.snapshot", "scene.update"):
+                            elif kind in ("welcome", "scene.snapshot", "scene.update",
+                                          "session.update", "activity"):
                                 self._post(kind, body)
                         if len(buffer) > protocol.MAX_LINE_BYTES:
                             raise protocol.ProtocolError("Host message exceeds size limit")

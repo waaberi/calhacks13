@@ -66,3 +66,29 @@ Implementation reuses the native worker's `0553e73` controlled transport/UI,
 adding production P2 registration/capability and cancellation/deadline handling.
 It is prepared against reconciled P2 `31708f5`; cumulative integration must
 include the final tested P2 predecessor and native receipt hardening separately.
+
+## P3B presence hooks
+
+The mirror transport forwards real `session.update` and `activity` payloads to
+its bounded main-thread event queue. `remote_client.presence` stores the complete
+authenticated participant and lease lists, the mirror welcome's actor ID, and
+the most recent 32 activities. Each full session update atomically replaces the
+previous lists. Names come from actual participants/lease owners.
+
+`remote_client.ownership_state()` returns `(leases, actor_id, status)` for the
+native ownership overlay; `participants()` exposes a copied full participant
+list. All returned lease/name data is copied. A stale, unhealthy, disconnected or
+not-yet-current mirror returns empty ownership and actor ID. Disconnect clears
+participants, leases and activity. Presence updates never call `Mirror.apply`,
+change scene currentness/revision, take a lease, or modify any saved material.
+Malformed presence is discarded and controlled editing is disabled until a
+fresh welcome; the independently valid read-only scene can remain visible.
+
+The focused suite now passes **31 tests** including atomic presence replacement,
+actual names, bad leases/duplicate participants, bounded activity and reconnect
+clearing. Actual two-Blender run `run-03-b-mm` additionally verifies a real
+native-host lease with owner name **Native Client Owner**, unchanged live mirror
+revision/colors/materials during lease/release, real command activity, and empty
+ownership after disconnect. Native ownership draw handlers and strict native
+lock bypasses remain the native worker's separate checks; this hook does not
+claim a visual, strict-lock, headset or second-PC pass.

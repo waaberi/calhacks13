@@ -78,6 +78,23 @@ try:
     action("flag_on")
     wait_for(lambda: remote_client.controlled_edit_enabled())
     assert bpy.ops.spatial_modeling.remote_move_test.poll()
+    if config.get("ownership"):
+        mirror = remote_client._mirror.objects[cube_id]
+        before_color = list(mirror.color)
+        before_materials = [(m.name, list(m.diffuse_color)) for m in mirror.data.materials]
+        revision = remote_client.state.document["revision"]
+        action("ownership_on")
+        wait_for(lambda: len(remote_client.ownership_state()[0]) == 1)
+        held, actor, status = remote_client.ownership_state()
+        assert held[0]["owner"]["name"] == "Native Client Owner"
+        assert held[0]["targets"] == [cube_id] and actor != held[0]["owner"]["actor_id"]
+        assert actor in {a["actor_id"] for a in remote_client.participants()}
+        assert remote_client.state.current and remote_client.state.document["revision"] == revision
+        assert list(mirror.color) == before_color
+        assert [(m.name, list(m.diffuse_color)) for m in mirror.data.materials] == before_materials
+        action("ownership_off")
+        wait_for(lambda: not remote_client.ownership_state()[0])
+        checks.append("actual full session names/leases and release; scene/materials unchanged")
     # Actual current target list, not a generated ID or a fake cached object.
     assert cube_id in {entry[0] for entry in remote_test_ui._targets(None, bpy.context)}
     wm.spatial_remote_test_target = cube_id
@@ -93,6 +110,9 @@ try:
     assert after["command_count"] == 1 and abs(after["x_meters"] - .02) < 1e-7
     assert abs(after["x_native"] - .02 / config["scale"]) < 1e-6
     assert result.receipt["actor"]["role"] == "blender-client"
+    if config.get("ownership"):
+        wait_for(lambda: len(remote_client.presence.activities) == 1)
+        assert remote_client.presence.activities[0]["request_id"] == result.request_id
     assert after["commands"][0]["payload"]["lease"]
     wait_for(lambda: not action("probe")["leases"])
     checks.append("actual bpy operator, target list, lease, native receipt and live mirror +10mm")
@@ -106,6 +126,9 @@ try:
     checks.append("actual Cancel operator before delayed permission: no second native command")
     assert bpy.ops.spatial_modeling.remote_move_test() == {"FINISHED"}
     remote_client.disconnect()
+    if config.get("ownership"):
+        assert remote_client.ownership_state()[0:2] == ([], "")
+        assert not remote_client.participants() and not remote_client.presence.activities
     wait_for(lambda: remote_test_ui._job is None)
     assert remote_test_ui._last_outcome.code == "cancelled"
     time.sleep(.7)

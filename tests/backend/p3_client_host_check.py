@@ -35,6 +35,7 @@ original_acquire = srv.handlers["lease.acquire"]
 original_command = srv.handlers["command"]
 deferred = []
 delay = 0
+display_lease = None
 seen = []
 
 
@@ -69,7 +70,7 @@ def native():
 
 
 def tick():
-    global delay
+    global delay, display_lease
     try:
         srv.drain()
         for entry in list(deferred):
@@ -97,6 +98,12 @@ def tick():
                 delay = .6
             elif name == "delay_off":
                 delay = 0
+            elif name == "ownership_on":
+                sess.rename_host("Native Client Owner")
+                display_lease = lses.grant(sess.host["actor_id"], "shared", [cube_id])
+            elif name == "ownership_off":
+                lses.end(display_lease["lease_id"], sess.host["actor_id"])
+                display_lease = None
             report = {"action": name, "native": native()}
             (folder / "action-result.json").write_text(json.dumps(report), encoding="utf-8")
             if name == "finish":
