@@ -40,6 +40,8 @@ namespace SpatialModeling
         }
         string Notice()
         {
+            if (!menu.Session.Ready || !menu.Session.SceneCurrent)
+                return "Editing mode: " + menu.Session.Mode + " · Ownership unknown while the native scene is stale";
             var names = new HashSet<string>();
             foreach (JObject lease in menu.Session.Leases)
                 if ((string)lease["owner"]?["actor_id"] != menu.Session.ActorId)
@@ -53,7 +55,7 @@ namespace SpatialModeling
         {
             if (scene == null || menu == null) return;
             var wanted = new HashSet<string>();
-            if (menu.Session.Ready) foreach (var view in scene.ObjectViews)
+            if (menu.Session.Ready && menu.Session.SceneCurrent) foreach (var view in scene.ObjectViews)
             {
                 if (view == null || !view.gameObject.activeInHierarchy) continue;
                 string owner = menu.Session.ConflictOwner(view.ObjectId);
@@ -75,7 +77,7 @@ namespace SpatialModeling
                 o.label.text = owner + " is editing";
             }
             var remove = new List<string>(); foreach (var id in overlays.Keys) if (!wanted.Contains(id)) remove.Add(id);
-            foreach (var id in remove) { Destroy(overlays[id].go); overlays.Remove(id); }
+            foreach (var id in remove) { overlays[id].go.SetActive(false); Destroy(overlays[id].go); overlays.Remove(id); }
         }
         Overlay Create()
         {

@@ -75,6 +75,20 @@ namespace SpatialModeling
                 if (line.gameObject.name == "Temporary ownership overlay" && line.isActiveAndEnabled && line.positionCount > 0 && line.sharedMaterial != null) pink = true;
             if (!label || !pink) { Fail("Active actual-owner world canvas / pink line renderer missing"); yield break; }
             report["real_owner_label"] = true; report["lease"] = lease;
+            // Exercise the real overlay under an explicit local currentness transition.
+            // The separate native/receiver checks cover actual transport loss/recovery.
+            var overlay = menu.GetComponent<NativeOwnershipOverlay>();
+            var privateInstance = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            session.SceneCurrent = false;
+            typeof(NativeOwnershipOverlay).GetMethod("LateUpdate", privateInstance).Invoke(overlay, null);
+            var marks = (IDictionary)typeof(NativeOwnershipOverlay).GetField("overlays", privateInstance).GetValue(overlay);
+            if (marks.Count != 0 || !menu.OwnershipNotice().Contains("Ownership unknown"))
+            { Fail("Stale native scene retained active ownership or a current-owner notice"); yield break; }
+            session.SceneCurrent = true;
+            yield return null; yield return null;
+            if (marks.Count == 0 || session.ConflictOwner(target) != "Ownership test participant")
+            { Fail("Fresh current native scene did not restore actual peer ownership"); yield break; }
+            report["software_currentness_overlay_clear_and_recovery"] = true;
             session.Select(target); menu.Home(); if (!Click("Move object") || !Click("Apply")) yield break;
             if (session.Busy || !session.Notice.Contains("Ownership test participant")) { Fail("Known conflict allowed a native command or hid owner"); yield break; }
             report["conflicting_apply_blocked"] = true;
