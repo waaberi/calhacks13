@@ -28,14 +28,18 @@ public static class P25Checks
         RunTransport(message => Debug.Log(message));
         RunTargets(message => Debug.Log(message));
         RunSpatial(message => Debug.Log(message));
-        RunKeyboardIsolation();
     }
 
     public static void RunCumulativeEditor()
     {
         Run();
         P2Checks.Run();
-        Debug.Log("P25_CUMULATIVE_EDITOR_CHECK PASS P25 plus unchanged P2 gates; no Player build or launch");
+        ArrangementChecks.Run();
+        WorkspaceChecks.Run();
+        // The synthetic player-update fixture must be the final Input System
+        // consumer; legacy pose gates use the pristine Editor buffer directly.
+        RunKeyboardIsolation();
+        Debug.Log("P25_CUMULATIVE_EDITOR_CHECK PASS P25 plus unchanged P2/arrangement/P1 gates plus final keyboard isolation; no Player build or launch");
     }
 
     // The same actual mapping gate can run under the bundled managed runtime,
