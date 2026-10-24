@@ -5,7 +5,9 @@ The executor's Blender half (operators, Undo, the triangle budget) is checked in
 by voice_blender_check.py. Every message the host sends is validated against contracts/schemas.
 """
 
+import itertools
 import json
+import math
 
 import commands
 import protocol
@@ -224,7 +226,98 @@ def test_a_mesh_that_shrinks_too_much_is_refused():
     assert voice_ops._shrunk(None, [1.0, 1.0, 1.0]) is None
 
 
-def test_an_add_goes_beside_what_is_there():
+# What the second Unity run showed (24 Oct): "add a modifier" and "add a mirror modifier" offered
+# Convert to mesh, which applies the whole stack; "hello", "well", "right", "alright" and "come"
+# asked at full confidence; a voice add beside the selection was 79 degrees off the user's view.
+
+MENU = ["Array", "Mirror on X", "Bevel"]
+
+
+@pytest.mark.parametrize("text", ["add a modifier", "add modifier", "a modifier", "modifier",
+                                  "the modifier", "add a modifier please", "add another modifier",
+                                  "add some modifiers", "give it a modifier", "make a modifier"])
+@pytest.mark.parametrize("confidence", [1.0, 0.9, 0.49])
+def test_add_a_modifier_asks_array_mirror_or_bevel(text, confidence):
+    """The demo's "which one?": always the same three safe choices, in this order."""
+    r = resolve(text, confidence)
+    assert r["decision"] == "ask" and r["reason"] is None, r
+    assert [voice_ops.say(c) for c in r["candidates"]] == MENU
+    assert all(c["op"] == "object.modifier_add" for c in r["candidates"])
+
+
+def test_the_demo_question_is_a_whole_grammar_phrase():
+    """So Whisper's "add a modifier," snaps onto it word for word (without it, the app's
+    snapper made it "add array modifier" at 0.49). Vosk heard Piper's as "the modifier"."""
+    assert "add a modifier" in voice_ops.GRAMMAR
+    assert "add a modifier" in voice_ops.MENU_PHRASES
+
+
+def test_a_modifier_request_offers_only_modifiers():
+    r = resolve("add array modifier", 0.49)  # the Unity run's snap of "add a modifier"
+    assert r["decision"] == "ask"
+    assert [voice_ops.say(c) for c in r["candidates"]] == MENU  # was Array, Mirror, Convert
+    for text in ["add a mirror modifier", "bevel modifier", "add a boolean modifier",
+                 "decimate modifier", "add a modifire"]:
+        assert all(c["op"] == "object.modifier_add" for c in resolve(text, 0.49)["candidates"])
+
+
+@pytest.mark.parametrize("text", ["add a modifier", "add a mirror modifier", "add array modifier",
+                                  "modifier", "mirror modifier", "add a subdivision surface",
+                                  "apply scale", "apply all transforms", "make it a mesh",
+                                  "add a mirror", "triangulate", "apply rotation and scale"])
+@pytest.mark.parametrize("confidence", [1.0, 0.49])
+def test_convert_to_mesh_is_never_offered_unasked(text, confidence):
+    assert all(c["op"] != "object.convert" for c in resolve(text, confidence)["candidates"]), text
+
+
+@pytest.mark.parametrize("text", ["convert to mesh", "convert it to a mesh", "apply modifiers",
+                                  "apply all modifiers", "apply the modifiers"])
+def test_convert_to_mesh_runs_when_asked_for(text):
+    r = resolve(text)
+    assert r["decision"] == "run", r
+    assert r["candidates"][0]["op"] == "object.convert"
+    assert "apply all modifiers" in voice_ops.GRAMMAR
+
+
+@pytest.mark.parametrize("text", ["hello", "well", "right", "alright", "come", "think", "all",
+                                  "all right", "hello there", "come on", "oh well", "okay", "um",
+                                  "yeah", "hmm", "hello two", "make it", "what time his it",
+                                  "[unk] [unk]"])
+@pytest.mark.parametrize("confidence", [1.0, 0.49])
+def test_fillers_alone_are_rejected_silently(text, confidence):
+    """Nothing asked and nothing said: reject with no reason."""
+    r = resolve(text, confidence)
+    assert (r["decision"], r["reason"], r["candidates"]) == ("reject", None, [])
+
+
+def test_no_two_grammar_fillers_ask_or_run():
+    """Every absorber, alone and with any other: 13,924 pairs (1,087 asked before)."""
+    for a, b in itertools.product(voice_ops.ABSORBERS, repeat=2):
+        r = resolve(f"{a} {b}")
+        assert r["decision"] == "reject", (a, b, r)
+    for w in voice_ops.ABSORBERS:
+        assert resolve(w)["reason"] in (None, voice_ops.NO_WORDS), w  # "two": a number
+
+
+def test_no_phrase_is_only_fillers():
+    """So the filler rule can't silence an operation."""
+    for it in voice_ops.INTENTS:
+        for p in it["say"] + it["hear"]:
+            _, rest = voice_ops.extract_slots(voice_ops.words(p))
+            assert not all(w in voice_ops.FILLERS for w in rest), (it["id"], p)
+
+
+@pytest.mark.parametrize(("text", "decision"), [
+    ("okay add a monkey", "run"), ("right shade smooth", "run"), ("hello add a monkey", "ask"),
+    ("well add a monkey", "ask"), ("alright make it thicker", "ask"),
+])
+def test_fillers_dont_hide_a_command(text, decision):
+    r = resolve(text)
+    assert r["decision"] == decision, r
+    assert r["candidates"][0]["intent"] in ("add_monkey", "shade_smooth", "solidify")
+
+
+def test_without_a_selection_an_add_goes_beside_what_is_at_the_cursor():
     cube = ((-1.0, -1.0, -1.0), (1.0, 1.0, 1.0))
     next_to = ((1.0, -0.1, -0.1), (1.2, 0.1, 0.1))
     far = ((5.0, 5.0, 5.0), (6.0, 6.0, 6.0))
@@ -236,6 +329,58 @@ def test_an_add_goes_beside_what_is_there():
     assert x == pytest.approx(1.2 + 0.1 * (voice_ops.ADD_GAP + 0.5))  # past both
     low, high = voice_ops.ADD_SIZE_RANGE
     assert low <= voice_ops.ADD_SIZE <= high <= 0.25  # 1.25 m on the app's 5x table at most
+
+
+# Talia's P0 reference (samples/mechanical/create_reference.py): a 20 mm cube and a 10 x 30 mm
+# cylinder beside it, on the ground at Blender's origin. The fake bracket (contracts/examples):
+# a 100 x 60 x 10 mm base plate with a 20 x 40 mm shaft standing on it.
+P0_CUBE = ((-0.03, -0.01, 0.0), (-0.01, 0.01, 0.02))
+P0_CYLINDER = ((0.015, -0.005, 0.0), (0.025, 0.005, 0.03))
+PLATE_BOX = ((-0.05, -0.03, 0.0), (0.05, 0.03, 0.01))
+SHAFT_BOX = ((0.01, -0.01, 0.01), (0.03, 0.01, 0.05))
+P0, BRACKET = [P0_CUBE, P0_CYLINDER], [PLATE_BOX, SHAFT_BOX]
+# HostScene.cs puts Blender's origin 1 m in front of the eyes and 0.35 m below them, at 5x, so
+# the eyes are at this Blender point, looking along +Y.
+EYE = (0.0, -1.0 / 5, 0.35 / 5)
+
+
+def degrees_off_view(point):
+    d = [p - e for p, e in zip(point, EYE, strict=True)]
+    return math.degrees(math.atan2(math.hypot(d[0], d[2]), d[1]))
+
+
+def overlaps(a, b):
+    return all(a[0][i] < b[1][i] and b[0][i] < a[1][i] for i in range(3))
+
+
+def box_at(center, size):
+    return (tuple(c - size / 2 for c in center), tuple(c + size / 2 for c in center))
+
+
+@pytest.mark.parametrize(("boxes", "anchor"), [(P0, P0_CUBE), (P0, P0_CYLINDER),
+                                               (BRACKET, PLATE_BOX), (BRACKET, SHAFT_BOX)])
+def test_an_add_goes_above_the_selection_in_view(boxes, anchor):
+    """Centred over the selection, ADD_GAP above it (or above what stands on it), its size,
+    overlapping nothing, and in the user's view: the selection is what they look at. A second
+    add stacks on the first."""
+    size = max(voice_ops.ADD_SIZE_RANGE[0], min(max(voice_ops._sides(anchor)),
+                                                 voice_ops.ADD_SIZE_RANGE[1]))
+    center = voice_ops.add_location(voice_ops.above(anchor, size), size, boxes, axis=2)
+    assert center[:2] == pytest.approx(((anchor[0][0] + anchor[1][0]) / 2,
+                                        (anchor[0][1] + anchor[1][1]) / 2))
+    new = box_at(center, size)
+    assert new[0][2] >= anchor[1][2] + size * voice_ops.ADD_GAP - 1e-9  # the gap, at least
+    assert not any(overlaps(new, b) for b in boxes)
+    assert degrees_off_view(center) < 20  # the Quest 3S shows about 45 degrees each way
+    second = voice_ops.add_location(voice_ops.above(anchor, size), size, boxes + [new], axis=2)
+    assert second[2] == pytest.approx(new[1][2] + size * (voice_ops.ADD_GAP + 0.5))  # stacked
+    assert not any(overlaps(box_at(second, size), b) for b in boxes + [new])
+    assert degrees_off_view(second) < 45  # over the plate (10 cm adds) 42: the top of the view
+
+
+def test_above_the_p0_cube_is_right_over_it():
+    size = 0.02
+    assert voice_ops.above(P0_CUBE, size) == pytest.approx((-0.02, 0.0, 0.035))  # 5 mm gap
 
 
 def test_without_a_mesh_target_mesh_operations_only_ask():
@@ -469,6 +614,29 @@ def test_a_rejection_has_no_candidates_and_cant_run():
         receipt = talia.run("voice.run", None, {"resolution": answer["resolution"],
                                                 "choice": 1})
         assert_rejected(receipt, "not_found")
+
+
+def test_the_demo_question_runs_the_chosen_modifier():
+    with voice_hosting() as host, host.vr() as talia:
+        attach(host)
+        answer = ask(talia, "add a modifier", target={"id": SHAFT, "generation": 0})
+        assert answer["decision"] == "ask" and answer["reason"] is None
+        assert [c["say"] for c in answer["candidates"]] == MENU
+        assert all(c["needs_target"] for c in answer["candidates"])
+        receipt = talia.run("voice.run", {"id": SHAFT, "generation": 0},
+                            {"resolution": answer["resolution"], "choice": 3})
+        assert receipt["summary"] == "Voice: Bevel on Shaft"
+
+
+def test_a_filler_is_rejected_with_nothing_to_say():
+    with voice_hosting() as host, host.vr() as talia:
+        attach(host)
+        answer = ask(talia, "hello", confidence=1.0, target={"id": SHAFT, "generation": 0})
+        assert (answer["decision"], answer["reason"], answer["candidates"]) == ("reject", None, [])
+        receipt = talia.run("voice.run", {"id": SHAFT, "generation": 0},
+                            {"resolution": answer["resolution"], "choice": 1})
+        assert_rejected(receipt, "not_found")
+        assert host.editor.revision == 0
 
 
 def test_outside_object_mode_everything_is_rejected():
