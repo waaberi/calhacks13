@@ -17,7 +17,7 @@ namespace SpatialModeling
         public int NativeProcessId => NativeStateCurrent ? (int?)NativeState["process_id"] ?? 0 : 0;
         public bool NativeModalActive => (bool?)NativeState["modal_active"] ?? false;
         public string Tool => manualTool.Length > 0 ? manualTool : (string)NativeState["tool"] ?? "";
-        public string StatusText => status + "\n" + Session.Notice;
+        public string StatusText => TargetStatus + status + "\n" + Session.Notice;
         public bool HasDraft => first.HasValue;
         public bool NativeStateCurrent => scene != null && scene.IsCurrent && Session.Ready && Session.SceneCurrent
             && Time.unscaledTime - stateAt < 2f;
@@ -32,6 +32,18 @@ namespace SpatialModeling
         Vector2? first;
         Ray lastRay;
         bool haveRay, wantNativeUi;
+        readonly SpatialSketchTarget target = new SpatialSketchTarget();
+        string TargetStatus
+        {
+            get
+            {
+                if (target.MissingExplicitTarget) return "Spatial sketch removed/unavailable; choose a fresh target\n";
+                if (target.WaitingForExplicitTarget) return "Waiting for confirmed native spatial target " + target.ExplicitId + "\n";
+                if (target.ExplicitId.Length == 0) return "";
+                string name = Session.Sketches.TryGetValue(target.ExplicitId, out var explicitSketch) ? (string)explicitSketch["name"] : target.ExplicitId;
+                return "Spatial target: " + name + " · native preview target: " + ((string)NativeState["sketch_id"] ?? "none") + "\n";
+            }
+        }
 
         public void Initialize(HostScene hostScene, Material displayMaterial = null)
         {
@@ -75,6 +87,7 @@ namespace SpatialModeling
         {
             EnabledForInput = value;
             Cancel();
+            if (!value) target.Reset();
             if (value) { EndNativeUi(); nextQuery = 0; status = "Select a native sketch and Line, Circle or Corner Rectangle tool"; }
             else status = "P2.5 spatial drawing disabled";
         }
@@ -132,6 +145,7 @@ namespace SpatialModeling
             {
                 Session.Disconnect(e.Text ?? "Native scene unavailable");
                 NativeState = new JObject(); stateAt = float.NegativeInfinity;
+                target.Reset();
                 beginId = endId = null; wantNativeUi = false; CancelLocal(); return;
             }
             if (e.Kind != HostEventKind.Message || e.RawMessage == null) return;
@@ -141,7 +155,9 @@ namespace SpatialModeling
             // A welcome starts a new admission/scene handshake. Never carry
             // the preceding connection's UI reservation through its snapshot.
             if (type == "welcome")
-            { NativeState = new JObject(); stateAt = float.NegativeInfinity; CancelLocal(); }
+            { NativeState = new JObject(); stateAt = float.NegativeInfinity; target.Reset(); CancelLocal(); }
+            if (Session.LastReceipt != null && JToken.DeepEquals(Session.LastReceipt, p) && target.Receive(msg, Session.Sketches))
+                status = "New native sketch explicitly selected for spatial drawing; native desktop selection preserved";
             if (type == "preview.state" && p != null) SetNativeState(p);
             if ((type == "preview.ui.granted" && (string)msg["re"] == beginId)
                 || (type == "preview.ui.ended" && (string)msg["re"] == endId))
@@ -173,10 +189,12 @@ namespace SpatialModeling
                 if ((string)p[name] != (string)identity[name])
                 {
                     NativeState = new JObject(); stateAt = float.NegativeInfinity;
+                    target.Reset();
                     CancelLocal(); status = "Native tool state belongs to another session/document; preview input disabled"; return;
                 }
             string before = (string)NativeState["sketch_id"] + "/" + (string)NativeState["native_tool"];
             NativeState = (JObject)p.DeepClone(); stateAt = Time.unscaledTime;
+            target.ObserveContext(NativeState);
             string after = (string)p["sketch_id"] + "/" + (string)p["native_tool"];
             if (before != after) { CancelLocal(); manualTool = ""; }
         }
@@ -185,9 +203,7 @@ namespace SpatialModeling
         {
             get
             {
-                string id = (string)NativeState["sketch_id"];
-                if (!string.IsNullOrEmpty(id)) return Session.Sketches.TryGetValue(id, out var native) ? native : null;
-                return Session.Sketches.TryGetValue(Session.SelectedId, out var selected) ? selected : null;
+                return target.Resolve((string)NativeState["sketch_id"], Session.SelectedId, Session.Sketches);
             }
         }
         bool CanDraw()
@@ -269,10 +285,14 @@ namespace SpatialModeling
         }
         public void CreateSketch(string plane)
         {
-            if (!EnabledForInput || (plane != "XY" && plane != "XZ" && plane != "YZ")) return;
+            if (!EnabledForInput) { status = "Choose Draw in VR before creating a spatial sketch"; return; }
+            if (plane != "XY" && plane != "XZ" && plane != "YZ") return;
+            if (!SpatialSketchTarget.CanStartCreation(NativeStateCurrent, NativeState))
+            { status = "Wait for fresh native CAD state in Object Mode before creating a spatial target"; return; }
             CancelLocal(); EndNativeUi();
             if (NativeState["ui_owner"] is JObject) { status = "Wait for native preview session to end, then create the sketch"; return; }
-            if (Session.BeginDraft("sketch.create", new JObject { ["plane"] = plane }, false) && Session.Apply()) pendingAt = Time.unscaledTime;
+            if (Session.BeginDraft("sketch.create", new JObject { ["plane"] = plane }, false) && Session.Apply())
+            { pendingAt = Time.unscaledTime; target.BeginCreate(Session.LastSubmittedId, NativeState); }
         }
         public void Undo() => History("history.undo");
         public void Redo() => History("history.redo");

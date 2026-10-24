@@ -53,6 +53,14 @@ are rendered as solved geometry. A receipt rejection/unknown outcome never turns
 the local draft into a committed object. Native generation/tool/active sketch
 changes, disconnection and VR focus loss cancel stale local drafts.
 
+A P2.5-created sketch is explicitly selected as the spatial target only after its
+matching native receipt confirms the new sketch UUID. This override is named in
+the status alongside the native preview's active sketch, whose desktop selection
+remains unchanged. A native active-sketch/tool context change or leaving spatial
+mode clears the override. Removing that explicit target disables drawing until a
+fresh target/context choice; it never silently redirects a click to an older
+active sketch.
+
 ## Coverage boundaries
 
 All ordinary Blender buttons remain the preview input bridge's responsibility.
