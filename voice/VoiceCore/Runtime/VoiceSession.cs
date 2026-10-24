@@ -102,8 +102,8 @@ namespace SpatialModeling.VoiceCore
             return Vocabulary.GrammarPhrases(names);
         }
 
-        /// <summary>The objects the user can refer to: visible and eligible for editing. Cancels a pending
-        /// command whose target is no longer among them.</summary>
+        /// <summary>The objects the user can refer to: the ones the app shows (see <see cref="SceneObject"/>). Cancels
+        /// a pending command whose target is no longer among them.</summary>
         public VoiceTurn SetObjects(IEnumerable<SceneObject> visibleObjects)
         {
             var turn = Begin();
