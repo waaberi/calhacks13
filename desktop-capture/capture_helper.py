@@ -252,7 +252,17 @@ def capture_refresh_due(last_callback, now):
 def owned_capture_pixels(frame):
     # Never retain a native mapped GPU frame across the callback/encoder boundary.
     # An owned, contiguous CPU snapshot lets WGC release/reuse its mapped surface.
-    return frame.frame_buffer.copy()
+    import cv2
+
+    # WGC supplies BGRA8; JPEG uses the same BGR channels and ignores alpha.
+    # Convert into an owned contiguous BGR snapshot while the mapping is valid.
+    # OpenCV's copy is faster than NumPy's strided four-channel mapped copy.
+    return cv2.cvtColor(frame.frame_buffer, cv2.COLOR_BGRA2BGR)
+
+
+def measured_frame_rate(times, now):
+    span = now - times[0] if times else 0
+    return (len(times) - 1) / span if len(times) > 1 and span > 0 else 0
 
 
 def capture_loop(api, latest, stop, fps):
@@ -332,24 +342,34 @@ def graphics_capture_loop(api, latest, stop, fps):
                 continue
             if api.u.IsIconic(selected["hwnd"]):
                 continue
-            now = time.monotonic()
             with encoded_lock:
+                # Restart and publication share this lock. An encoder which
+                # passed an earlier check cannot publish after an epoch change.
+                if item_session != session[0]:
+                    continue
+                # Take the high-resolution timestamp inside the publication lock.
+                # Windows monotonic ticks can coincide; parallel completions must
+                # neither divide by zero nor append times in reverse lock order.
+                now = time.perf_counter()
                 encoded_times.append(now)
                 while encoded_times and now - encoded_times[0] > 1:
                     encoded_times.popleft()
-                measured = (
-                    (len(encoded_times) - 1) / (now - encoded_times[0]) if len(encoded_times) > 1 else 0
-                )
+                measured = measured_frame_rate(encoded_times, now)
                 if not latest.publish_jpeg(
                     generation, encoded.tobytes(), width, height, current["title"], measured, captured_ms
                 ):
                     encoded_times.pop()
 
-    threading.Thread(target=encode_newest, daemon=True, name="Latest JPEG encoder").start()
+    # Exactly two in-flight encodes plus one replaceable waiting snapshot.
+    # Publication rejects old capture times; nothing accumulates in a queue.
+    for index in range(2):
+        threading.Thread(target=encode_newest, daemon=True, name=f"Latest JPEG encoder {index}").start()
 
     def start(selected, generation):
-        session[0] += 1
-        this_session = session[0]
+        with encoded_lock:
+            session[0] += 1
+            this_session = session[0]
+            encoded_times.clear()
         last_callback[0] = time.monotonic()
         capture = WindowsCapture(
             window_hwnd=selected["hwnd"],
@@ -381,7 +401,7 @@ def graphics_capture_loop(api, latest, stop, fps):
                 )
                 return
             last_callback[0] = time.monotonic()
-            # At most one owned waiting frame plus one being encoded. Release the
+            # At most one owned waiting frame plus two being encoded. Release the
             # native mapping before returning; superseded CPU snapshots drop.
             pixels = owned_capture_pixels(frame)
             with raw_lock:
@@ -430,7 +450,9 @@ def graphics_capture_loop(api, latest, stop, fps):
             if control is not None and capture_refresh_due(last_callback[0], time.monotonic()):
                 # A fresh capture yields an actual snapshot even for a static
                 # window; it also recovers a live-but-stalled capture session.
-                session[0] += 1
+                with encoded_lock:
+                    session[0] += 1
+                    encoded_times.clear()
                 with raw_lock:
                     raw_slot[0] = None
                 # Keep the last image only within its existing3s freshness lease.
