@@ -20,6 +20,8 @@ namespace SpatialModeling
         public bool Pinned { get; private set; }
         public bool Visible { get; private set; } = true;
         public Action<WorkspaceNativeMenu> BuildSketchPage;
+        public Action<WorkspaceNativeMenu> SettingsExtras;
+        public Func<string> OwnershipNotice;
         public string Page { get; private set; } = "home";
         NativeEditBridge bridge;
         RectTransform panel, content;
@@ -40,6 +42,7 @@ namespace SpatialModeling
             var go = new GameObject("Native editing menu");
             go.AddComponent<NativeEditBridge>();
             go.AddComponent<WorkspaceNativeMenu>();
+            go.AddComponent<NativeOwnershipOverlay>();
         }
 
         void OnEnable()
@@ -178,7 +181,8 @@ namespace SpatialModeling
             ButtonAt("Move Table / Recenter", 24, 100, 886, () => FindFirstObjectByType<HostScene>()?.RequestRecenter());
             ButtonAt("Show / Hide Blender", 24, 200, 886, () => FindFirstObjectByType<BlenderScreen>()?.Toggle());
             Label(content, "Primary hand points and uses shortcuts. The other hand holds the menu.\nA/X: screen · B/Y: recenter · primary stick click: magnify\nOther stick click: show/hide menu · F3 on desktop", 24, 310, 886, 170, 27);
-            ButtonAt("Back", 24, 610, 886, Home);
+            SettingsExtras?.Invoke(this);
+            ButtonAt("Back", 24, 640, 886, Home);
         }
 
         void Tool(string op, string shape = "cube")
@@ -267,6 +271,8 @@ namespace SpatialModeling
             string saved = (bool?)Session.Document["dirty"] == true ? "Unsaved" : "Saved";
             selected.text = $"Target: {name} · revision {Session.Revision}\n{(SelectingNative ? "Native edit" : "Arrange view")} · {(WorkspaceHandPreference.Left ? "Left" : "Right")} hand · {(Pinned ? "Pinned" : "Held")} · {saved}";
             feedback.text = localError.Length > 0 ? localError : Session.Notice;
+            string ownership = OwnershipNotice?.Invoke();
+            if (!string.IsNullOrEmpty(ownership)) feedback.text += "\n" + ownership;
             feedback.color = Session.OutcomeUnknown || !Session.Ready || localError.Length > 0 ? new Color(1, 0.7f, 0.45f) : Color.white;
         }
 
