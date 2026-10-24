@@ -82,8 +82,11 @@ namespace SpatialModeling
             int activeLines = 0; foreach (var line in scene.Placement.GetComponentsInChildren<LineRenderer>())
                 if (line.isActiveAndEnabled && line.gameObject.activeInHierarchy && line.positionCount > 1 && line.sharedMaterial != null) activeLines++;
             if (activeLines == 0) { Fail("Native solver records exist but no active solved-geometry line renderer is visible after placement"); yield break; }
-            report["active_solved_line_renderers"] = activeLines; report["passed"] = true; Write();
-            SketchHome(); ScreenCapture.CaptureScreenshot(Path.ChangeExtension(output, ".png"));
+            report["active_solved_line_renderers"] = activeLines;
+            SketchHome(); yield return null;
+            if (!NativeSmokeWorkspace.Capture(Path.ChangeExtension(output, ".png"))) { Fail("Actual solved-sketch/menu camera capture failed"); yield break; }
+            report["screenshot_source"] = "Actual production camera rendered through URP; software image, not XR eye acceptance";
+            report["passed"] = true; Write();
             Debug.Log("P3_CAD_PLAYER_SMOKE PASS actual menu/native solver/100x60to120x60/conflict/UndoRedo/circle/angle/Save");
             yield return new WaitForSecondsRealtime(2); WorkspaceShutdown.Quit(0);
         }
