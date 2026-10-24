@@ -31,6 +31,8 @@ vosk-model-*
 
 # OS and editors
 .DS_Store
+__MACOSX/
+._*
 Thumbs.db
 .vs/
 .idea/
