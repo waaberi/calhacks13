@@ -106,8 +106,20 @@ def _solver(sketch):
     return {"status": "fully_constrained" if dof == 0 else "free", "dof": dof}
 
 
+def _check_frame(sketch):
+    """The wire plane is rigid; refuse scale/shear instead of changing its meaning."""
+    basis = sketch.plane_matrix.to_3x3()
+    axes = [basis.col[i] for i in range(3)]
+    if (any(abs(axis.length - 1) > 1e-6 for axis in axes)
+            or any(abs(axes[i].dot(axes[j])) > 1e-6 for i, j in ((0, 1), (0, 2), (1, 2)))
+            or abs(basis.determinant() - 1) > 1e-6):
+        raise Refused("failed", f"Sketch {sketch.name} has unsupported scale, reflection or shear. "
+                      "Restore a rigid unit-scale sketch plane in host Blender.")
+
+
 def _record(obj, api):
     sketch = api["sketch"].Sketch(obj)
+    _check_frame(sketch)
     data = obj.data
     unit = _unit()
     curve_ids = api["curves"].read_uuid_list(data, "curve_id")
@@ -347,6 +359,7 @@ def apply(op, target_id, args):
     if obj.data.users > 1:
         _bad("This sketch shares native data. Make it single-user in host Blender before editing.")
     sketch = api["sketch"].Sketch(obj)
+    _check_frame(sketch)
     original = obj.data
     staged = original.copy()
     saved_keys = {key: bpy.context.scene[key] for key in bpy.context.scene.keys()  # noqa: SIM118
