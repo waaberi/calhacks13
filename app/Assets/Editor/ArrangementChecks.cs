@@ -100,7 +100,8 @@ public static class ArrangementChecks
             Near(moved.position,new Vector3(0,.5f,.4f),"level itself is not blocked by existing surface assistance");
             Check(Vector3.Dot(moved.rotation*Vector3.forward,Vector3.up)>.999f,"moving a level preserves horizontal constraint");
             var ray=new Ray(level.position+Vector3.up,Vector3.down);
-            Check(provider.RaycastLevel(ray,out float levelDistance)==level && Mathf.Abs(levelDistance-1)<.15f,"visible level and central handle can be gripped");
+            Check(provider.RaycastLevel(ray,out float levelDistance)==level && levelDistance>.7f && levelDistance<=1.01f,
+                "visible grid, raised label or central handle is the nearest grabbable level hit");
             level.SetPositionAndRotation(moved.position,moved.rotation);
             typeof(WorkspaceSurfaces).GetMethod("LateUpdate",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(provider,null);
             Near(provider.Surfaces.Single().Pose.position,moved.position,"placed plane reads the moved grid's world pose exactly once");

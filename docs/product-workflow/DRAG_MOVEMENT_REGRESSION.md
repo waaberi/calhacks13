@@ -4,6 +4,15 @@
 
 Grip selects the live screen or model at a distance. While held, changing controller aim must move the item through the environment, as with a desktop panel in Meta Link. Physical hand translation and stick depth/size also remain available. Release leaves the item where shown. The same behavior applies to the screen, whole build and individual parts without editing native Blender objects.
 
+P2 surface-test correction, 2026-10-24: the human rejected model tilt while grip-moving
+and after surface alignment. New Arrange-space model/part/manual-level grips keep
+the captured orientation while retaining the accepted far-ray POSITION displacement.
+Stick and two hands deliberately rotate; alignment and two-hand handoff rebase that
+held orientation. Panel/menu behavior and the generic FollowRay remain unchanged.
+Do not restore wrist pitch/roll on these model grips or remove aim-based positional
+movement. The complete pickup/move/rebase path now has regression checks; testing
+the contact helper alone missed the physically rejected interaction.
+
 ## What happened
 
 Talia reported shaky/skipping dragging through v11 and combined-v2. World-target filter tests passed, but did not test the actual distant-ray mapping or required interaction. Moving pose updates to before-render did not establish a physical fix. V13 also assumed all poses were Input System PoseState; Meta Touch Plus exposed legacy OpenXR Pose. That separate compatibility regression is fixed by reading the actual control type (#126).
