@@ -31,6 +31,13 @@ public static class P25Checks
         RunKeyboardIsolation();
     }
 
+    public static void RunCumulativeEditor()
+    {
+        Run();
+        P2Checks.Run();
+        Debug.Log("P25_CUMULATIVE_EDITOR_CHECK PASS P25 plus unchanged P2 gates; no Player build or launch");
+    }
+
     // The same actual mapping gate can run under the bundled managed runtime,
     // without Unity native initialization, by supplying Console.WriteLine.
     public static void RunMapping(Action<string> report)
@@ -214,6 +221,7 @@ public static class P25Checks
         var enabledField = typeof(PreviewInteraction).GetField("inputEnabled", BindingFlags.Instance | BindingFlags.NonPublic);
         var endingField = typeof(PreviewInteraction).GetField("endAfterRelease", BindingFlags.Instance | BindingFlags.NonPublic);
         var previousKeyboard = Keyboard.current;
+        int previousTableControls = UnityEngine.Object.FindObjectsByType<TableAction>(FindObjectsInactive.Include, FindObjectsSortMode.None).Length;
         var container = new GameObject("P25 synthetic keyboard isolation");
         container.SetActive(false); // No component OnEnable, networking, XR or helper start.
         var cameraObject = new GameObject("P25 isolation camera", typeof(Camera));
@@ -222,6 +230,7 @@ public static class P25Checks
         var gamepad = InputSystem.AddDevice<Gamepad>("P25 test pan controller");
         PreviewInteraction preview = null;
         HostScene host = null;
+        TablePlacement table = null;
         try
         {
             inputSettings.SetInternalFeatureFlag(playerUpdates, true);
@@ -231,7 +240,7 @@ public static class P25Checks
             typeof(HostScene).GetField("objectMaterial", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(host,
                 AssetDatabase.LoadAssetAtPath<Material>("Assets/SpatialModeling/Materials/HostObject.mat"));
             typeof(HostScene).GetMethod("Awake", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(host, null);
-            var table = container.GetComponent<TablePlacement>();
+            table = container.GetComponent<TablePlacement>();
             table.SeedFromHead(new Vector3(0, 1.65f, 0), Vector3.forward);
             table.Place();
             var update = typeof(TablePlacement).GetMethod("Update", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -298,9 +307,15 @@ public static class P25Checks
             InputSystem.RemoveDevice(gamepad);
             if (previousKeyboard != null && previousKeyboard.added) previousKeyboard.MakeCurrent();
             inputSettings.SetInternalFeatureFlag(playerUpdates, previousPlayerUpdates);
+            // Unity does not invoke OnDestroy for a component that was never
+            // active. Update created an external menu/preview; call its actual
+            // cleanup explicitly so subsequent P2 gates see their own controls.
+            if (table != null) typeof(TablePlacement).GetMethod("OnDestroy", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(table, null);
             if (host != null && host.Placement != null) UnityEngine.Object.DestroyImmediate(host.Placement.gameObject);
             UnityEngine.Object.DestroyImmediate(container);
             UnityEngine.Object.DestroyImmediate(cameraObject);
         }
+        Check(UnityEngine.Object.FindObjectsByType<TableAction>(FindObjectsInactive.Include, FindObjectsSortMode.None).Length == previousTableControls,
+            "keyboard fixture leaves no external TableAction controls for later gates");
     }
 }
