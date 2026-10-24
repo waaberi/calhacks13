@@ -169,6 +169,12 @@ namespace SpatialModeling
                     case "result":
                         Post(DecodeResult(p, msg["re"]?.Type == JTokenType.String ? (string)msg["re"] : ""));
                         break;
+                    // P4 voice (#146): the host resolver's answers, passed on as JSON text for VoiceCore to parse.
+                    case "voice.candidates":
+                    case "voice.grammar":
+                        Post(new HostEvent(type == "voice.grammar" ? HostEventKind.VoiceGrammar : HostEventKind.VoiceCandidates)
+                        { Re = msg["re"]?.Type == JTokenType.String ? (string)msg["re"] : "", Text = p?.ToString(Formatting.None) ?? "" });
+                        break;
                 }
             }
             catch (Exception e) { Warn($"Ignored a {type} message: {e.Message}"); }
@@ -324,7 +330,7 @@ namespace SpatialModeling
         }
     }
 
-    enum HostEventKind { Opened, Closed, Welcome, Scene, Error, Warning, Result }
+    enum HostEventKind { Opened, Closed, Welcome, Scene, Error, Warning, Result, VoiceCandidates, VoiceGrammar }
 
     sealed class HostEvent
     {

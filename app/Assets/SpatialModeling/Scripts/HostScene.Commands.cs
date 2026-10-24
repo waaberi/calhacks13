@@ -18,9 +18,15 @@ namespace SpatialModeling
         public event Action ConnectionLost;
         public event Action DocumentChanged;
         public event Action<CommandAnswer> CommandAnswered;
+        // P4 voice (#146): the host resolver's messages, and errors answering any request (not only commands).
+        public event Action Welcomed;
+        public event Action<string, string> VoiceCandidatesReceived;   // (re, payload JSON)
+        public event Action<string, string> VoiceGrammarReceived;      // (re, payload JSON)
+        public event Action<string, string> RequestFailed;             // (re, error code)
 
         string sessionId = "", hostEpoch = "", actorId = "", documentId = "", openEpoch = "";
         bool canEdit;
+        bool welcomed;   // welcome arrived on this connection: voice.* requests may go before the snapshot
         readonly Dictionary<string, long> generations = new Dictionary<string, long>();
         readonly Dictionary<string, string> pendingOps = new Dictionary<string, string>();
 
@@ -35,13 +41,17 @@ namespace SpatialModeling
             {
                 case HostEventKind.Welcome:
                     bool newDocument = documentId.Length > 0 && (documentId != e.DocumentId || openEpoch != e.OpenEpoch);
+                    welcomed = true;
                     sessionId = e.SessionId; hostEpoch = e.HostEpoch; actorId = e.ActorId; canEdit = e.CanEdit;
                     documentId = e.DocumentId; openEpoch = e.OpenEpoch;
                     pendingOps.Clear();
                     if (newDocument) DocumentChanged?.Invoke();
+                    Welcomed?.Invoke();
                     break;
+                case HostEventKind.VoiceCandidates: VoiceCandidatesReceived?.Invoke(e.Re, e.Text); break;
+                case HostEventKind.VoiceGrammar: VoiceGrammarReceived?.Invoke(e.Re, e.Text); break;
                 case HostEventKind.Closed:
-                    canEdit = false;
+                    canEdit = false; welcomed = false;
                     if (wasConnected) ConnectionLost?.Invoke();
                     // contracts/README.md, Outcomes: a connection lost before the result is an unknown outcome.
                     // Report it (never replay it), so the sender can say "check the model".
@@ -59,7 +69,7 @@ namespace SpatialModeling
                     Answer(e.Re, e.Op, e.Outcome, e.Code, e.Text, e.Revision);
                     break;
                 case HostEventKind.Error:
-                    if (e.Re.Length > 0) Answer(e.Re, null, "rejected", e.Code, e.Text, null);
+                    if (e.Re.Length > 0) { Answer(e.Re, null, "rejected", e.Code, e.Text, null); RequestFailed?.Invoke(e.Re, e.Code); }
                     break;
             }
         }
@@ -104,6 +114,19 @@ namespace SpatialModeling
             string id = link.Send("command", payload);
             if (id != null) pendingOps[id] = op;
             return id;
+        }
+
+        // A voice.* request (voice.grammar_query, voice.resolve): the request ID, or null when it could not be sent.
+        public string SendVoice(string type, JObject payload)
+        {
+            if (link == null || !link.SocketOpen || !welcomed) return null;
+            return link.Send(type, payload ?? new JObject());
+        }
+
+        public bool TryGetGeneration(string id, out long generation)
+        {
+            generation = 0;
+            return id != null && generations.TryGetValue(id, out generation);
         }
 
         // The object is in the current scene (its generation is known, so a command can target it).
