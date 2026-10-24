@@ -97,11 +97,42 @@ namespace SpatialModeling
             if (activeLines == 0) { Fail("Native solver records exist but no active solved-geometry line renderer is visible after placement"); yield break; }
             report["active_solved_line_renderers"] = activeLines;
             SketchHome(); yield return null;
+            yield return VideoHold(); if (failed) yield break;
             if (!NativeSmokeWorkspace.Capture(Path.ChangeExtension(output, ".png"))) { Fail("Actual solved-sketch/menu camera capture failed"); yield break; }
             report["screenshot_source"] = "Actual production camera rendered through URP; software image, not XR eye acceptance";
             report["passed"] = true; Write();
             Debug.Log("P3_CAD_PLAYER_SMOKE PASS actual menu/native solver/100x60to120x60/conflict/UndoRedo/circle/angle/Save");
             yield return new WaitForSecondsRealtime(2); WorkspaceShutdown.Quit(0);
+        }
+        IEnumerator VideoHold()
+        {
+            // Opt-in test orchestration only. An external changing-pixel check
+            // must supply its own evidence; releasing this hold is not a video pass.
+            string release = Environment.GetEnvironmentVariable("P3_CAD_VIDEO_HOLD_FILE");
+            if (string.IsNullOrEmpty(release)) yield break;
+            if (!Path.IsPathRooted(release) || File.Exists(release))
+            { Fail("CAD video hold requires a fresh absolute release-marker path"); yield break; }
+            long revision = session.Revision;
+            string sketches = new JArray(session.Sketches.Values).ToString();
+            double started = Time.realtimeSinceStartupAsDouble;
+            var hold = new JObject { ["state"] = "awaiting_release", ["release_file"] = release,
+                ["maximum_seconds"] = 120, ["revision"] = revision,
+                ["note"] = "View-only software hold; external live-pixel evidence required" };
+            report["video_hold"] = hold; Write();
+            Debug.Log("P3_CAD_VIDEO_HOLD_READY view-only; bounded120s; external actual pixel evidence required");
+            while (!File.Exists(release) && Time.realtimeSinceStartupAsDouble - started < 120)
+            {
+                if (!session.Ready || !session.SceneCurrent || session.Revision != revision)
+                { Fail("Native sketch state changed or became stale during the view-only video hold"); yield break; }
+                yield return null;
+            }
+            if (!File.Exists(release)) { Fail("CAD video hold timed out waiting for its release marker"); yield break; }
+            if (!session.Ready || !session.SceneCurrent || session.Revision != revision
+                || sketches != new JArray(session.Sketches.Values).ToString())
+            { Fail("Native sketch state changed or became stale during the view-only video hold"); yield break; }
+            hold["state"] = "released";
+            hold["elapsed_seconds"] = Time.realtimeSinceStartupAsDouble - started;
+            hold["native_revision_and_sketch_records_unchanged"] = true; Write();
         }
         IEnumerator NewSketch() { menu.Home(); if (!Click("Sketch") || !Click("New sketch") || !Click("XY") || !Click("Apply")) yield break; yield return Receipt("create native XY sketch"); }
         IEnumerator PeerSketchOwnership(string sketch, string widthDimension, string horizontal)
