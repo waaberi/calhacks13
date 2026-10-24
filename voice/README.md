@@ -71,7 +71,8 @@ reject (contracts/README.md, Voice). Without `AskHost` nothing changes.
   went out with, or null if it couldn't be sent. Show "thinking" while `session.WaitingForHost`.
 - **Candidates:** pass a `voice.candidates` to `session.HostAnswered(re, VoiceCandidates.FromJson(payloadJson))`, and an
   `error` whose `re` is the resolve to `session.HostError(re, code)`. Late answers are dropped by `re`; after
-  `HostTimeout` (3 s) the words are handled as without a host.
+  `HostTimeout` (3 s) the words are handled as without a host. Show `turn.HostReason` ("Join isn't available by
+  voice.") next to the turn's prompts.
 - **Run:** a `Command` of kind `Run` goes out like the others: `HostCommand.From` gives op `voice.run` with args
   `resolution` and `choice`, and a target only when the candidate needs one. Its `result` gets
   `HostCommand.PromptFor("voice.run", ...)`; show the receipt's summary.

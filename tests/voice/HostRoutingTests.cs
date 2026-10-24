@@ -400,6 +400,18 @@ namespace SpatialModeling.VoiceCore.Tests
         }
 
         [Fact]
+        public void TheHostsReasonIsShownWithTheFallback()
+        {
+            var asking = new Asking(Cube);
+            asking.Say("join them");
+            VoiceTurn turn = asking.Session.HostAnswered(asking.LastId,
+                new VoiceCandidates("r", VoiceDecision.Reject, "Join isn't available by voice.", 30, new VoiceCandidate[0]));
+            Assert.Equal(new[] { "unsupported" }, Prompts(turn));
+            Assert.Equal("Join isn't available by voice.", turn.HostReason);
+            Assert.Null(asking.Say("undo").HostReason);
+        }
+
+        [Fact]
         public void AnAnswerWithoutCandidatesIsAReject()
         {
             var asking = new Asking(Cube);

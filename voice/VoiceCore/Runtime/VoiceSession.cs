@@ -56,13 +56,19 @@ namespace SpatialModeling.VoiceCore
     /// <summary>The result of one input: at most one command to execute, and prompts to play and show in order.</summary>
     public sealed class VoiceTurn
     {
-        internal VoiceTurn(VoiceCommand command, IReadOnlyList<Prompt> prompts, VoiceResolve resolve = null, bool grammarChanged = false)
+        internal VoiceTurn(VoiceCommand command, IReadOnlyList<Prompt> prompts, VoiceResolve resolve = null, bool grammarChanged = false,
+            string hostReason = null)
         {
             Command = command;
             Prompts = prompts;
             Resolve = resolve;
             GrammarChanged = grammarChanged;
+            HostReason = hostReason;
         }
+
+        /// <summary>The host's reason for rejecting or asking ("Join isn't available by voice."), to show next to the
+        /// prompts, or null.</summary>
+        public string HostReason { get; }
 
         /// <summary>A complete command to send through the normal command path, or null. A <see cref="CommandKind.Run"/>
         /// goes out like the others, as <c>voice.run</c> (<see cref="HostCommand.From"/>).</summary>
@@ -326,6 +332,7 @@ namespace SpatialModeling.VoiceCore
             if (answer == null || !Answers(re) || TimedOutWaiting(turn))
                 return turn.Build();
             Resolving asked = resolving;
+            turn.HostReason = answer.Reason;
             var candidates = new List<VoiceCandidate>();
             foreach (VoiceCandidate candidate in answer.Candidates)
                 if (candidate != null && candidate.Choice >= 1 && candidate.Choice <= 3 && candidates.Count < 3)
@@ -755,7 +762,8 @@ namespace SpatialModeling.VoiceCore
             public readonly List<Prompt> Prompts = new List<Prompt>();
             public VoiceResolve Resolve;
             public bool GrammarChanged;
-            public VoiceTurn Build() => new VoiceTurn(Command, Prompts, Resolve, GrammarChanged);
+            public string HostReason;
+            public VoiceTurn Build() => new VoiceTurn(Command, Prompts, Resolve, GrammarChanged, HostReason);
         }
 
         /// <summary>Words sent to the host, kept to be handled as without a host if it can't help.</summary>
