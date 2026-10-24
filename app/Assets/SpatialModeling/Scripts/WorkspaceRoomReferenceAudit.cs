@@ -52,7 +52,7 @@ namespace SpatialModeling
             OVRCameraRig proxy=null;MRUK service=null;
             try
             {
-                if(OVRCameraRig.Instance!=null || MRUK.Instance!=null)
+                if(FindAnyObjectByType<OVRCameraRig>()!=null || MRUK.Instance!=null)
                     throw new InvalidOperationException("Reference audit requires no existing SDK rig/service");
                 // SDK207 explicitly supports another main rendering camera with this flag.
                 // Only this independent reference rig's tracking space can be world-locked.
@@ -133,10 +133,10 @@ namespace SpatialModeling
                     entry.mrukPositionDelta=Vector3.Distance(entry.coreWorld.position,entry.mrukMappedWorld.position);
                     entry.mrukAngleDelta=Quaternion.Angle(entry.coreWorld.rotation,entry.mrukMappedWorld.rotation);
                     var core=scanMeshes.Find(m=>m.Anchor.Anchor.Uuid==item.Anchor.Uuid);
-                    if(core!=null && mruk.Mesh!=null)
+                    if(core!=null && mruk.GlobalMesh!=null)
                     {
-                        var mesh=new ReferenceMesh {id=entry.id,coreTriangles=core.Mesh.triangles.Length/3,mrukTriangles=mruk.Mesh.triangles.Length/3,
-                            coreHash=ExpandedMeshHash(core.Mesh),mrukHash=ExpandedMeshHash(mruk.Mesh)};
+                        var mesh=new ReferenceMesh {id=entry.id,coreTriangles=core.Mesh.triangles.Length/3,mrukTriangles=mruk.GlobalMesh.triangles.Length/3,
+                            coreHash=ExpandedMeshHash(core.Mesh),mrukHash=ExpandedMeshHash(mruk.GlobalMesh)};
                         mesh.expandedTrianglesIdentical=mesh.coreHash==mesh.mrukHash;result.meshes.Add(mesh);
                     }
                 }
