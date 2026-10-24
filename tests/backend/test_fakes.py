@@ -881,6 +881,23 @@ def test_fake_host_exclusive_release_and_repeats():
         b.close()
 
 
+def test_fake_client_leases_and_the_started_editing_notice():
+    with proxied() as (_host, proxy), joined(proxy.port, "Talia") as a, \
+            joined(proxy.port, "Jihyeon") as b:
+        reply = a.run("lease base")
+        assert reply["type"] == "lease.granted", reply
+        assert reply["payload"]["lease"]["targets"] == [BASE_PLATE, SHAFT]
+        wait_until(lambda: any("started editing Base plate, Shaft" in line for line in b.output))
+        assert not any("started editing" in line for line in a.output)  # not for your own
+        assert b.run("lease shaft")["payload"]["code"] == "lease_conflict"
+        a.run("release")
+        wait_until(lambda: b.leases == [])
+        assert b.run("lease all")["type"] == "lease.granted"
+        wait_until(lambda: any("started editing the document" in line for line in a.output))
+    assert {("up", "lease.acquire"), ("up", "lease.release"),
+            ("down", "lease.granted")} <= proxy.assert_all_valid()
+
+
 LEASE_CHANGES = [
     {}, {"payload.mode": "exclusive"}, {"payload.mode": "exclusive", "payload.targets": []},
     {"payload.targets": []}, {"payload.targets": [SHAFT, SHAFT]}, {"payload.targets": ["x"]},

@@ -13,7 +13,7 @@
         "lease_id": "092c1bc6bec64e90927ee8d232ccb9e8",
         "mode": "shared",
         "owner": { "actor_id": "cf91fda963c247488874e12161956976", "name": "Lee Jae-yeon", "role": "blender-client" },
-        "targets": ["f21f7d20394f4c02afce7ab1e6f4a1a8"],
+        "targets": ["f21f7d20394f4c02afce7ab1e6f4a1a8", "fd7bd4ddae444528a4fedbc562fe018b"],
         "acquired_at": 1792875604200
       }
     ]

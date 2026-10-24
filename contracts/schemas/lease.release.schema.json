@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "lease.release.schema.json",
   "title": "lease.release",
-  "description": "Client to host, after the edit's commit or cancel. No reply on success; the next session.update no longer lists the lease.",
+  "description": "Client to host, after the edit's commit or cancel. No reply on success; everyone gets a session.update that no longer lists the lease. error not_found if the lease has ended, permission_denied if it is someone else's.",
   "$ref": "envelope.schema.json",
   "properties": {
     "type": { "const": "lease.release" },

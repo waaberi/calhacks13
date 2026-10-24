@@ -43,7 +43,7 @@ Every message has this envelope:
 | `receipts` | host → client, answers `receipt.query` | `receipts`; `missing` IDs the host never received (never applied); `unknown` IDs it has no record of but may have applied | P5 |
 | `lease.acquire` | client → host | request fields, `mode` (`exclusive` or `shared`), `targets` | P3B |
 | `lease.granted` | host → client, answers `lease.acquire` | the `lease` | P3B |
-| `lease.release` | client → host | `lease_id` | P3B |
+| `lease.release` | client → host | `lease_id`; no reply on success | P3B |
 | `session.update` | host → every client | every participant and every lease | P1, P3B, P5 |
 
 There is no voice message type and no frame message type; see [Voice](#voice) and [Blender screen](#blender-screen).
@@ -98,10 +98,10 @@ The first six codes are the transport-level codes that [`server.py`](../blender_
 | `unknown_type` | Nothing handles this `type`. | |
 | `busy` | Too many messages are waiting for Blender. The message was dropped and never applied. | The same message can be sent again later. |
 | `internal_error` | The handler failed. | For a command, the outcome is unknown (see [Outcomes](#outcomes)). |
-| `permission_denied` | Not welcomed yet, read-only (`can_edit` is false), `actor_id` isn't this connection's, or the host has stopped writes while it reconciles. On the LAN port without TLS: the first message wasn't `hello` with the right `token`. | After a token failure, host closes. |
+| `permission_denied` | Not welcomed yet, read-only (`can_edit` is false), `actor_id` isn't this connection's, or the host has stopped writes while it reconciles. A `lease.release` or a command's `lease` names someone else's lease, or that lease doesn't cover the command's target. On the LAN port without TLS: the first message wasn't `hello` with the right `token`. | After a token failure, host closes. |
 | `wrong_session` | `session_id` or `host_epoch` is not the current one: the request was built before the host restarted. | Reconnect. |
 | `wrong_document` | `document_id` or `open_epoch` is not the open document, or `hello` expected another document. `details.document`: the open one. | |
-| `not_found` | The target, lease or sketch entity doesn't exist (for example it was deleted). | |
+| `not_found` | The target, lease or sketch entity doesn't exist (for example it was deleted, or the lease ended). | |
 | `stale_revision` | The target changed since the client saw it, or Undo/Redo was sent from an old revision. `details.generation` or `details.revision`: the current value. | Look again, then make a new request. |
 | `lease_conflict` | Another participant's lease covers the target or the document. `details.lease`: that lease, with the owner's name. | |
 | `duplicate_request` | A request ID was reused with a different payload, or arrived after `receipt.query` had reported it `missing` or `unknown` (see [Reconnecting](#reconnecting)). | Use a new ID. |
@@ -196,7 +196,7 @@ A `command` adds:
 | `op` | What to do (table below). Unknown ops are `invalid_message`. |
 | `target` | `{id, generation}` of the object or sketch to change, with the generation the client last saw. Required for the ops that have a target, forbidden for the others. |
 | `args` | The op's arguments. Ops without arguments send `{}`. |
-| `lease` | Optional `lease_id` of a lease this actor holds that covers the target. See [Leases and presence](#leases-and-presence). |
+| `lease` | Optional `lease_id` of a lease this actor holds that covers the target. A lease that has ended is `not_found`; someone else's, or one that doesn't cover the target, is `permission_denied`. See [Leases and presence](#leases-and-presence). |
 
 | `op` | Target | `args` | Notes |
 | --- | --- | --- | --- |
@@ -220,7 +220,7 @@ A `command` adds:
 3. Admission: welcomed, `can_edit`, `actor_id` is this connection's. Otherwise `permission_denied`.
 4. `session_id` and `host_epoch`, otherwise `wrong_session`; `document_id` and `open_epoch`, otherwise `wrong_document`.
 5. The target exists (`not_found`) and its generation is current; for Undo/Redo, `base_revision` is current (`stale_revision`).
-6. Leases (`lease_conflict`), described below.
+6. Leases, immediately before the write: the command's own `lease`, if it names one, then nobody else's lease may cover what would change (`lease_conflict`). See [Leases and presence](#leases-and-presence).
 7. Apply on Blender's main thread, push one Undo step, read the result back. Then send `scene.update` to every client, `result` to the sender and `activity` to the others, in that order. When a `result` arrives, the sender's scene already includes the change.
 
 **In host Blender**, [`commands.py`](../blender_addon/spatial_modeling/commands.py) runs these checks and [`edits.py`](../blender_addon/spatial_modeling/edits.py) applies the command. It changes Blender's data directly, so the host desktop's selection and active object stay as they are, and each applied command is one Undo step named after its `summary`. It reads every edit back, and what Blender can't do exactly is refused with `failed`, leaving nothing changed:
@@ -231,7 +231,7 @@ A `command` adds:
 - `rotate.to` isn't a unit quaternion (within 0.001);
 - nothing to undo or redo; Save of a file that was never saved.
 
-`object.add` names the object as Blender's Add menu does (`Cube`, `Sphere`, `Cylinder`, then `.001` and so on), with 32 segments (and 16 rings for the sphere), centered on `location`, in the active collection. `object.delete` leaves the deleted object's children where they are. Undo and Redo say which command they undid in `summary` ("Undid: Moved Cube 10 mm along X"), or "Undid a change made in host Blender". Until P3C sketch ops get `failed`, and until P3B a command naming a `lease` gets `not_found`. The host keeps the receipts of the newest 10,000 requests, for deduplication and `receipt.query`, until its server restarts (see [Reconnecting](#reconnecting)).
+`object.add` names the object as Blender's Add menu does (`Cube`, `Sphere`, `Cylinder`, then `.001` and so on), with 32 segments (and 16 rings for the sphere), centered on `location`, in the active collection. `object.delete` leaves the deleted object's children where they are. Undo and Redo say which command they undid in `summary` ("Undid: Moved Cube 10 mm along X"), or "Undid a change made in host Blender". Until P3C sketch ops get `failed`. The host keeps the receipts of the newest 10,000 requests, for deduplication and `receipt.query`, until its server restarts (see [Reconnecting](#reconnecting)).
 
 ### Outcomes
 
@@ -264,17 +264,24 @@ Never resend instead of asking. A client that does anyway still can't apply anyt
 
 ## Leases and presence
 
-The host checks permission before every native change (P3B).
+The host checks permission before every native change (P3B). [`leases.py`](../blender_addon/spatial_modeling/leases.py) implements this section; participants and leases live behind one interface, [`session_store.py`](../blender_addon/spatial_modeling/session_store.py), in memory unless SpacetimeDB is used (see below).
 
 - **Exclusive** (`mode: "exclusive"`, `targets: []`) reserves the whole document. It is granted only while no other participant holds a lease. While it is held, other participants' commands get `lease_conflict` and the host blocks its own desktop edits. For Exclusive editing mode, acquire it before the first native write (Apply, or the start of a drag) and release it after the commit or cancel.
-- **Shared** (`mode: "shared"`) reserves the listed objects and sketches. The host may add linked data, such as other objects that share the mesh; `lease.granted` lists what was actually reserved. Two shared leases conflict when their targets overlap. A sketch edit leases the whole sketch by its ID.
-- A command without `lease` gets a lease for just that command: the host checks that no other participant's lease covers the target and holds nothing afterwards. That suits one-shot menu and voice commands. Drags, numeric edits and sketch sessions acquire a lease so that others see the ownership for the whole edit.
+- **Shared** (`mode: "shared"`) reserves the listed objects and sketches, plus their linked data; `lease.granted` lists what was actually reserved: the targets asked for, in order, then the linked data. Two shared leases conflict when their targets overlap. A sketch edit leases the whole sketch by its ID.
+- **Linked data** of an object, followed transitively: the other objects that share its data (a mesh or curve, so editing it edits theirs), its children (their world transforms follow it, and deleting it re-parents them), and the objects whose modifiers or constraints use it (a Boolean cutter, a Mirror or Array object, a constraint target, a Geometry Nodes object input). Leasing Base plate in the examples also reserves Shaft, its child. A command's target is expanded again when it is checked, so links made after a lease was granted still count.
+- A command without `lease` gets a lease for just that command: the host checks that no other participant's lease covers the target or its linked data, and holds nothing afterwards. That suits one-shot menu and voice commands. Drags, numeric edits and sketch sessions acquire a lease so that others see the ownership for the whole edit.
+- A command with `lease` must name a live lease of its own that covers its target (an exclusive lease covers everything; a command without a target accepts any of its own leases). Nobody else's lease may cover the target either.
+- `object.add`, `document.save` and `sketch.create` have no target, so only another participant's exclusive lease blocks them. `history.undo` and `history.redo` are refused with `lease_conflict` while another participant holds any lease.
 - A participant's own leases never conflict with each other.
-- **Expiry:** a lease ends when it is released, when its owner's connection closes, or when the host hasn't heard from the owner for 6 s (see Heartbeat). Expiry never interrupts a commit in progress, because commits run one at a time on Blender's main thread.
+- **Expiry:** a lease ends when it is released, when its owner's connection closes, or when the host hasn't heard from the owner for 6 s: the host then closes the connection (see Heartbeat). The host times that on its reader thread, so a busy Blender doesn't end the leases of a client that keeps pinging. Expiry never interrupts a commit in progress: commits run one at a time on Blender's main thread, and a connection that closes during one keeps its leases until the commit has finished.
 
-`session.update` always carries the complete lists, which replace the previous ones: `participants` (including the host's own Blender, role `host`) and `leases`. Show a pink outline and the owner's name on the targets of other participants' leases, and "Two people are editing" while leases from two participants exist.
+**Requesting.** `lease.acquire` is checked like a command: schema (`invalid_message`), request ID (the same ID with the same payload gets the same answer again and reserves nothing new; a changed payload gets `error` `duplicate_request`), admission (`permission_denied`), session and document (`wrong_session`, `wrong_document`), the targets exist (`not_found`), then conflicts (`lease_conflict` with `details.lease`, the blocking lease with its owner's name). A refusal is an `error` with `re`. When it is granted, every participant gets `session.update` with the new lease, and then the sender gets `lease.granted` with `re`, so the sender already sees itself as the owner. `lease.release` has no reply on success; everyone gets `session.update` without the lease. Releasing a lease that has ended is `not_found`, and someone else's lease `permission_denied`.
 
-**SpacetimeDB.** A participant is an `actor` row and a lease a `lease` row, so if the spike passes, the host can call reducers and relay those tables as `session.update`, and Unity may subscribe to the tables directly instead. `lease.acquire` and `lease.release` still go through the host, which checks leases before every native write. If the spike fails, the host keeps the same rows in memory and nothing on the wire changes.
+`session.update` always carries the complete lists, which replace the previous ones: `participants` (including the host's own Blender, role `host`) and `leases` (every participant's, the host's own included: when its desktop edits are gated, the host holds leases like anyone else). It is sent whenever either list changes. Show a pink outline and the owner's name on the targets of other participants' leases, and "Two people are editing" while leases from two participants exist.
+
+**An edit begins** when its lease is granted, so the `session.update` that lists a lease you haven't seen before is the notice that someone started editing: show "Lee Jae-yeon started editing Base plate" from its `owner` and `targets`. There is no separate message for it; one would only repeat the lease row (who, what, `acquired_at`). A one-shot command without `lease` begins and ends in one step, so it shows up only as its `activity` after it is applied.
+
+**SpacetimeDB.** A participant is an `actor` row and a lease a `lease` row, so if the spike passes, the host can call reducers and relay those tables as `session.update`, and Unity may subscribe to the tables directly instead. `lease.acquire` and `lease.release` still go through the host, which checks leases before every native write. If the spike fails, the host keeps the same rows in memory and nothing on the wire changes. Until the Windows run passes (issue #16), the host uses memory.
 
 ## Voice
 
@@ -347,7 +354,7 @@ Unity polls `/frame` at a modest rate. Start at 10 per second and measure.
 python3 contracts/fakes/fake_host.py            # 127.0.0.1:8765; Ctrl-C stops it
 ```
 
-It serves the scene from the examples, with the same IDs, as `fake_bracket.blend`: Base plate (100 × 60 × 10 mm box), Shaft (cylinder, 20 mm diameter, 40 mm tall) standing on it as its child, a Camera without a mesh, and the 100 × 60 mm sketch. The meshes are real and render. It follows [Connecting](#connecting), answers `ping`, and applies `object.add`, `object.move`, `object.rotate`, `object.scale`, `object.delete`, `history.undo`, `history.redo` and `document.save` as [Commands](#commands) describes: scene.update to everyone, then result, then activity, with request-ID deduplication and `receipt.query` as [Reconnecting](#reconnecting) describes (stop and start it again to simulate a host restart: a new `host_epoch`, no receipts). Sketch ops get `rejected` with `failed`, and leases are not granted (`lease.*` gets `unknown_type`). Each run starts at revision 0 with a new `open_epoch`.
+It serves the scene from the examples, with the same IDs, as `fake_bracket.blend`: Base plate (100 × 60 × 10 mm box), Shaft (cylinder, 20 mm diameter, 40 mm tall) standing on it as its child, a Camera without a mesh, and the 100 × 60 mm sketch. The meshes are real and render. It follows [Connecting](#connecting), answers `ping`, and applies `object.add`, `object.move`, `object.rotate`, `object.scale`, `object.delete`, `history.undo`, `history.redo` and `document.save` as [Commands](#commands) describes: scene.update to everyone, then result, then activity, with request-ID deduplication and `receipt.query` as [Reconnecting](#reconnecting) describes (stop and start it again to simulate a host restart: a new `host_epoch`, no receipts). Sketch ops get `rejected` with `failed`. It grants and checks leases with the host's rules and messages ([Leases and presence](#leases-and-presence)); its linked data is an object's descendants and the objects sharing its mesh, so leasing Base plate also reserves Shaft. A sketch can be leased by its ID. Each run starts at revision 0 with a new `open_epoch`.
 
 | Flag | What it does | Tests the app's |
 | --- | --- | --- |
@@ -364,6 +371,6 @@ python3 contracts/fakes/fake_client.py                                   # watch
 python3 contracts/fakes/fake_client.py "move Shaft 10mm 0 0" "undo" --exit
 ```
 
-Shortcuts include `move OBJ DX DY DZ`, `rotate OBJ Z 90deg`, `scale OBJ 1 1 1.5`, `add cube X Y Z DX DY DZ`, `delete OBJ`, `undo`, `redo`, `save` and `again` (resend the last command with the same ID). For [Reconnecting](#reconnecting): `lose COMMAND` sends the command and drops the connection before its `result`, reconnects and asks for it with `receipt.query`; `query [ID ...]` asks about the last command or the given IDs. JSON gives any command or message. Bare numbers are meters and radians, as on the wire; `--help` lists everything. `--reconnect` reconnects every 2 s, `--role blender-client` acts like the Client role, and `--check` validates every message against [`schemas/`](schemas/) (needs `pip install jsonschema`). It speaks plain TCP only: the [LAN port](#lan-port)'s TLS and token aren't in it yet, so it reaches the host's port 8765 or a fake host.
+Shortcuts include `move OBJ DX DY DZ`, `rotate OBJ Z 90deg`, `scale OBJ 1 1 1.5`, `add cube X Y Z DX DY DZ`, `delete OBJ`, `undo`, `redo`, `save`, `lease OBJ...` (shared), `lease all` (exclusive), `release [LEASE]` and `again` (resend the last command with the same ID). It prints "… started editing …" when someone else's lease appears. For [Reconnecting](#reconnecting): `lose COMMAND` sends the command and drops the connection before its `result`, reconnects and asks for it with `receipt.query`; `query [ID ...]` asks about the last command or the given IDs. JSON gives any command or message. Bare numbers are meters and radians, as on the wire; `--help` lists everything. `--reconnect` reconnects every 2 s, `--role blender-client` acts like the Client role, and `--check` validates every message against [`schemas/`](schemas/) (needs `pip install jsonschema`). It speaks plain TCP only: the [LAN port](#lan-port)'s TLS and token aren't in it yet, so it reaches the host's port 8765 or a fake host.
 
 **Check:** `pytest tests/backend/test_fakes.py` runs the two fakes against each other through a recording proxy and validates every message they send against the schemas.
