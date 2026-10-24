@@ -9,7 +9,9 @@ namespace SpatialModeling
     public class PendingCommandPanel : MonoBehaviour
     {
         public Transform head;                       // defaults to Camera.main
-        public Vector3 offset = new Vector3(0f, 0.25f, 1.1f);
+        // Bottom edge of the text, in head space. Above HostScene's status panel (0.95 x 0.19 m at (0, 0.10, 1) in
+        // camera space), which otherwise covers the lower lines.
+        public Vector3 offset = new Vector3(0f, 0.24f, 1.1f);
 
         TextMesh text;
         PendingCommand pending;
@@ -21,7 +23,7 @@ namespace SpatialModeling
             text = gameObject.AddComponent<TextMesh>();
             text.fontSize = 48;
             text.characterSize = 0.008f;
-            text.anchor = TextAnchor.UpperCenter;
+            text.anchor = TextAnchor.LowerCenter;
             text.color = new Color(1f, 0.92f, 0.45f);
             VoiceUiAdapter.SetupText(text, gameObject);
             Hide();
@@ -66,7 +68,7 @@ namespace SpatialModeling
             if (head == null && Camera.main != null) head = Camera.main.transform;
             if (head == null) return;
             transform.position = head.TransformPoint(offset);
-            transform.rotation = Quaternion.LookRotation(transform.position - head.position);
+            transform.rotation = Quaternion.LookRotation(transform.position - head.position, head.up);
             Refresh();
         }
     }

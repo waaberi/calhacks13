@@ -347,7 +347,7 @@ namespace SpatialModeling
             if (cam == null || !feedback.gameObject.activeSelf) return;
             var t = feedback.transform;
             t.position = cam.transform.TransformPoint(new Vector3(-0.35f, -0.25f, 1.1f));
-            t.rotation = Quaternion.LookRotation(t.position - cam.transform.position);
+            t.rotation = Quaternion.LookRotation(t.position - cam.transform.position, cam.transform.up);
         }
     }
 }
