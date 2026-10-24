@@ -134,7 +134,8 @@ void Handle(VoiceTurn turn)
 
 Still untested on Windows: loading libvosk and its MinGW DLLs in the Unity editor and player, the Quest microphone's
 rate and level through Air Link, prompt playback and echo in the headset, model paths with non-ASCII characters, and
-accuracy and the confidence threshold with real voices.
+accuracy and the confidence threshold with the Quest microphone. Steps 1 to 3 passed on Windows 11 with a laptop and an
+earphone microphone ([#93](https://github.com/waaberi/calhacks13/issues/93); see [Confidence threshold](#confidence-threshold)).
 
 ## Prompt audio
 
@@ -176,3 +177,19 @@ from speech for both flite voices, and for Piper with "the z axis" (`tests/voice
 `libvosk.so` in the build's `Plugins/`), and the ask_axis clip fed into a paused `VoiceInput` is never recognized
 (unpaused, Vosk hears "axis x y on z"). TTS is cleaner than a headset microphone, so treat this as an upper bound until
 the Windows recordings.
+
+## Confidence threshold
+
+`VoiceSessionOptions.MinConfidence` stays at 0.5. A result's confidence is its lowest word confidence, and Vosk gives
+"two" about 0.5 for every voice (0.46 to 0.50), because "to" is in the grammar too and sounds the same. A higher
+threshold rejects nearly every command with "two" in it. Intended / wrong / no command, by threshold:
+
+| `MinConfidence` | TTS, 100 samples (Linux) | Lee's voice, laptop mic, 20 samples (#93) | Lee's voice, earphone mic, 20 samples (#93) |
+| --- | --- | --- | --- |
+| 0.5 | 54 / 0 / 46 | 3 / 1 / 16 | 1 / 0 / 19 |
+| 0.6 | 43 to 46 / 0 / 54 to 57 | 3 / 0 / 17 | 1 / 0 / 19 |
+
+Vosk's results vary a little between runs, hence the range. The one wrong command: on the laptop mic, "move it up five
+millimeters" was heard as "move eight add y millimeters" (0.56) and moved the cube 8 mm along Y. That transcript has
+two different verbs, so the parser now treats it as misheard: no command, and the low-confidence prompt. Only undo,
+redo, cancel and apply may name another command ("undo the move"). Recheck with the Quest microphone over Air Link.
