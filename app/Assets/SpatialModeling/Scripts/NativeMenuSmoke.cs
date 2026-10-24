@@ -26,7 +26,7 @@ namespace SpatialModeling
             output = Environment.GetEnvironmentVariable("P3_PLAYER_SMOKE_REPORT");
             int.TryParse(Environment.GetEnvironmentVariable("CALHACKS_HOST_PORT"), out var port);
             if (string.IsNullOrEmpty(output) || !Path.IsPathRooted(output) || port < 1024 || port == 8765)
-            { Debug.LogError("P3 smoke requires explicit isolated port and absolute P3_PLAYER_SMOKE_REPORT"); Application.Quit(3); return; }
+            { Debug.LogError("P3 smoke requires explicit isolated port and absolute P3_PLAYER_SMOKE_REPORT"); WorkspaceShutdown.Quit(3); return; }
             StartCoroutine(Run());
         }
         IEnumerator Run()
@@ -84,7 +84,7 @@ namespace SpatialModeling
             menu.Home();
             ScreenCapture.CaptureScreenshot(Path.ChangeExtension(output, ".png"));
             Debug.Log("P3_NATIVE_PLAYER_SMOKE PASS real menu/fields/leases/commands/native receipts/10mm/90deg/cancel/stale/history/save");
-            yield return new WaitForSecondsRealtime(2); Application.Quit(0);
+            yield return new WaitForSecondsRealtime(2); WorkspaceShutdown.Quit(0);
         }
         bool aborted;
         bool Click(string title) { if (menu.SmokeClick(title)) return true; Fail("Missing usable menu control: " + title); return false; }
@@ -101,6 +101,7 @@ namespace SpatialModeling
         bool Success() => !aborted && (string)session.LastReceipt?["outcome"] == "applied";
         void Step(string name, JObject result) { ((JArray)report["steps"]).Add(new JObject { ["step"] = name, ["result"] = result?.DeepClone() }); Write(); }
         void Write() { Directory.CreateDirectory(Path.GetDirectoryName(output)); File.WriteAllText(output, report.ToString()); }
-        void Fail(string error) { aborted = true; report["passed"] = false; report["error"] = error; if (output != null) Write(); Debug.LogError("P3_NATIVE_PLAYER_SMOKE FAIL " + error); Application.Quit(2); }
+        void Fail(string error) { aborted = true; report["passed"] = false; report["error"] = error; if (output != null) Write(); Debug.LogError("P3_NATIVE_PLAYER_SMOKE FAIL " + error); WorkspaceShutdown.Quit(2); }
     }
 }
+
