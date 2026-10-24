@@ -12,7 +12,7 @@ Used by the Unity app and by Client-role add-ons to talk to the Host-role add-on
 
 - **Transport:** TCP. The Unity app connects to `127.0.0.1:8765`: plain TCP, localhost only. Client-role add-ons connect to the host's LAN address on port `8767` (see [LAN port](#lan-port)).
 - **Framing:** one UTF-8 JSON object per line, ending in `\n`. A line longer than 16 MiB closes the connection. `NaN` and `Infinity` aren't JSON; receivers reject them, and numbers too large for a double (such as `1e999`).
-- **Coordinates and units:** Blender's own: right-handed, Z up, meters, radians. Unity converts in one place. Details under [Identity, revisions and units](#identity-revisions-and-units).
+- **Coordinates and units:** Blender's own: right-handed, Z up, meters, radians. Unity converts in one place: see [Blender to Unity](#blender-to-unity) and [Identity, revisions and units](#identity-revisions-and-units).
 - **Implementation:** framing in [`protocol.py`](../blender_addon/spatial_modeling/protocol.py), the host's transport in [`server.py`](../blender_addon/spatial_modeling/server.py) and [Connecting](#connecting) in [`session.py`](../blender_addon/spatial_modeling/session.py). [`tests/backend/hello_client.py`](../tests/backend/hello_client.py) joins a running host from a terminal.
 
 Every message has this envelope:
@@ -60,7 +60,7 @@ The host listens on `8767` only while "Let a Client-role Blender join over the L
 1. The client connects and sends `hello`. Until it has been welcomed, the host answers only `hello` and `ping`; anything else gets `error` `permission_denied` and the connection stays open. A `hello` that doesn't match its schema gets `invalid_message` and the connection stays open; so does a second `hello` on a welcomed connection.
    - On the LAN port with TLS, the handshake has already checked the token.
    - On the LAN port without TLS, the first message must be `hello` with the right `token`. Otherwise the host replies `error` `permission_denied` (`invalid_message` if it isn't a message at all) and closes, before any other check. The host removes `token` before any handler sees the `hello`, and ignores it on the other ports.
-2. The host replies `welcome`, then sends `scene.snapshot`, then `session.update` to every participant on either port, the new one included. The client is connected once it has the snapshot. It sends no `command` or `lease.acquire` before that. Until P2-W-1, the snapshot has empty `objects` and `sketches`: the host doesn't serialize the scene yet, so an empty scene from a P1 host doesn't mean the file is empty.
+2. The host replies `welcome`, then sends `scene.snapshot`, then `session.update` to every participant on either port, the new one included. The client is connected once it has the snapshot. It sends no `command` or `lease.acquire` before that. Both ports get the same snapshot and every `scene.update` after it (see [Scene](#scene)); `sketches` stays empty until P3C. (A P1 host sent empty `objects` too; that didn't mean the file was empty.)
 3. If the host refuses the `hello`, it replies `error` (with `re`) and closes the connection. It checks in this order:
    - `permission_denied`: the host doesn't admit this client here. `127.0.0.1:8765` admits only role `vr`, the LAN port only `blender-client`.
    - `unsupported_version`: the envelope's `v` differs, or a Client-role add-on's `app.version` differs from the host's (P5-M1-3). The Unity app's version isn't compared.
@@ -112,7 +112,7 @@ The first six codes are the transport-level codes that [`server.py`](../blender_
 
 | Name | What it is |
 | --- | --- |
-| Object ID | UUID hex in the custom property `spatial_modeling_id` on each Blender object. It survives renames, Undo and save/reopen. The host assigns missing IDs and gives a duplicated object a new one. Sketches have the same kind of ID. |
+| Object ID | UUID hex in the custom property `spatial_modeling_id` on each Blender object. It survives renames, Undo and save/reopen. The host assigns missing IDs and gives a duplicated object a new one (the object that had the ID keeps it). It writes them outside any Undo step, so an Undo can take one away again; the host remembers which object it gave each ID until the next file load and gives the same one back. Sketches have the same kind of ID. |
 | Sketch entity and constraint IDs | Strings of 1 to 64 letters, digits, `_` or `-`, unique within their sketch and stable across Undo/Redo and save/reopen. The CAD adapter picks them. |
 | `document.id` | UUID hex the host stores in the `.blend` file the first time it opens it (the custom property `spatial_modeling_document_id` on every scene); it survives save/reopen. A file that is closed without saving gets a new one next time. |
 | `open_epoch` | New UUID hex every time the host opens or reloads the file, and whenever its revision counter restarts. |
@@ -128,11 +128,11 @@ The first six codes are the transport-level codes that [`server.py`](../blender_
 
 ## Scene
 
-`scene.snapshot` describes everything and replaces what the client had. The host sends it after `welcome`, and again whenever it can't describe a change as an update (for example after the unit settings change).
+`scene.snapshot` describes everything and replaces what the client had. The host sends it after `welcome`, and again to everyone whenever it can't describe a change as an update (after the unit settings change, every object's generation is the new revision). It lists every object in the view layer the host Blender shows: objects in excluded collections are left out, hidden ones are sent with `visible` false. Collection and geometry-nodes instances aren't sent yet. Parents come before their children.
 
-`scene.update` carries changes in order, after Blender has committed them. `objects` and `sketches` hold complete records that replace those with the same `id`. An object in an update may leave out `mesh` when only its transform, name, color or visibility changed. `removed` lists deleted object and sketch IDs. `document` carries the new revision and the dirty flag, so an update with empty lists means only the dirty flag changed (after Save).
+`scene.update` carries changes in order, after Blender has committed them. `objects` and `sketches` hold complete records that replace those with the same `id`. An object in an update leaves out `mesh` when only its transform, name, color or visibility changed. `removed` lists deleted object and sketch IDs. `document` carries the new revision and the dirty flag, so an update with empty lists means only the dirty flag or file name changed (after Save). Each update raises `revision` by one, and every object in it has that `generation`. Moving a parent also sends its children, whose world transforms changed.
 
-**Direct edits in host Blender** (P2, with change observation) are changes like any other: the host sends `scene.update` to every client and also `activity`, with `actor` the host's own participant (role `host`), so VR and the Client role see what the host desktop did. Their receipt fields (`request_id`, `op`, `source`) are settled when P2 implements them.
+**Direct edits in host Blender** are changes like any other. The host watches Blender (its depsgraph, Undo, Redo and file loads; [`sync.py`](../blender_addon/spatial_modeling/sync.py)) and sends what changed as one `scene.update` to every client, at most 20 a second and less often while heavy meshes are re-sent, so a drag in Blender streams small updates with the latest state. Clients never echo them. They also get `activity`, with `actor` the host's own participant (role `host`), so VR and the Client role see what the host desktop did; that isn't sent yet, and its receipt fields (`request_id`, `op`, `source`) are settled when it is.
 
 | Object field | Meaning |
 | --- | --- |
@@ -140,12 +140,40 @@ The first six codes are the transport-level codes that [`server.py`](../blender_
 | `type` | Blender object type: `MESH`, `CURVE`, `FONT`, `EMPTY`, `CAMERA`, `LIGHT` and so on. |
 | `parent` | Parent object ID, or `null`. |
 | `generation` | Revision of its last change. |
-| `visible` | Shown in the viewport. |
+| `visible` | Shown in the viewport: not hidden, and neither are its collections. |
 | `transform` | World `location`, `rotation`, `scale`. |
 | `color` | Linear RGBA (0 to 1) of the first material's Base Color, or `null` without a material. |
-| `mesh` | The evaluated mesh, or `null` for objects without geometry (cameras, lights, empties). |
+| `mesh` | The evaluated mesh, or `null` for objects without geometry (cameras, lights, empties, armatures and so on). |
 
-**Mesh encoding.** The mesh is evaluated (after modifiers; curves and text converted to a mesh) and triangulated, in the object's local space in meters. `positions` and `normals` hold 3 numbers per vertex, and `indices` 3 vertex indices per triangle, counter-clockwise seen from the front (Blender's winding; Unity flips it when it converts handedness). Vertices are split where normals differ, so Unity can use the arrays as they are; the host may simply send three vertices per triangle. Values are rounded to 1 µm. Plain JSON arrays are simple but large. A binary or delta encoding is a later optimization, and `v` lets us change the format. Until then a snapshot has to fit in one 16 MiB line, roughly 90,000 triangles in total.
+**Mesh encoding.** The mesh is evaluated (after modifiers; curves, surfaces, text and metaballs converted to a mesh) and triangulated, in the object's local space in meters. `positions` and `normals` hold 3 numbers per vertex, and `indices` 3 vertex indices per triangle, counter-clockwise seen from the front (Blender's winding; Unity flips it when it converts handedness, see [Blender to Unity](#blender-to-unity)). Vertices are split only where normals differ, so Unity can use the arrays as they are: a smooth mesh keeps Blender's vertices, and flat faces get their own, shared by coplanar neighbours. Positions are rounded to 1 µm, normals and rotations to 6 decimals, and scale factors to 6 significant digits. Plain JSON arrays are simple but large. A binary or delta encoding is a later optimization, and `v` lets us change the format. Until then a message has to fit in one 16 MiB line: measured, a 100,000-vertex smooth mesh (200,000 triangles) is 7 MB, and a flat-shaded sphere of 80,000 triangles (no two faces coplanar, so 3 vertices each) 15 MB. When a snapshot or update wouldn't fit, the host sends the biggest meshes as `null` and says so in Blender's console.
+
+## Blender to Unity
+
+The wire stays in Blender's frame. The Unity app converts in exactly one place, where it reads and writes messages (P2-W-2). [`tests/backend/test_coordinates.py`](../tests/backend/test_coordinates.py) checks these formulas numerically against Unity's own math, and `test_scene.py` applies them to real Blender objects.
+
+Blender is right-handed with Z up; Unity is left-handed with Y up. Swapping Y and Z maps one onto the other: Blender's X (right), Y (away from you in Blender's Front view) and Z (up) become Unity's X, Z (forward) and Y (up), so Blender's Front view looks like Unity's default view.
+
+| Wire (Blender) | Unity |
+| --- | --- |
+| Point or direction `[x, y, z]`: `location`, mesh `positions` and `normals`, `object.move` arguments | `new Vector3(x, z, y)` |
+| `rotation` `[w, x, y, z]` | `new Quaternion(-x, -z, -y, w)` |
+| `scale` `[x, y, z]`, `object.scale` arguments | `new Vector3(x, z, y)` |
+| `indices`: each triangle `a, b, c` | `a, c, b` |
+| Lengths in meters | Unity units: 1 unit is 1 m, whatever `document.units` says |
+
+Commands go back the same way: Unity's `Vector3(x, y, z)` is `[x, z, y]` and `Quaternion(x, y, z, w)` is `[w, -x, -z, -y]`. An `object.rotate` `by` about Unity's X, Y or Z axis is `axis` `X`, `Z` or `Y` with the angle negated.
+
+- **Rotations:** the swap is a mirror. A mirrored rotation turns by the same angle about the mirrored axis, but the other way round, so the quaternion's vector part changes sign. Blender's +90° about Z (X turns towards Y) is Unity's −90° about Y (X turns towards Z).
+- **Triangles:** a mirror also reverses every triangle. Blender's front faces are counter-clockwise seen from the front; Unity's are clockwise seen from the camera. Swapping two indices per triangle keeps the outside out, so back-face culling works. Normals convert like positions and stay unit length.
+- **World transforms:** put every object directly under the table's display root and set its `localPosition`, `localRotation` and `localScale` from the converted `transform`. Don't nest the Unity objects by `parent`, or the parents' transforms apply twice; `parent` is for selection and outlines. Moving, rotating or scaling the table changes only that root (P2-M2-2).
+- **Units:** meters on the wire and in Unity. `document.units` only chooses how to show them: with `length_unit` `MILLIMETERS`, show 1000 × meters with "mm".
+
+```csharp
+// Blender's frame (right-handed, Z up) to Unity's (left-handed, Y up). The way back is the same swap.
+static Vector3 Point(float x, float y, float z) => new Vector3(x, z, y);  // positions, normals, location, scale
+static Quaternion Rotation(float w, float x, float y, float z) => new Quaternion(-x, -z, -y, w);  // wire [w, x, y, z]
+static void FlipTriangles(int[] t) { for (int i = 0; i < t.Length; i += 3) (t[i + 1], t[i + 2]) = (t[i + 2], t[i + 1]); }
+```
 
 ## Commands
 
