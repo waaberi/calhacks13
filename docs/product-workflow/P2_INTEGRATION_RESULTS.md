@@ -112,3 +112,21 @@ No required failure was converted into a pass. Main and the accepted v20 rollbac
 artifact remain untouched.
 
 Runtime assembly SHA256: `52af0c54253b9f1e01591d3a505ee324b7d3cf3f4c81b0496a67b71a115a3db5`.
+
+## Later tested P1 capture-only propagation
+
+The cumulative P2 branch also contains P1 `3c1bdad4259b1c0ed5c72b3af175ac6a292f00d8`.
+This adds only the owned BGR capture copy, two bounded JPEG encoders, race/empty-
+frame guards and their tests/evidence. The coordinator reran all22 capture and
+launcher tests on this P2 checkout: PASS in9.303s. Native, contracts and all Unity
+source files are byte-identical to P2 `38f34ade`; the compiled c491999 app and
+Assembly-CSharp hash above remain the matching application artifact.
+
+The exact helper source08fdb59 passed305seconds of actual changing capture with
+300steady seconds: no unavailable frames, HTTP errors or worker exceptions in
+that steady window; JPEG95/4:4:4/full2560x1600 retained. It averaged37.153 changed
+published frames/s, with2second bins30–43; observed HTTP unique rate32.91/s.
+Thus sustained minimum40fps remains FAILED. The warmup contained32 initial503
+responses and is not included in the zero-unavailable steady claim. This helper
+measurement is not a Player/compositor-displayed rate. New integrated Player
+regressions explicitly identify the application and helper sources separately.
