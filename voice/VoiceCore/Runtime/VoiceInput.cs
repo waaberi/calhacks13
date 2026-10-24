@@ -121,8 +121,8 @@ namespace SpatialModeling.VoiceCore
         {
             if (!talking)
                 return;
-            if (postrollMs == 0)
-                FinishStop();
+            if (postrollMs == 0 || paused)
+                FinishStop(); // while a prompt plays the audio is dropped anyway: no post-roll to wait for
             else if (postrollLeft < 0)
                 postrollLeft = int.MaxValue; // counted at the next Write, in its rate and channels
         }

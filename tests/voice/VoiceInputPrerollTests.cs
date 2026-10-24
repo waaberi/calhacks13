@@ -140,6 +140,24 @@ namespace SpatialModeling.VoiceCore.Tests
         }
 
         [Fact]
+        public void ReleasingDuringAPromptEndsTheUtteranceAtOnce()
+        {
+            var recognizer = new CountingRecognizer();
+            using (VoiceInput input = Ready(recognizer, 0, 150))
+            {
+                input.StartUtterance();
+                input.Paused = true;   // a prompt starts while the button is down
+                input.StopUtterance(); // and the button goes up before it ends
+                Assert.Equal("0 0", Result(input));
+                input.Paused = false;
+                input.Write(Level(0.5f, 4800), 4800, 16000); // speech after the prompt is a new utterance's, not this one's
+                Assert.True(input.WaitIdle(Timeout));
+                Assert.False(input.TryGetResult(out _));
+                Assert.Equal(new[] { "start", "start", "stop" }, recognizer.Calls); // Discard restarts it
+            }
+        }
+
+        [Fact]
         public void PressingAgainDuringThePostRollEndsTheFirstUtterance()
         {
             var recognizer = new CountingRecognizer();
