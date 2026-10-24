@@ -2,7 +2,7 @@
 
 This diagnostic branch combines diagnostic `5815af5` with published P1 `3c1bdad` through merge `d78a8020b33080da578eeeadc277131d8a7fdc2b`. The merge changes only capture helper/tests and the throughput report; the diagnostic Unity source is unchanged. The product-only request-claim proposal is `1526ec8`; its corresponding diagnostic implementation was cherry-picked as `98c17c6`, with timing hooks retained. The original product commit is not an ancestor merely because its implementation is present.
 
-No new Editor build, Player, Blender, capture session or performance trial was run for this reconciliation. Existing human runtime ownership takes precedence. The proposal is not integrated into the published P1 phase branch or cumulative C.
+The reconciliation itself did not run a new build or runtime trial. The later authorized trials below used separate, recorded artifacts. The product proposal is not integrated into the published P1 phase branch or cumulative C by these diagnostic results.
 
 ## Actual v23 failure and diagnostic-only followup
 
@@ -12,9 +12,9 @@ The followup skips creation of the Meta passthrough manager only when `--p1-prof
 
 ## Source and preserved guards
 
-Relative to published P1, the app difference is exactly six files: modified `BlenderScreen.cs` and `WorkspaceChecks.cs`, new `CaptureRequestLanes.cs` and `P1PipelineProfile.cs`, plus their metadata. Capture uses the existing two HTTP slots. Claims reserve a fresh ETag/captured-time pair, reject duplicate/invalidated bodies and retain actual-pixel freshness checks. Diagnostic flags select the port, duration and legacy policy; traces are bounded to4096 requests and emitted in128-row chunks. Available engine texture counters are recorded without assuming unsupported markers exist.
+Before the guard, the diagnostic app difference was six files: modified `BlenderScreen.cs` and `WorkspaceChecks.cs`, new `CaptureRequestLanes.cs` and `P1PipelineProfile.cs`, plus their metadata. The guard adds the seventh file, `WorkspacePassthrough.cs`. Capture uses the existing two HTTP slots. Claims reserve a fresh ETag/captured-time pair, reject duplicate/invalidated bodies and retain actual-pixel freshness checks. Diagnostic flags select the port, duration and legacy policy; traces are bounded to4096 requests and emitted in128-row chunks. Available engine texture counters are recorded without assuming unsupported markers exist.
 
-The interaction, controller poses/bindings, stabilizer, settled startup placement, native/view separation, passthrough, shutdown and render assets are unchanged from P1. `WorkspaceInteraction.cs` working-byte SHA256 remains `c50f9fcc82958463f88586ca465c8a0a4f1652a1df1f2342e8fad62d925c3214`. Existing build gates remain mandatory; source equality does not replace a later Unity run or physical acceptance.
+The interaction, controller poses/bindings, stabilizer, settled startup placement, native/view separation, ordinary passthrough path, shutdown and render assets are unchanged from P1. The diagnostic zero-eye guard is the explicit passthrough exception. `WorkspaceInteraction.cs` working-byte SHA256 remains `c50f9fcc82958463f88586ca465c8a0a4f1652a1df1f2342e8fad62d925c3214`. Existing build gates remain mandatory; source equality does not replace a later Unity run or physical acceptance.
 
 Exact helper working-byte SHA256 remains `a46c15b31039dd375226525c66622a07ed83717da43bdd0f418be34407262c09`, the source with22 passed capture/launcher tests and the recorded305-second proof. `CaptureRequestLanes.cs` Git/LF SHA256 is `eaaa0bfa568e33ab61867314cb57ecd188682b2c2d79bc9ee3e94c3ff781fcd3`; the class, actual16-assertion check method and freshness expression match the earlier pure-class run. Those unchanged checks were not repeated. Windows checkout line endings can change file-byte hashes; retain both byte and normalized hashes in local evidence.
 

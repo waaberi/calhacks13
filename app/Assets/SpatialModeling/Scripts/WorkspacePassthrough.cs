@@ -28,8 +28,8 @@ namespace SpatialModeling
             float until = Time.realtimeSinceStartup + 15;
             while (OpenXRRuntime.version == "" && Time.realtimeSinceStartup < until) yield return null;
             // Isolated software-pipeline profiling has no eye render target.
-            // Starting Meta's manager there repeatedly recreates reference
-            // spaces in this SDK/runtime combination until OpenXR hits its limit.
+            // Unguarded runs showed reference-space churn and one OpenXR limit
+            // failure. Manager/origin interaction is a lead, not a proven cause.
             // Keep the ordinary product and active-eye passthrough path intact.
             if (P1PipelineProfile.Enabled && (XRSettings.eyeTextureWidth <= 0 || XRSettings.eyeTextureHeight <= 0))
             {
