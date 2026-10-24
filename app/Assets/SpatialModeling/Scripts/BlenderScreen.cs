@@ -30,6 +30,8 @@ namespace SpatialModeling
         Text status, buttonText, hint, magnifyText, modeText, roomText;
         Button toggleButton, magnifyButton, modeButton, resetButton, roomButton, pointedButton;
         Button[] buttons;
+        WorkspaceArrangement arrangement;
+        Text assistText;
         WorkspaceInteraction interaction;
         WorkspacePassthrough passthrough;
         bool controllerHover;
@@ -54,6 +56,8 @@ namespace SpatialModeling
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         static void Install()
         {
+            if (FindFirstObjectByType<HostScene>() != null && FindFirstObjectByType<WorkspaceArrangement>() == null)
+                new GameObject("Workspace arrangement").AddComponent<WorkspaceArrangement>();
             if (FindFirstObjectByType<HostScene>() != null && FindFirstObjectByType<BlenderScreen>() == null)
                 new GameObject("Blender live screen").AddComponent<BlenderScreen>();
             if (FindFirstObjectByType<HostScene>() != null && FindFirstObjectByType<WorkspaceInteraction>() == null)
@@ -80,7 +84,7 @@ namespace SpatialModeling
             magnify = new InputAction("Magnify Blender screen", InputActionType.Button);
             magnify.AddBinding("<XRController>{RightHand}/thumbstickClicked");
             magnify.AddBinding("<Keyboard>/z");
-            magnify.performed += _ => { if (Visible) CycleMagnification(); };
+            magnify.performed += _ => { if (Visible && (interaction==null || !interaction.IsHolding)) CycleMagnification(); };
             magnify.Enable();
             panAction = new InputAction("Pan magnified Blender screen", InputActionType.Value);
             panAction.AddBinding("<XRController>{RightHand}/thumbstick");
@@ -137,6 +141,7 @@ namespace SpatialModeling
                 if (!placed) canvasObject.SetActive(false);
             }
             if (interaction == null) interaction = FindFirstObjectByType<WorkspaceInteraction>();
+            if (arrangement == null) arrangement = FindFirstObjectByType<WorkspaceArrangement>();
             if (passthrough == null) passthrough = FindAnyObjectByType<WorkspacePassthrough>();
             // Keep gaze fallback for devices with no tracked hand; tracked rays select their own targets.
             var ray = new Ray(camera.transform.position, camera.transform.forward);
@@ -165,6 +170,7 @@ namespace SpatialModeling
             buttonText.text = Visible ? "Hide Blender" : "Show Blender";
             magnifyText.text = $"Magnify: {Magnification:0.#}×";
             modeText.text = interaction != null && interaction.MoveIndividualParts ? "Arrange: one part" : "Arrange: whole build";
+            if(assistText!=null) assistText.text=arrangement!=null && arrangement.AssistEnabled ? "Surface help: on" : "Surface help: off";
             roomButton.interactable = passthrough != null && passthrough.Supported;
             roomText.text = passthrough != null && passthrough.Supported
                 ? passthrough.Active ? "Room view: on" : "Room view: off" : "Room view: unavailable";
@@ -216,7 +222,8 @@ namespace SpatialModeling
             if (Placement == null || !canvasObject.activeInHierarchy) return false;
             if (!new Plane(Placement.forward, Placement.position).Raycast(ray, out distance) || distance < 0f || distance > 4f) return false;
             var local = Placement.InverseTransformPoint(ray.GetPoint(distance));
-            return Mathf.Abs(local.x) <= 920 && local.y >= -820 && local.y <= (Visible ? 695 : -560);
+            return Mathf.Abs(local.x) <= 920 && ((Visible && local.y>=-820 && local.y<=790)
+                || (!Visible && ((local.y>=-820 && local.y<=-560) || (local.y>=685 && local.y<=790))));
         }
 
         public bool HoverController(Ray ray, bool pressed)
@@ -268,7 +275,7 @@ namespace SpatialModeling
             canvasObject = new GameObject("Blender screen canvas", typeof(RectTransform), typeof(Canvas), typeof(GraphicRaycaster));
             canvasObject.transform.SetPositionAndRotation(camera.transform.position + camera.transform.forward * ScreenDistance, camera.transform.rotation);
             canvasObject.transform.localScale = Vector3.one * 0.001f;
-            canvasObject.GetComponent<RectTransform>().sizeDelta = new Vector2(1840, 1450);
+            canvasObject.GetComponent<RectTransform>().sizeDelta = new Vector2(1840, 1700);
             var canvas = canvasObject.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
             canvas.worldCamera = camera;
@@ -310,8 +317,27 @@ namespace SpatialModeling
             roomButton.onClick.AddListener(() => passthrough?.Toggle());
             roomText = Label("Label", roomControl.transform, Vector2.zero, new Vector2(540, 65), "Room view: checking", 30);
             hint = Label("Controls", canvasObject.transform, new Vector2(-300, -735), new Vector2(1200, 120), "", 28);
-            buttons = new[] { toggleButton, magnifyButton, modeButton, resetButton, roomButton };
+            if(arrangement==null) arrangement=FindFirstObjectByType<WorkspaceArrangement>();
+            Button FrameAction(string name,float x,string label,Action action,bool enabled=true)
+            {
+                var item=Rect(name,canvasObject.transform,new Vector2(x,735),new Vector2(350,80));
+                item.AddComponent<Image>();
+                var button=item.AddComponent<Button>(); button.interactable=enabled;
+                button.onClick.AddListener(()=>action?.Invoke());
+                Label("Label",item.transform,Vector2.zero,new Vector2(330,70),label,28);
+                return button;
+            }
+            var arrangeButton=FrameAction("Arrange space mode",-720,"Arrange space ✓",()=>arrangement?.SelectArrange());
+            var editButton=FrameAction("Edit model mode",-360,"Edit model · coming soon",null,false);
+            var assistButton=FrameAction("Surface assistance",0,"Surface help: on",()=>arrangement?.ToggleAssist());
+            assistText=assistButton.GetComponentInChildren<Text>();
+            var undoButton=FrameAction("Undo workspace placement",360,"Undo placement",()=>arrangement?.UndoPlacement());
+            var recoverButton=FrameAction("Recover workspace",720,"Recover workspace",()=>arrangement?.Recover());
+            buttons = new[] { toggleButton, magnifyButton, modeButton, resetButton, roomButton,
+                arrangeButton,editButton,assistButton,undoButton,recoverButton };
             foreach (var button in buttons) button.GetComponent<Image>().color = new Color(0.08f, 0.22f, 0.33f, 1f);
+            arrangeButton.GetComponent<Image>().color=new Color(.05f,.35f,.25f,1);
+            editButton.GetComponentInChildren<Text>().color=new Color(.55f,.55f,.55f,1);
             body.SetActive(Visible);
         }
 

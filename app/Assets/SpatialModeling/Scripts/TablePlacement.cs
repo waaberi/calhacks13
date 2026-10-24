@@ -21,6 +21,7 @@ namespace SpatialModeling
         public float Yaw { get; private set; }
         public Transform Display => display;
         public Transform Menu => panel;
+        public Material PreviewMaterial => material;
         public bool MenuDocked { get; private set; } = true;
         const float MenuScale = 0.00055f;
         Transform display, preview, panel;
@@ -214,7 +215,8 @@ namespace SpatialModeling
             if (!seeded) return; // HostScene supplies the common settled tracked-head pose.
             if (panel == null) CreatePanel();
             var connection = GetComponent<HostScene>();
-            title.text = $"{(IsPlaced ? "Inspect table" : State == PlacementState.ConfirmTrackingReset ? "Tracking reset — confirm placement" : "Choose table position")}" +
+            var arrangement=FindFirstObjectByType<WorkspaceArrangement>();
+            title.text = arrangement!=null ? $"Arrange space · {(MenuDocked ? "left hand" : "in space")}\n{arrangement.SurfaceState}\nGrip menu to place it" : $"{(IsPlaced ? "Inspect table" : State == PlacementState.ConfirmTrackingReset ? "Tracking reset — confirm placement" : "Choose table position")}" +
                 $" · {(MenuDocked ? "left hand" : "in space")}\nGrip menu, move, release to place" +
                 $"\nHeight {Height:F2} m · size {Size:F2}× · {connection.ConnectionText}";
             var keyboard = Keyboard.current;
@@ -306,13 +308,15 @@ namespace SpatialModeling
             panel.localScale = Vector3.one * MenuScale;
             var canvas = panel.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
-            panel.GetComponent<RectTransform>().sizeDelta = new Vector2(640, 650);
+            var arrangement=FindFirstObjectByType<WorkspaceArrangement>();
+            bool compact=arrangement!=null;
+            panel.GetComponent<RectTransform>().sizeDelta = new Vector2(640, compact?440:650);
             panel.GetComponent<Image>().color = new Color(.015f,.025f,.04f,.96f);
             panel.GetComponent<Image>().raycastTarget = false;
             var surface = panel.gameObject.AddComponent<BoxCollider>();
             surface.center = new Vector3(0, -6, 5);
-            surface.size = new Vector3(640, 650, 14);
-            var header = Label(panel, "Table", new Vector2(0, 230), new Vector2(620, 120));
+            surface.size = new Vector3(640, compact?440:650, 14);
+            var header = Label(panel, "Table", new Vector2(0, compact?150:230), new Vector2(620, 120));
             title = header;
             Action<float, float, float, float> adjust = (h, d, s, y) =>
                 Adjust(h, d, s, y, Camera.main.transform.position, Camera.main.transform.forward);
@@ -327,12 +331,20 @@ namespace SpatialModeling
                 ("Reset View", () => GetComponent<HostScene>()?.ResetObjectArrangement()),
                 ("Pin menu here", PinMenu), ("Return to left hand", DockMenu)
             };
+            if(compact) actions=new (string, Action)[] {
+                ("Undo placement",arrangement.UndoPlacement), ("Recover workspace",arrangement.Recover),
+                ("Mark desk",()=>arrangement.Surfaces.BeginMark("desk")),
+                ("Mark wall",()=>arrangement.Surfaces.BeginMark("wall")),
+                ("Mark floor",()=>arrangement.Surfaces.BeginMark("floor")),
+                ("Reload room surfaces",arrangement.Surfaces.Reload),
+                ("Pin menu here",PinMenu), ("Return to left hand",DockMenu)
+            };
             for (int i = 0; i < actions.Length; i++)
             {
                 var background = new GameObject(actions[i].Item1, typeof(RectTransform), typeof(Image));
                 background.transform.SetParent(panel, false);
                 var rect = background.GetComponent<RectTransform>();
-                rect.anchoredPosition = new Vector2((i%2 == 0 ? -1 : 1)*155, 130-i/2*58);
+                rect.anchoredPosition = new Vector2((i%2 == 0 ? -1 : 1)*155, (compact?50:130)-i/2*(compact?65:58));
                 rect.sizeDelta = new Vector2(300,52);
                 var image = background.GetComponent<Image>();
                 image.color = new Color(.02f,.05f,.09f,.96f);

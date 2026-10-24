@@ -21,6 +21,10 @@ namespace SpatialModeling
         Material material;
         HostScene scene;
         BlenderScreen screen;
+        WorkspaceArrangement arrangement;
+        Transform pairTarget;
+        Vector3 pairVector, pairMidpoint, pairScale, pairOffset;
+        Quaternion pairFrame, pairRotation;
         bool loggedTracking;
         Transform trackingOrigin;
         int renderedFrame = -1;
@@ -50,6 +54,8 @@ namespace SpatialModeling
             public Vector3 previousRawPosition;
             public Pose previousHandPose;
             public float depth;
+            public Quaternion rotationOffset=Quaternion.identity;
+            public bool turnLatched, stickDown, freePlacement, alignRequested;
             public Color color;
             public void Dispose()
             {
@@ -68,6 +74,7 @@ namespace SpatialModeling
             right = CreateHand(XRNode.RightHand, "RightHand", new Color(1f, 0.65f, 0.22f));
             scene = FindFirstObjectByType<HostScene>();
             screen = FindFirstObjectByType<BlenderScreen>();
+            arrangement = FindFirstObjectByType<WorkspaceArrangement>();
             renderedFrame = -1;
             Application.onBeforeRender += BeforeRender;
         }
@@ -140,8 +147,9 @@ namespace SpatialModeling
             scene.Table?.UpdateLeftHandMenu(leftGrip, Camera.main.transform.position, leftTracked);
             screen.ClearControllerHover();
             Physics.SyncTransforms();
-            Instruction = "Point at screen or build · grip: move · trigger: select";
+            Instruction = arrangement!=null ? arrangement.Instruction : "Point at screen or build · grip: move · trigger: select";
             HasTrackedHands = UpdateHand(left, right) | UpdateHand(right, left);
+            if(!IsHolding) arrangement?.HideGuide();
             if (HasTrackedHands != loggedTracking)
             {
                 loggedTracking = HasTrackedHands;
@@ -178,6 +186,16 @@ namespace SpatialModeling
             bool gripPressed = h.armed && gripNow && !h.gripDown;
             bool triggerPressed = h.armed && triggerNow && !h.triggerDown;
             h.gripDown = gripNow; h.triggerDown = triggerNow;
+            device.TryGetFeatureValue(UnityEngine.XR.CommonUsages.primary2DAxisClick,out bool stickNow);
+            bool stickPressed=stickNow&&!h.stickDown; h.stickDown=stickNow;
+            if(arrangement!=null && arrangement.Surfaces.Marking!=null)
+            {
+                if(triggerPressed) arrangement.Surfaces.CaptureMark(hand,Camera.main.transform.position);
+                if(gripPressed) arrangement.Surfaces.CancelMark();
+                Instruction=arrangement.Instruction;
+                h.hasHit=false; h.pointerDistance=.35f;
+                return true;
+            }
 
             float distance = 4f;
             var hitPart = scene.PickObject(ray, out float partDistance);
@@ -198,21 +216,30 @@ namespace SpatialModeling
                     || (table != null && h.target == table.Menu && !table.Menu.gameObject.activeInHierarchy)) Release(h);
                 else
                 {
+                    if(triggerPressed) h.alignRequested=true;
+                    if(stickPressed) h.freePlacement=!h.freePlacement;
+                    if(Mathf.Abs(axis.x)<.3f) h.turnLatched=false;
+                    if(arrangement!=null && !h.turnLatched && Mathf.Abs(axis.x)>.7f)
+                    {
+                        h.turnLatched=true;
+                        h.rotationOffset=Quaternion.AngleAxis(Mathf.Sign(axis.x)*15,arrangement.RotationAxis)*h.rotationOffset;
+                    }
                     if (Mathf.Abs(axis.y) > 0.2f) h.depth = Mathf.Clamp(h.depth + axis.y * Time.unscaledDeltaTime, -0.5f, 2f);
-                    if (h.target == screen.Placement && Mathf.Abs(axis.x) > 0.2f)
+                    if (arrangement==null && h.target == screen.Placement && Mathf.Abs(axis.x) > 0.2f)
                         screen.Resize(Mathf.Exp(axis.x * Time.unscaledDeltaTime * 0.65f));
                     distance = Mathf.Clamp(Vector3.Distance(aim.position, h.target.position), 0.15f, 4f);
                     Instruction = h.part != null ? "Aim to move " + h.part.name + " · release grip: place"
                         : table != null && h.target == table.Menu ? "Aim to move menu · stick: distance · release grip: place"
                         : h.target == screen.Placement ? "Aim to move screen · stick: distance / size · release grip: place"
                         : "Aim to move whole build · release grip: place";
+                    if(arrangement!=null) Instruction="Aim: move · stick: rotate/distance · trigger: align to guide · stick click: "+(h.freePlacement?"surface help":"free placement");
                 }
             }
             else if (tableFirst)
             {
                 table.HoverController(ray, triggerPressed && !gripNow);
                 Instruction = "Trigger: select menu button · grip menu, move, release to place";
-                if (gripPressed && !Conflicts(other?.target, table.Menu))
+                if (gripPressed && (other?.target==table.Menu || !Conflicts(other?.target, table.Menu)))
                 {
                     table.PinMenu();
                     Begin(h, table.Menu, null, aim, ray.GetPoint(distance));
@@ -227,13 +254,13 @@ namespace SpatialModeling
             {
                 bool button = screen.HoverController(ray, triggerPressed);
                 Instruction = button ? "Trigger: select button" : "Grip: move screen · stick while held: distance / size";
-                if (gripPressed && !Conflicts(other?.target, screen.Placement)) Begin(h, screen.Placement, null, aim, ray.GetPoint(distance));
+                if (gripPressed && (other?.target==screen.Placement || !Conflicts(other?.target, screen.Placement))) Begin(h, screen.Placement, null, aim, ray.GetPoint(distance));
             }
             else if (hitPart != null)
             {
                 var target = MoveIndividualParts ? hitPart.transform : scene.Placement;
                 Instruction = MoveIndividualParts ? "Grip: arrange " + hitPart.name + " in your view" : "Grip: move the whole build";
-                if (gripPressed && !Conflicts(other?.target, target)) Begin(h, target, MoveIndividualParts ? hitPart : null, aim, ray.GetPoint(distance));
+                if (gripPressed && (other?.target==target || !Conflicts(other?.target, target))) Begin(h, target, MoveIndividualParts ? hitPart : null, aim, ray.GetPoint(distance));
             }
             h.hasHit = tableFirst || hitScreen || hitPart != null;
             h.pointerDistance = distance;
@@ -315,6 +342,7 @@ namespace SpatialModeling
             bool leftTracked = TryReadHand(left, out var leftGrip, out _);
             scene.Table?.UpdateLeftHandMenu(leftGrip, Camera.main.transform.position, leftTracked);
             double now = Time.realtimeSinceStartupAsDouble;
+            UpdatePair();
             RenderHand(left, now);
             RenderHand(right, now);
         }
@@ -343,7 +371,7 @@ namespace SpatialModeling
             var endpointBefore = h.target != null ? h.target.TransformPoint(h.localContact)
                 : h.stableAim.position + h.stableAim.forward * Mathf.Max(0.15f, distance);
             StabilizeRay(ref h.stableAim, h.rawAim, endpointBefore, distance, elapsed);
-            if (h.target != null)
+            if (h.target != null && h.target!=pairTarget)
             {
                 var desired = FollowRay(aim, h.rayRelative, h.depth);
                 h.timingFrames++;
@@ -356,6 +384,9 @@ namespace SpatialModeling
                 h.previousRawPosition = desired.position;
                 h.previousHandPose = hand;
                 var pose = FollowRay(new Pose(h.stableAim.position, h.stableAim.rotation), h.rayRelative, h.depth);
+                pose.rotation=h.rotationOffset*pose.rotation;
+                if(arrangement!=null) pose=arrangement.Apply(h.target,new Pose(h.target.position,h.target.rotation),pose,h.alignRequested,h.freePlacement);
+                h.alignRequested=false;
                 h.largestDisplayStep = Mathf.Max(h.largestDisplayStep, Vector3.Distance(h.target.position, pose.position));
                 h.target.SetPositionAndRotation(pose.position, pose.rotation);
                 h.part?.RememberArrangement();
@@ -377,11 +408,14 @@ namespace SpatialModeling
         static bool Conflicts(Transform held, Transform candidate) => held != null && candidate != null
             && (held == candidate || candidate.IsChildOf(held) || held.IsChildOf(candidate));
 
-        static void Begin(Hand hand, Transform target, WorkspaceObjectView part, Pose pose, Vector3 contact)
+        void Begin(Hand hand, Transform target, WorkspaceObjectView part, Pose pose, Vector3 contact)
         {
+            if(left.target!=target && right.target!=target) arrangement?.Remember(target);
             hand.target = target;
             hand.part = part;
             hand.depth = 0f;
+            hand.rotationOffset=Quaternion.identity;
+            hand.freePlacement=hand.alignRequested=hand.turnLatched=false;
             hand.rayRelative = RelativeRayPose(pose, new Pose(target.position, target.rotation));
             hand.localContact = target.InverseTransformPoint(contact);
             hand.timingFrames = hand.slowFrames = 0;
@@ -391,6 +425,55 @@ namespace SpatialModeling
             hand.previousRawPosition = target.position;
             hand.previousHandPose = pose;
             Debug.Log("WORKSPACE_GRAB_BEGIN " + target.name + " inspection_only mapping=unity_stabilized_far_ray");
+        }
+
+        public static Quaternion TwoHandFrame(Pose a,Pose b)
+        {
+            var forward=b.position-a.position;
+            if(forward.sqrMagnitude<.0025f) return a.rotation;
+            var up=a.rotation*Vector3.up+b.rotation*Vector3.up;
+            if(Vector3.Cross(forward,up).sqrMagnitude<.001f) up=a.rotation*Vector3.forward;
+            if(Vector3.Cross(forward,up).sqrMagnitude<.001f) up=Vector3.up;
+            return Quaternion.LookRotation(forward,up);
+        }
+        void UpdatePair()
+        {
+            bool shared=left.target!=null && left.target==right.target;
+            if(!shared || !TryReadHand(left,out var a,out _) || !TryReadHand(right,out var b,out _))
+            {
+                if(pairTarget!=null)
+                {
+                    foreach(var hand in new[]{left,right})
+                        if(hand.target!=null && TryReadHand(hand,out _,out var aim))
+                        {
+                            hand.stableAim.SetPositionAndRotation(aim.position,aim.rotation);
+                            hand.rayRelative=RelativeRayPose(aim,new Pose(hand.target.position,hand.target.rotation));
+                            hand.depth=0; hand.rotationOffset=Quaternion.identity;
+                        }
+                    pairTarget=null;
+                }
+                return;
+            }
+            var vector=b.position-a.position;
+            if(vector.magnitude<.05f) return;
+            var midpoint=(a.position+b.position)*.5f;
+            var frame=TwoHandFrame(a,b);
+            if(pairTarget!=left.target)
+            {
+                pairTarget=left.target; pairVector=vector; pairMidpoint=midpoint;
+                pairFrame=frame; pairRotation=pairTarget.rotation; pairScale=pairTarget.localScale;
+                pairOffset=pairTarget.position-midpoint;
+            }
+            float ratio=left.part!=null ? 1f : Mathf.Clamp(vector.magnitude/pairVector.magnitude,.25f,4f);
+            var turn=frame*Quaternion.Inverse(pairFrame);
+            var pose=new Pose(midpoint+turn*(pairOffset*ratio),turn*pairRotation);
+            pairTarget.localScale=pairScale*ratio;
+            if(arrangement!=null) pose=arrangement.Apply(pairTarget,new Pose(pairTarget.position,pairTarget.rotation),pose,
+                left.alignRequested||right.alignRequested,left.freePlacement||right.freePlacement);
+            left.alignRequested=right.alignRequested=false;
+            pairTarget.SetPositionAndRotation(pose.position,pose.rotation);
+            left.part?.RememberArrangement(); right.part?.RememberArrangement();
+            Instruction="Two hands: rotate and resize · release one: continue moving · release both: place";
         }
 
         static void Release(Hand hand)
