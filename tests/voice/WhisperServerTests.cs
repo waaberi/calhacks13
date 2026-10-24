@@ -319,6 +319,53 @@ namespace SpatialModeling.VoiceCore.Tests
             }
         }
 
+        [Fact]
+        public void AReusedServerThatWentAwayNeedsAStartAndAFailedRestartIsNotRetried()
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "no-whisper-" + Guid.NewGuid().ToString("N"));
+            var running = new FakeHttpServer { Respond = _ => (200, "{\"text\":\" Undo.\"}") };
+            var server = new WhisperServer(Path.Combine(dir, WhisperServer.ExecutableName), Path.Combine(dir, "m.bin"), running.Port);
+            using (var whisper = new WhisperServerRecognizer(running.Port) { Server = server })
+            {
+                server.EnsureRunning();
+                Assert.False(server.NeedsStart);
+                whisper.SetGrammar(new[] { "undo", "redo" });
+                Assert.Equal("undo", Assert.Single(Utter(whisper)).Text);
+
+                running.Dispose(); // the other app's server quit
+                Assert.True(server.NeedsStart);
+                Assert.Empty(Utter(whisper)); // tries to start its own: there is none here
+                Assert.True(whisper.LastStopFailed);
+                Assert.Contains("No whisper-server", whisper.LastError);
+
+                var clock = Stopwatch.StartNew();
+                Assert.Empty(Utter(whisper)); // no second start: fails at once, so Vosk answers without waiting
+                Assert.True(whisper.LastStopFailed);
+                Assert.Contains("could not be restarted", whisper.LastError);
+                Assert.True(clock.ElapsedMilliseconds < 150, clock.ElapsedMilliseconds + " ms");
+            }
+        }
+
+        [Fact]
+        public void TheVisualCppRuntimeIsLookedForInEveryFolder()
+        {
+            string first = Directory.CreateTempSubdirectory("dlls").FullName, second = Directory.CreateTempSubdirectory("dlls").FullName;
+            try
+            {
+                string[] runtime = { "msvcp140.dll", "vcruntime140.dll" };
+                Assert.Equal("msvcp140.dll", WhisperServer.MissingLibrary(runtime, new[] { first, second }));
+                File.WriteAllText(Path.Combine(first, "msvcp140.dll"), "");
+                Assert.Equal("vcruntime140.dll", WhisperServer.MissingLibrary(runtime, new[] { first, second }));
+                File.WriteAllText(Path.Combine(second, "vcruntime140.dll"), "");
+                Assert.Null(WhisperServer.MissingLibrary(runtime, new[] { first, second }));
+            }
+            finally
+            {
+                Directory.Delete(first, true);
+                Directory.Delete(second, true);
+            }
+        }
+
         /// <summary>A Python stand-in for whisper-server: same arguments, /health and /inference.</summary>
         static string FakeExecutable(string dir, string transcript, int exitCode = -1)
         {
@@ -363,6 +410,8 @@ HTTPServer(('127.0.0.1', int(args[args.index('--port') + 1])), H).serve_forever(
                 Assert.True(server.Owned);
                 Assert.True(WhisperServer.Answers(port, 1000));
                 Assert.Contains(log, l => l.Contains("ready on port " + port));
+                Process started = Assert.Single(Process.GetProcesses(), p => SafeCommandLine(p).Contains(exe));
+                Assert.Equal(ProcessPriorityClass.BelowNormal, started.PriorityClass); // VR rendering comes first
 
                 var whisper = new WhisperServerRecognizer(port) { Server = server };
                 whisper.SetGrammar(new[] { "undo", "redo" });

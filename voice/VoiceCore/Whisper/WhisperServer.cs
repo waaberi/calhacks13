@@ -21,6 +21,16 @@ namespace SpatialModeling.VoiceCore.Whisper
     {
         public const int DefaultPort = 8178;
 
+        /// <summary>See the constructor's <c>startTimeoutMs</c>.</summary>
+        public const int DefaultStartTimeoutMs = 15000;
+
+        /// <summary>
+        /// The Visual C++ runtime that the prebuilt whisper-server.exe imports (voice/fetch-whisper.sh). Without it
+        /// Windows shows a "DLL was not found" dialog on the desktop and the process waits until someone closes it,
+        /// so it is checked before starting.
+        /// </summary>
+        static readonly string[] VcRuntime = { "msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll" };
+
         /// <summary>The folder under StreamingAssets that <c>voice/fetch-whisper.sh</c> fills.</summary>
         public const string FolderName = "whisper";
 
@@ -47,10 +57,11 @@ namespace SpatialModeling.VoiceCore.Whisper
         /// <param name="executable">Path of whisper-server(.exe); its DLLs sit next to it.</param>
         /// <param name="model">Path of a ggml model, for example StreamingAssets/whisper/ggml-base.en.bin.</param>
         /// <param name="threads">CPU threads per decode. 4 was measured; the demo PC also renders VR.</param>
-        /// <param name="startTimeoutMs">Longest wait for the model to load and the warm-up to finish.</param>
+        /// <param name="startTimeoutMs">Longest wait for the model to load and the warm-up to finish. Voice input waits
+        /// this long at most before it falls back to Vosk alone; the measured start is 0.5 s (tiny.en) to 1 s (base.en).</param>
         /// <param name="log">Progress and errors, for example Unity's Debug.Log. May be called on any thread.</param>
         public WhisperServer(string executable, string model, int port = DefaultPort, int threads = 4,
-            int startTimeoutMs = 30000, Action<string> log = null)
+            int startTimeoutMs = DefaultStartTimeoutMs, Action<string> log = null)
         {
             this.executable = executable;
             this.model = model;
@@ -80,6 +91,12 @@ namespace SpatialModeling.VoiceCore.Whisper
                 }
             }
         }
+
+        /// <summary>
+        /// Nothing serves the port any more: the process this object started has exited, or the server it found
+        /// already running (a crashed run's, another app's) went away. <see cref="EnsureRunning"/> starts a new one.
+        /// </summary>
+        public bool NeedsStart => process != null ? HasExited : !Answers(Port, 200);
 
         /// <summary>Milliseconds the last <see cref="EnsureRunning"/> took, including the warm-up.</summary>
         public double StartMilliseconds { get; private set; }
@@ -149,6 +166,13 @@ namespace SpatialModeling.VoiceCore.Whisper
                 throw new FileNotFoundException("No whisper-server at " + executable + "; run voice/fetch-whisper.sh", executable);
             if (!File.Exists(model))
                 throw new FileNotFoundException("No Whisper model at " + model + "; run voice/fetch-whisper.sh", model);
+            if (IsWindows)
+            {
+                string missing = MissingLibrary(VcRuntime, LibraryFolders(Path.GetDirectoryName(Path.GetFullPath(executable))));
+                if (missing != null)
+                    throw new FileNotFoundException("whisper-server.exe needs " + missing + " from the Microsoft Visual C++ " +
+                                                    "2015-2022 Redistributable (x64): https://aka.ms/vs/17/release/vc_redist.x64.exe", missing);
+            }
             Process previous = process;
             previous?.Dispose();
 
@@ -171,6 +195,43 @@ namespace SpatialModeling.VoiceCore.Whisper
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
             log("Started " + executable + " " + start.Arguments);
+            try
+            {
+                // A decode keeps 4 cores busy for about half a second; the VR frame must not wait for it.
+                process.PriorityClass = ProcessPriorityClass.BelowNormal;
+            }
+            catch (Exception e) when (e is InvalidOperationException || e is System.ComponentModel.Win32Exception ||
+                                      e is NotSupportedException)
+            {
+                log("whisper-server runs at normal priority (" + e.GetType().Name + ": " + e.Message + ")");
+            }
+        }
+
+        /// <summary>The first of <paramref name="libraries"/> that none of <paramref name="folders"/> holds, or null.</summary>
+        internal static string MissingLibrary(IEnumerable<string> libraries, IReadOnlyList<string> folders)
+        {
+            foreach (string library in libraries)
+            {
+                bool found = false;
+                foreach (string folder in folders)
+                    found |= File.Exists(Path.Combine(folder, library));
+                if (!found)
+                    return library;
+            }
+            return null;
+        }
+
+        /// <summary>Where Windows looks for an executable's DLLs: its folder, System32, the Windows folder and PATH.</summary>
+        static IReadOnlyList<string> LibraryFolders(string executableFolder)
+        {
+            var folders = new List<string>
+            {
+                executableFolder, Environment.SystemDirectory, Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            };
+            foreach (string folder in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator))
+                if (folder.Trim().Length > 0 && folder.IndexOfAny(Path.GetInvalidPathChars()) < 0)
+                    folders.Add(folder.Trim());
+            return folders;
         }
 
         void WaitUntilHealthy(Stopwatch clock)

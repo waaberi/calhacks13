@@ -47,8 +47,8 @@ namespace SpatialModeling.VoiceCore.Whisper
         /// <summary>Longest wait for a transcript; after it the utterance falls back to Vosk's result.</summary>
         public int WhisperTimeoutMs = 4000;
 
-        /// <summary>Longest wait for whisper-server to load and warm up.</summary>
-        public int WhisperStartTimeoutMs = 30000;
+        /// <summary>Longest wait for whisper-server to load and warm up; voice input isn't ready until then.</summary>
+        public int WhisperStartTimeoutMs = WhisperServer.DefaultStartTimeoutMs;
 
         /// <summary>Whisper's initial prompt; null for <see cref="WhisperServerRecognizer.BlenderPrompt"/>.</summary>
         public string WhisperPrompt;

@@ -66,6 +66,7 @@ namespace SpatialModeling.VoiceCore.Whisper
         int rate = 16000;
         PhraseSnapper snapper;
         string prompt;
+        string restartFailed;
 
         /// <param name="port">The port <see cref="WhisperServer"/> listens on.</param>
         /// <param name="prompt">Initial prompt: words Whisper should expect. Null for <see cref="BlenderPrompt"/>.</param>
@@ -106,8 +107,9 @@ namespace SpatialModeling.VoiceCore.Whisper
         public string Prompt => prompt;
 
         /// <summary>
-        /// The server this recognizer owns, if any: restarted at the next utterance if its process died, and
-        /// disposed (killed) with the recognizer.
+        /// The server this recognizer owns, if any: started again at the next utterance if it died or went away
+        /// (once; if that fails, every later utterance fails at once and Vosk answers alone), and disposed (killed)
+        /// with the recognizer.
         /// </summary>
         public WhisperServer Server { get; set; }
 
@@ -139,12 +141,22 @@ namespace SpatialModeling.VoiceCore.Whisper
             if (pcm.Count < rate / 10)
                 return; // under 0.1 s: a click, not speech (whisper.cpp ignores it too)
 
+            if (restartFailed != null)
+            {
+                // One restart was tried and failed: don't make every utterance wait for another (up to the start
+                // timeout each); Vosk answers alone from now on.
+                LastStopFailed = true;
+                LastError = restartFailed;
+                pcm.Clear();
+                return;
+            }
+
             var clock = Stopwatch.StartNew();
             string text;
             try
             {
-                if (Server != null && Server.HasExited)
-                    Server.EnsureRunning(); // it crashed: start it again (about a second, on the worker thread)
+                if (Server != null && Server.NeedsStart)
+                    Restart(); // it crashed or went away: start it again (about a second, on the worker thread)
                 text = Transcribe(Wav(pcm, rate));
             }
             catch (Exception e) when (e is IOException || e is SocketException || e is FormatException ||
@@ -180,6 +192,19 @@ namespace SpatialModeling.VoiceCore.Whisper
             pcm.Clear();
             Server?.Dispose();
             Server = null;
+        }
+
+        void Restart()
+        {
+            try
+            {
+                Server.EnsureRunning();
+            }
+            catch (Exception e)
+            {
+                restartFailed = "whisper-server could not be restarted (" + e.GetType().Name + ": " + e.Message + ")";
+                throw;
+            }
         }
 
         /// <summary>
