@@ -3,7 +3,8 @@
 One add-on, two roles chosen in the add-on preferences:
 
 - Host (Talia's PC) owns the document. It serves the Unity app on localhost and
-  Client-role add-ons on the LAN, and applies every edit in Blender.
+  Client-role add-ons on the LAN, and applies every edit in Blender. Lives in
+  host.py (lifecycle) and server.py (networking, no bpy).
 - Client (Lee Jae-yeon's PC) joins a host, mirrors its scene and sends edits
   as requests. Lives in remote_client/.
 
@@ -12,6 +13,8 @@ through bpy.app.timers. Never execute received data as Python.
 """
 
 import bpy
+
+from . import host
 
 
 class SpatialModelingPreferences(bpy.types.AddonPreferences):
@@ -24,15 +27,19 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
             ("CLIENT", "Client", "Join a host on another computer"),
         ],
         default="HOST",
+        update=lambda self, context: host.sync(),
     )
 
     def draw(self, context):
         self.layout.prop(self, "role", expand=True)
+        self.layout.label(text=host.status)
 
 
 def register():
     bpy.utils.register_class(SpatialModelingPreferences)
+    host.register()
 
 
 def unregister():
+    host.unregister()
     bpy.utils.unregister_class(SpatialModelingPreferences)
