@@ -39,6 +39,10 @@ namespace SpatialModeling
             session = menu.Session;
             while ((!session.Ready || !session.SceneCurrent) && Time.realtimeSinceStartupAsDouble < until) yield return null;
             if (!session.Ready || !session.SceneCurrent || session.Objects.Count == 0) { Fail("No current native reference object"); yield break; }
+            var scene = FindAnyObjectByType<HostScene>();
+            if (!NativeSmokeWorkspace.Place(scene) || NativeSmokeWorkspace.ActiveModelRenderers(scene) == 0)
+            { Fail("Real Place Table action did not expose active object renderers"); yield break; }
+            report["placement"] = "Bounded software test pose and real Place Table callback; no physical placement pass";
             string target = null; foreach (var id in session.Objects.Keys) { target = id; break; }
             peer = new HostLink("127.0.0.1", port, new JObject { ["role"] = "vr", ["name"] = "Ownership test participant", ["app"] = new JObject { ["name"] = "Native ownership smoke", ["version"] = "1" } });
             until = Time.realtimeSinceStartupAsDouble + 10;
@@ -50,15 +54,15 @@ namespace SpatialModeling
             while ((lease == null || session.ConflictOwner(target) == null) && Time.realtimeSinceStartupAsDouble < until) yield return null;
             if (lease == null || session.ConflictOwner(target) != "Ownership test participant") { Fail("Actual participant lease was not broadcast to VR"); yield break; }
             yield return null; yield return null;
-            bool label = false; foreach (var text in FindObjectsByType<Text>(FindObjectsSortMode.None)) if (text.text == "Ownership test participant is editing") label = true;
-            if (!label) { Fail("Actual owner overlay label was not rendered by a world canvas"); yield break; }
+            bool label = false; foreach (var text in FindObjectsByType<Text>(FindObjectsSortMode.None)) if (text.isActiveAndEnabled && text.GetComponentInParent<Canvas>()?.isActiveAndEnabled == true && text.text == "Ownership test participant is editing") label = true;
+            bool pink = false; foreach (var line in FindObjectsByType<LineRenderer>(FindObjectsSortMode.None))
+                if (line.gameObject.name == "Temporary ownership overlay" && line.isActiveAndEnabled && line.positionCount > 0 && line.sharedMaterial != null) pink = true;
+            if (!label || !pink) { Fail("Active actual-owner world canvas / pink line renderer missing"); yield break; }
             report["real_owner_label"] = true; report["lease"] = lease;
             session.Select(target); menu.Home(); if (!Click("Move object") || !Click("Apply")) yield break;
             if (session.Busy || !session.Notice.Contains("Ownership test participant")) { Fail("Known conflict allowed a native command or hid owner"); yield break; }
             report["conflicting_apply_blocked"] = true;
-            var scene = FindAnyObjectByType<HostScene>();
             long revision = session.Revision;
-            scene.Table.SeedFromHead(new Vector3(0, 1.65f, 0), Vector3.forward); scene.Table.Place();
             var before = scene.Placement.position; scene.Table.BeginMove(); scene.Table.Adjust(0.1f, 0.1f, 0, 10, new Vector3(0, 1.65f, 0), Vector3.forward);
             bool moved = Vector3.Distance(before, scene.Placement.position) > 0.01f; scene.Table.CancelMove();
             if (!moved || session.Revision != revision) { Fail("Inspection placement failed or changed native revision under another editor's lock"); yield break; }
