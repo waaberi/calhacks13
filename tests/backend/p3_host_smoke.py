@@ -223,8 +223,7 @@ def start():
     bpy.ops.wm.save_as_mainfile(filepath=str(fixture))
     bpy.ops.ed.undo_push(message="P3 smoke saved baseline")
     SESS = session.Session(sync.describe, sync.snapshot, uuid.uuid4().hex,
-                           name="P3 isolated host", client_can_edit=False,
-                           capabilities=lambda: {"sketch": False})
+                           name="P3 isolated host", client_can_edit=False)
     sync.register()
     sync.start(DOC, SESS)
     editor = edits.Editor(sync, host.undoable, DOC)
