@@ -47,6 +47,7 @@ namespace SpatialModeling
         {
             get { foreach (var go in objects.Values) if (go != null) yield return go.GetComponent<WorkspaceObjectView>(); }
         }
+        public Material ObjectDisplayMaterial => ObjectMaterial;
         public bool DisplayPlacementReady => placed && !recenterRequested;
         public Pose PlacementHeadPose { get; private set; }
         readonly StartupFacingGate startupFacing = new StartupFacingGate();
