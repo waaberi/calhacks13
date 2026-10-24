@@ -5,8 +5,8 @@ namespace SpatialModeling.VoiceCore.Whisper
 {
     /// <summary>
     /// Vosk first, Whisper when Vosk isn't sure. Both get the audio. On release, if the fast recognizer's result is
-    /// exactly one grammar phrase (no "[unk]") with confidence of at least <c>minFastConfidence</c>, it is used at
-    /// Vosk's speed (about 10 ms). Otherwise the slow recognizer decodes the utterance and its result is used, even
+    /// exactly one grammar phrase (no "[unk]"), or a phrase and a count (<see cref="IsFastText"/>), with confidence of
+    /// at least <c>minFastConfidence</c>, it is used at Vosk's speed (about 10 ms). Otherwise the slow recognizer decodes the utterance and its result is used, even
     /// when it hears nothing: that is what rejects chatter. Only if the slow one fails (server down, timeout) do the
     /// fast results go out as they are, which is VoiceCore's behaviour without Whisper.
     /// Measured on the TTS corpus with Vosk G2 and whisper tiny.en (voice-asr-alternatives study): 196/250 commands
@@ -19,21 +19,45 @@ namespace SpatialModeling.VoiceCore.Whisper
     /// wrote a silence hallucination such as "you" that Vosk didn't back up: <see cref="FastPathOutcome.Silence"/>),
     /// and the slow recognizer's reason otherwise: <see cref="NoResultReason.NotUnderstood"/> when Whisper's
     /// transcript snapped onto no phrase. Nothing when Whisper failed and Vosk heard nothing either.
+    /// <para><b>A weak "add".</b> Vosk's small model often hears the start of "add" weakly: "add a monkey" with "add"
+    /// at 0.83, "it a mirror modifier", or "a donut" when the start was cut off. The result's confidence is its
+    /// weakest word, so these went to Whisper (0.6-1.2 s instead of 0.2 s). <see cref="RestoreLeadingAdd"/> takes them
+    /// on the fast path as the "add" phrase when every other word is sure and Vosk's words cover the speech, so
+    /// nothing else was said (chatter ending in "a camera" doesn't).</para>
     /// </summary>
     public sealed class FastPathRecognizer : ISpeechRecognizer, IReportsNoResult
     {
         /// <summary>The measured fast-path gate.</summary>
         public const float DefaultMinFastConfidence = 0.9f;
 
+        /// <summary>
+        /// For <see cref="RestoreLeadingAdd"/>: the share of the speech (first to last loud frame) that Vosk's words
+        /// must span. Measured with Vosk and the host grammar: the "add" phrases it restores span 0.77-1.18 of it
+        /// (cut-off starts, far microphone, phone band and clean TTS), and the one chatter clip it would take otherwise
+        /// (SLURP "will it be raining tomorrow" heard as "a camera") 0.44.
+        /// </summary>
+        public const float MinWordCoverage = 0.7f;
+
+        /// <summary>What Vosk writes for a weak "add": replaced by "add" ("it a mirror modifier").</summary>
+        static readonly HashSet<string> AddHeardAs = new HashSet<string>(StringComparer.Ordinal) { "it", "a", "an", "at", "and" };
+
+        /// <summary>What Vosk keeps of "add a" when the start of "add" is lost: "add" goes in front ("a donut").</summary>
+        static readonly HashSet<string> AddLostBefore = new HashSet<string>(StringComparer.Ordinal) { "a", "an" };
+
+        const int FrameMs = 30;
+
         readonly ISpeechRecognizer fast;
         readonly ISpeechRecognizer slow;
         readonly float minFastConfidence;
         readonly List<RecognitionResult> fastResults = new List<RecognitionResult>();
         readonly List<RecognitionResult> slowResults = new List<RecognitionResult>();
+        readonly List<float> frameRms = new List<float>(); // this utterance's 30 ms frames, for the word coverage
         HashSet<string> phrases = new HashSet<string>(StringComparer.Ordinal);
         NoResultReason? slowReason; // the slow recognizer's NoResult during this Stop
         IReadOnlyList<string> fullGrammar; // the last grammar that wasn't a question's
         int rate = 16000;
+        double frameEnergy;
+        int frameFill;
 
         public FastPathRecognizer(ISpeechRecognizer fast, ISpeechRecognizer slow, float minFastConfidence = DefaultMinFastConfidence)
         {
@@ -106,10 +130,17 @@ namespace SpatialModeling.VoiceCore.Whisper
             return both;
         }
 
+        /// <summary>What Vosk wrote when the last utterance went out as a restored "add" phrase
+        /// (<see cref="RestoreLeadingAdd"/>), for logs; otherwise null.</summary>
+        public string LastRestoredFrom { get; private set; }
+
         public void Start(int sampleRate)
         {
             fastResults.Clear();
             slowResults.Clear();
+            frameRms.Clear();
+            frameEnergy = 0;
+            frameFill = 0;
             rate = sampleRate;
             fast.Start(sampleRate);
             slow.Start(sampleRate);
@@ -119,15 +150,39 @@ namespace SpatialModeling.VoiceCore.Whisper
         {
             fast.AcceptAudio(samples, count);
             slow.AcceptAudio(samples, count);
+            int frame = Math.Max(1, rate * FrameMs / 1000);
+            for (int i = 0; i < count; i++)
+            {
+                frameEnergy += (double)samples[i] * samples[i];
+                if (++frameFill == frame)
+                {
+                    frameRms.Add((float)Math.Sqrt(frameEnergy / frame));
+                    frameEnergy = 0;
+                    frameFill = 0;
+                }
+            }
         }
 
         public void Stop()
         {
+            LastRestoredFrom = null;
             fast.Stop();
-            if (fastResults.Count == 1 && phrases.Contains(fastResults[0].Text) && fastResults[0].Confidence >= minFastConfidence)
+            if (fastResults.Count == 1 && IsFastText(fastResults[0].Text, phrases) && fastResults[0].Confidence >= minFastConfidence)
             {
                 LastOutcome = FastPathOutcome.Fast;
                 slow.Start(rate); // drops the slow recognizer's buffered audio unheard
+                Raise(fastResults);
+                return;
+            }
+            RecognitionResult? restored = fastResults.Count == 1
+                ? RestoreLeadingAdd(fastResults[0], phrases, minFastConfidence, SpeechSpan())
+                : null;
+            if (restored.HasValue)
+            {
+                LastOutcome = FastPathOutcome.Fast;
+                LastRestoredFrom = fastResults[0].Text;
+                slow.Start(rate);
+                fastResults[0] = restored.Value;
                 Raise(fastResults);
                 return;
             }
@@ -156,6 +211,96 @@ namespace SpatialModeling.VoiceCore.Whisper
         {
             fast.Dispose();
             slow.Dispose();
+        }
+
+        /// <summary>
+        /// A Vosk result whose only unsure word is a weak "add" at the start, as the "add" phrase it stands for, or null.
+        /// Every other word must be at least <paramref name="minConfidence"/>, there is no "[unk]", and the first word is
+        /// below it and is one of:
+        /// <list type="bullet">
+        /// <item>"add" itself, when the whole text is a grammar phrase ("add a monkey", add 0.83);</item>
+        /// <item>"it", "a", "an", "at" or "and" standing for "add" ("it a mirror modifier" gives "add a mirror modifier");</item>
+        /// <item>"a" or "an" after a lost "add" ("a donut" gives "add a donut").</item>
+        /// </list>
+        /// The result must be one grammar phrase of <paramref name="phrases"/>, and Vosk's words must span at least
+        /// <see cref="MinWordCoverage"/> of <paramref name="speech"/> (first to last loud moment, in seconds from the
+        /// utterance start), so nothing else was said. Without word times or speech it is null. The confidence is the
+        /// lowest of the sure words.
+        /// </summary>
+        public static RecognitionResult? RestoreLeadingAdd(RecognitionResult vosk, ISet<string> phrases, float minConfidence,
+            (float start, float end)? speech)
+        {
+            IReadOnlyList<RecognizedWord> words = vosk.Words;
+            if (words == null || words.Count < 2 || !speech.HasValue || words[0].Confidence >= minConfidence)
+                return null;
+            var rest = new List<string>(words.Count - 1);
+            float sure = 1f;
+            for (int i = 1; i < words.Count; i++)
+            {
+                if (words[i].Confidence < minConfidence || words[i].Word == Vocabulary.Unknown)
+                    return null;
+                sure = Math.Min(sure, words[i].Confidence);
+                rest.Add(words[i].Word);
+            }
+            string first = words[0].Word, others = string.Join(" ", rest), text = first + " " + others;
+            string phrase =
+                first == "add" && IsFastText(text, phrases) ? text :
+                AddHeardAs.Contains(first) && IsFastText("add " + others, phrases) ? "add " + others :
+                AddLostBefore.Contains(first) && IsFastText("add " + text, phrases) ? "add " + text :
+                null;
+            if (phrase == null)
+                return null;
+            (float start, float end) = speech.Value;
+            float spoken = end - start, said = words[words.Count - 1].End - words[0].Start;
+            if (words[0].Start < 0 || spoken <= 0 || said < MinWordCoverage * spoken)
+                return null;
+            return new RecognitionResult(phrase, sure);
+        }
+
+        /// <summary>
+        /// What the fast path may answer with: one grammar phrase, or a phrase of two or more words followed by a count
+        /// phrase of the grammar ("add an array" + "five copies", "subdivide it" + "level two"): Vosk chains phrases,
+        /// and "add an array five copies" is two of them. Measured on 1,552 clips (TTS, degraded TTS, 320 SLURP and 48
+        /// TTS chatter): 6 more commands on the fast path, all right, and no chatter.
+        /// </summary>
+        public static bool IsFastText(string text, ISet<string> phrases)
+        {
+            if (string.IsNullOrEmpty(text))
+                return false;
+            if (phrases.Contains(text))
+                return true;
+            string[] words = text.Split(' ');
+            for (int split = 2; split < words.Length; split++)
+            {
+                string head = string.Join(" ", words, 0, split), tail = string.Join(" ", words, split, words.Length - split);
+                if (IsCount(tail) && !IsCount(head) && phrases.Contains(head) && phrases.Contains(tail))
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>"five copies", "two times", "level two".</summary>
+        static bool IsCount(string phrase)
+        {
+            string[] words = phrase.Split(' ');
+            return words.Length == 2 && (words[1] == "copies" || words[1] == "times" || words[0] == "level");
+        }
+
+        /// <summary>
+        /// The first and last 30 ms frame of this utterance that are speech, in seconds: at least the speech gate's
+        /// <see cref="WhisperServerRecognizer.DefaultMinSpeechRms"/> and within 20 dB of the loudest frame (so steady
+        /// room noise doesn't count). Null for silence.
+        /// </summary>
+        (float start, float end)? SpeechSpan()
+        {
+            float loudest = 0f;
+            foreach (float rms in frameRms)
+                loudest = Math.Max(loudest, rms);
+            float threshold = Math.Max(WhisperServerRecognizer.DefaultMinSpeechRms, loudest / 10f);
+            int first = frameRms.FindIndex(rms => rms >= threshold), last = frameRms.FindLastIndex(rms => rms >= threshold);
+            if (first < 0)
+                return null;
+            return (first * FrameMs / 1000f, (last + 1) * FrameMs / 1000f);
         }
 
         /// <summary>Raises <paramref name="results"/>, or if there are none, <see cref="NoResult"/> with
