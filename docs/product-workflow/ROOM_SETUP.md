@@ -51,6 +51,16 @@ UUID-matched actual boundary points. Omitted, inverted and doubled corrections m
 all fail. Raw room captures remain local. Physical acceptance of the corrected
 binary is still required; identifying and replaying the cause does not grant it.
 
+The first corrected live launch encountered the existing native reference-space
+exhaustion while the session remained IDLE, before any comparison could export.
+Healthy runs reached FOCUSED before `OVRManager` creation; failed runs created the
+manager while unworn/untracked and emitted thousands of AppSpace changes. The
+startup now waits for active/worn/focused/tracked readiness before creating the
+manager/layer or querying saved-room data. It leaves the opaque scene while waiting
+and does not destroy/recreate a manager on ordinary focus changes. Repeated origin
+enforcement is a supported explanation for the churn, not a symbolized native
+call-chain diagnosis. The failed artifact/log remains preserved in issue125.
+
 ## Current-room eligibility and demo relocation
 
 A successful query is scene receipt, not proof the wearer is in that room. The

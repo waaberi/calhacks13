@@ -74,10 +74,10 @@ namespace SpatialModeling
         // OVRLocatable's native-origin poses need Origin -> AppSpace first. Live
         // xrLocateSpace comparisons verified this direction for every room anchor.
         // Recompute after recenter; never bake this correction into the saved scan.
-        void UpdateSceneTrackingFrame()
+        void UpdateSceneTrackingFrame(bool ready)
         {
             currentAppSpaceWorld=Origin!=null?new Pose(Origin.position,Origin.rotation):Pose.identity;
-            var relative=OVRPlugin.initialized
+            var relative=ready
                 ? OVRPlugin.GetTrackingTransformRelativePose(OVRPlugin.GetTrackingOriginType()).ToOVRPose()
                 : OVRPose.identity;
             originReferenceToAppSpace=new Pose(relative.position,relative.orientation);
@@ -164,6 +164,8 @@ namespace SpatialModeling
         public async void Reload()
         {
             if (disposed || !AutomaticEnabled) return;
+            if(!RoomHeadReady())
+            {message="Waiting for an active, worn Link headset";retryAt=Time.realtimeSinceStartup+1;return;}
             if (loading) { reloadPending = true; return; }
             if (!OVRPlugin.initialized || !OpenXRRuntime.IsExtensionEnabled("XR_FB_scene"))
             { message = "Room data unavailable · use a level"; retryAt = Time.realtimeSinceStartup + 15; attempts++; return; }
@@ -494,7 +496,8 @@ namespace SpatialModeling
         }
         void LateUpdate()
         {
-            UpdateSceneTrackingFrame();
+            bool roomHeadReady=RoomHeadReady();
+            UpdateSceneTrackingFrame(roomHeadReady);
             if(pendingLevel!=null)
             {
                 var host=FindFirstObjectByType<HostScene>();
@@ -505,6 +508,7 @@ namespace SpatialModeling
             double now=Time.realtimeSinceStartupAsDouble;
             foreach (var item in anchors)
             {
+                if(!roomHeadReady) break;
                 if (!item.Locatable.TryGetSceneAnchorPose(out var tracked) || !tracked.Position.HasValue
                     || !tracked.Rotation.HasValue || !tracked.IsPositionTracked || !tracked.IsRotationTracked) continue;
                 try
@@ -541,7 +545,7 @@ namespace SpatialModeling
             }
             bool localized=WorkspaceRoomLocalization.TrySelectRoom(floors,
                 Camera.main!=null?new Pose(Camera.main.transform.position,Camera.main.transform.rotation):Pose.identity,
-                RoomHeadReady(),now,out Guid currentRoom,out string eligibility);
+                roomHeadReady,now,out Guid currentRoom,out string eligibility);
             if(eligibility!=lastRoomEligibility)
             {lastRoomEligibility=eligibility;Debug.Log("WORKSPACE_ROOM_ELIGIBILITY "+eligibility);}
             foreach (var item in candidates)
@@ -565,7 +569,7 @@ namespace SpatialModeling
             WriteRoomEvidence();
             ProbeRoomSpacesOnce();
         }
-        static bool RoomHeadReady()
+        public static bool RoomHeadReady()
         {
             var head=InputDevices.GetDeviceAtXRNode(XRNode.Head);
             bool tracked=head.TryGetFeatureValue(CommonUsages.isTracked,out bool value)&&value;

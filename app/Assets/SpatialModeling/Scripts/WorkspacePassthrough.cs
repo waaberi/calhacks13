@@ -42,6 +42,11 @@ namespace SpatialModeling
             originalHdr = view.allowHDR;
             var data = view.GetUniversalAdditionalCameraData();
             originalPostProcessing = data.renderPostProcessing;
+            // Meta's feature initializes native session/presence independently.
+            // Creating OVRManager during IDLE can start origin-space churn before
+            // the session has tracking or attached actions. Do not fall through.
+            State="Waiting for an active, worn Link headset";
+            while(!WorkspaceSurfaces.RoomHeadReady()) yield return null;
             manager = FindAnyObjectByType<OVRManager>();
             if (manager == null) manager = gameObject.AddComponent<OVRManager>();
             manager.isInsightPassthroughEnabled = true;
