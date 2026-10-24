@@ -13,16 +13,17 @@ UUIDs requires accounting for native-log versus managed Guid byte order; after t
 normalization both apps read the same saved anchors. This excludes a different saved
 anchor set as the explanation, but does not yet diagnose the PC transform failure.
 
-`CALHACKS_ROOM_REFERENCE_AUDIT` enables an optional local diagnostic export. It uses
-SDK207's documented `OVRCameraRig.disableEyeAnchorCameras` mode: the accepted main
-camera continues rendering, all SDK reference-eye cameras remain disabled, and
-MRUK world-locking acts only on the separate reference rig. The diagnostic compares
-Core scene poses, the official camera-based conversion, and MRUK poses mapped from
-that reference rig into the existing camera origin. It records actual camera/stereo
-and tracking-reference transforms plus mesh fingerprints. It hides the failed room
-overlay during this diagnostic and does not invoke capture, move native geometry,
-replace the main rig, or claim a repair. A bounded export failure cannot interrupt
-placement. No new user exercises or rescan until an actual cause is verified.
+The optional MRUK reference-rig diagnostic on `e58039f` crashed before exporting
+comparisons: repeated AppSpaceChange events exhausted native reference spaces
+(`xrCreateReferenceSpace: XR_ERROR_LIMIT_REACHED`). It has been removed; the exact
+cause of that churn is not established. Logs and the failed artifact are retained.
+
+The narrow replacement follows SDK207 `RoomMeshAnchor`'s camera-based
+`OVRPose.ToWorldSpacePose(Camera.main)` mapping for both mesh and semantic anchors.
+It retains the SDK's paired scene-pose/mesh handedness conversion, the existing
+camera, controls and saved room. Optional local room evidence records the measured
+rotation/translation difference from the former camera-parent assumption. This
+is a candidate mapping correction; physical fit is still failed until verified.
 
 ## Supported route
 

@@ -72,7 +72,7 @@ namespace SpatialModeling
                 bool currentRoom=roomCount==1 || (mesh.Anchor.Room!=Guid.Empty && mesh.Anchor.Room==localizedRoom);
                 mesh.Root.SetActive(AutomaticEnabled && ShowDetected && tracked && currentRoom);
                 if(!tracked) continue;
-                var world=WorkspaceInteraction.ToWorldPose(Origin,new Pose(pose.Position.Value,pose.Rotation.Value));
+                var world=SceneToWorld(sceneTrackingWorld,new Pose(pose.Position.Value,pose.Rotation.Value));
                 mesh.Root.transform.SetPositionAndRotation(world.position,world.rotation);
             }
         }

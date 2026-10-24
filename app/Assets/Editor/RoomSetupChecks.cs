@@ -7,6 +7,15 @@ public static class RoomSetupChecks
     static void Check(bool value,string message) {if(!value) throw new Exception("Room setup: "+message);}
     public static void Run()
     {
+        // SDK tracking space can differ from the camera's parent after recenter.
+        // A room point two metres forward in that space must appear two metres
+        // right in a world whose tracking reference has a 90-degree yaw.
+        var frame=new Pose(new Vector3(3,1,-5),Quaternion.Euler(0,90,0));
+        var roomPose=WorkspaceSurfaces.SceneToWorld(frame,new Pose(new Vector3(0,0,2),Quaternion.identity));
+        Check(Vector3.Distance(roomPose.position,new Vector3(5,1,-5))<.0001f,"room uses SDK tracking translation/yaw once");
+        Check(Vector3.Distance(roomPose.rotation*Vector3.forward,Vector3.right)<.0001f,"room heading follows SDK frame once");
+        var cameraPose=WorkspaceSurfaces.SceneToWorld(frame,new Pose(new Vector3(1,1,0),Quaternion.Euler(0,180,0)));
+        Check(Vector3.Distance(cameraPose.position,new Vector3(3,2,-6))<.0001f,"head and room share the SDK frame");
         // An L-shaped floor must not fill the missing corner with a rectangular grid
         // or apply contact to an area that the actual polygon excludes.
         var floor=new WorkspaceSurfaces.Surface {Name="Floor",Pose=Pose.identity,Size=new Vector2(4,4),

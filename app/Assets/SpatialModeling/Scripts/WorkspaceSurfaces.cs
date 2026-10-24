@@ -36,7 +36,8 @@ namespace SpatialModeling
         [Serializable] public sealed class RoomEvidence
         {
             public string trackingOrigin;
-            public Pose metaHead, unityHead, cameraWorld, originWorld;
+            public Pose metaHead, unityHead, cameraWorld, originWorld, sceneTrackingWorld;
+            public float parentToScenePosition, parentToSceneAngle;
             public List<AnchorEvidence> anchors=new List<AnchorEvidence>();
         }
         [Serializable] public sealed class AnchorEvidence
@@ -63,6 +64,18 @@ namespace SpatialModeling
         float retryAt;
         Material levelMaterial, detectedMaterial, contrastMaterial;
         Transform Origin => Camera.main != null ? Camera.main.transform.parent : null;
+        Pose sceneTrackingWorld;
+
+        // Match Meta's RoomMeshAnchor.ToWorldSpacePose(Camera.main). The camera's
+        // parent is not necessarily the SDK's current tracking reference space.
+        static Pose SceneTrackingWorld(Camera camera)
+        {
+            var world=OVRPose.identity.ToWorldSpacePose(camera);
+            return new Pose(world.position,world.orientation);
+        }
+        public static Pose SceneToWorld(Pose trackingWorld,Pose local)
+            => new Pose(trackingWorld.position+trackingWorld.rotation*local.position,
+                trackingWorld.rotation*local.rotation);
 
         IEnumerator Start()
         {
@@ -467,6 +480,7 @@ namespace SpatialModeling
         }
         void LateUpdate()
         {
+            sceneTrackingWorld=Camera.main!=null?SceneTrackingWorld(Camera.main):Pose.identity;
             if(pendingLevel!=null)
             {
                 var host=FindFirstObjectByType<HostScene>();
@@ -487,7 +501,7 @@ namespace SpatialModeling
                         kind=ClassifyLabels(semantic.Labels);
 #pragma warning restore CS0618
                     if (kind == null) continue;
-                    var world = WorkspaceInteraction.ToWorldPose(Origin, new Pose(tracked.Position.Value,tracked.Rotation.Value));
+                    var world = SceneToWorld(sceneTrackingWorld, new Pose(tracked.Position.Value,tracked.Rotation.Value));
                     Surface surface;
                     // Furniture may expose both a vertical plane and a volume. Its top face is the desk.
                     if (kind == "Desk" && item.Anchor.TryGetComponent<OVRBounded2D>(out var topPlane)
@@ -530,7 +544,6 @@ namespace SpatialModeling
             RebuildSurfaces(); RefreshVisuals();
             UpdateScanMeshes();
             WriteRoomEvidence();
-            StartReferenceAuditOnce();
         }
         public static string ClassifyLabels(string value)
         {
@@ -567,7 +580,10 @@ namespace SpatialModeling
             var data=new RoomEvidence { trackingOrigin=OVRPlugin.GetTrackingOriginType().ToString(),
                 metaHead=new Pose(meta.position,meta.orientation),unityHead=new Pose(position,rotation),
                 cameraWorld=new Pose(Camera.main.transform.position,Camera.main.transform.rotation),
-                originWorld=Origin!=null?new Pose(Origin.position,Origin.rotation):Pose.identity };
+                originWorld=Origin!=null?new Pose(Origin.position,Origin.rotation):Pose.identity,
+                sceneTrackingWorld=sceneTrackingWorld };
+            data.parentToScenePosition=Vector3.Distance(data.originWorld.position,sceneTrackingWorld.position);
+            data.parentToSceneAngle=Quaternion.Angle(data.originWorld.rotation,sceneTrackingWorld.rotation);
             foreach(var item in anchors)
             {
                 if(!item.Locatable.TryGetSceneAnchorPose(out var pose)||!pose.Position.HasValue||!pose.Rotation.HasValue) continue;
@@ -582,7 +598,8 @@ namespace SpatialModeling
                 data.anchors.Add(entry);
             }
             Directory.CreateDirectory(Path.GetDirectoryName(path)); File.WriteAllText(path,JsonUtility.ToJson(data,true));
-            Debug.Log("WORKSPACE_ROOM_EVIDENCE captured anchor_count="+data.anchors.Count);
+            Debug.Log("WORKSPACE_ROOM_EVIDENCE captured anchor_count="+data.anchors.Count+
+                " sdk_parent_angle="+data.parentToSceneAngle+" sdk_parent_m="+data.parentToScenePosition);
             }
             catch(Exception error) {Debug.LogWarning("WORKSPACE_ROOM_EVIDENCE unavailable "+error.GetType().Name);}
         }
