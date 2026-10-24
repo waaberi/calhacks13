@@ -16,6 +16,14 @@ namespace SpatialModeling.VoiceCore
 
         /// <summary>The pointer must rest this long on an object before it answers "which object?".</summary>
         public TimeSpan PointerDwell { get; set; } = TimeSpan.FromSeconds(0.5);
+
+        /// <summary>Send words VoiceCore can't turn into a command by itself to the host's resolver
+        /// (<see cref="VoiceTurn.Resolve"/>). Off by default: without it the session works exactly as before.</summary>
+        public bool AskHost { get; set; }
+
+        /// <summary>How long to wait for the host's <c>voice.candidates</c> before handling the words as if there were no
+        /// host. At least 3 s: a reply can wait 1.1 to 2.4 s behind a large scene message on the app's read thread.</summary>
+        public TimeSpan HostTimeout { get; set; } = TimeSpan.FromSeconds(3);
     }
 
     [Flags]
@@ -43,24 +51,40 @@ namespace SpatialModeling.VoiceCore
     /// <summary>The result of one input: at most one command to execute, and prompts to play and show in order.</summary>
     public sealed class VoiceTurn
     {
-        internal VoiceTurn(VoiceCommand command, IReadOnlyList<Prompt> prompts)
+        internal VoiceTurn(VoiceCommand command, IReadOnlyList<Prompt> prompts, VoiceResolve resolve = null, bool grammarChanged = false)
         {
             Command = command;
             Prompts = prompts;
+            Resolve = resolve;
+            GrammarChanged = grammarChanged;
         }
 
-        /// <summary>A complete command to send through the normal command path, or null.</summary>
+        /// <summary>A complete command to send through the normal command path, or null. A <see cref="CommandKind.Run"/>
+        /// goes out like the others, as <c>voice.run</c> (<see cref="HostCommand.From"/>).</summary>
         public VoiceCommand Command { get; }
 
         public IReadOnlyList<Prompt> Prompts { get; }
 
+        /// <summary>Words for the host's resolver, or null: send them as <c>voice.resolve</c> and report the message ID with
+        /// <see cref="VoiceSession.ResolveSent"/>. Only with <see cref="VoiceSessionOptions.AskHost"/>.</summary>
+        public VoiceResolve Resolve { get; }
+
+        /// <summary>A question about the host's candidates began or ended: pass <see cref="VoiceSession.GrammarPhrases"/>
+        /// to the recognizer again.</summary>
+        public bool GrammarChanged { get; }
+
         public override string ToString() =>
-            (Command == null ? "no command" : Command.ToString()) + (Prompts.Count == 0 ? "" : " [" + string.Join(", ", Prompts) + "]");
+            (Command == null ? "no command" : Command.ToString()) + (Prompts.Count == 0 ? "" : " [" + string.Join(", ", Prompts) + "]") +
+            (Resolve == null ? "" : " ask host: " + Resolve.Text);
     }
 
     /// <summary>
     /// Voice conversation memory: turns recognized utterances plus selection and pointer events into complete
     /// commands, asking only for what is missing. It keeps at most one pending command.
+    /// With <see cref="VoiceSessionOptions.AskHost"/>, words it can't handle by itself go to the host's resolver
+    /// (<see cref="VoiceTurn.Resolve"/>), which runs a Blender operation or asks "which one?" (<see cref="Choice"/>).
+    /// Whenever the host can't help (it rejects the words, doesn't know <c>voice.resolve</c>, or doesn't answer within
+    /// <see cref="VoiceSessionOptions.HostTimeout"/>), the words are handled exactly as without a host.
     /// Not thread-safe: call it from the Unity main thread, and call <see cref="Tick"/> every frame.
     /// </summary>
     public sealed class VoiceSession
@@ -78,6 +102,11 @@ namespace SpatialModeling.VoiceCore
         DateTime pendingSince;
         DateTime expiresAt;
 
+        List<string> hostGrammar = new List<string>();
+        bool hostResolves = true; // false once this connection's host answered unknown_type
+        Resolving resolving;      // words sent to the host and not answered yet
+        PendingChoice choice;     // the host's "which one?"
+
         public VoiceSession() : this(new VoiceSessionOptions(), () => DateTime.UtcNow) { }
 
         public VoiceSession(VoiceSessionOptions options, Func<DateTime> clock)
@@ -92,16 +121,48 @@ namespace SpatialModeling.VoiceCore
 
         public IReadOnlyList<SceneObject> Objects => objects;
 
+        /// <summary>The host's question waiting for "one", "two" or "three", or null. Show its candidates numbered, with
+        /// a Cancel button; <see cref="Choose"/> answers it from a button.</summary>
+        public PendingChoice Choice => choice;
+
+        /// <summary>Words were sent to the host and its answer hasn't come yet (show that it is thinking).</summary>
+        public bool WaitingForHost => resolving != null;
+
         /// <summary>
-        /// The recognizer grammar for the current objects. Pass it to <see cref="ISpeechRecognizer.SetGrammar"/>
-        /// at startup and after every <see cref="SetObjects"/>.
+        /// The recognizer grammar: VoiceCore's words, the current objects' names and the host's phrases
+        /// (<see cref="SetHostGrammar"/>). While <see cref="Choice"/> is pending it is only the answers ("one", "the
+        /// second one", "cancel", ...) and "[unk]", so other speech can't become an answer. Pass it to
+        /// <see cref="ISpeechRecognizer.SetGrammar"/> at startup, after every <see cref="SetObjects"/> and
+        /// <see cref="SetHostGrammar"/>, and after every turn with <see cref="VoiceTurn.GrammarChanged"/>.
         /// </summary>
         public IReadOnlyList<string> GrammarPhrases()
         {
+            if (choice != null)
+                return ChoiceWords.Grammar(choice.Candidates);
             var names = new List<string>();
             foreach (SceneObject obj in objects)
                 names.Add(obj.Name);
-            return Vocabulary.GrammarPhrases(names);
+            List<string> phrases = Vocabulary.GrammarPhrases(names);
+            if (hostGrammar.Count == 0)
+                return phrases;
+            var merged = new SortedSet<string>(phrases, StringComparer.Ordinal);
+            merged.Remove(Vocabulary.Unknown);
+            merged.UnionWith(hostGrammar);
+            return new List<string>(merged) { Vocabulary.Unknown };
+        }
+
+        /// <summary>The phrases of the host's <c>voice.grammar</c> (<see cref="VoiceGrammar.FromJson"/>), merged into
+        /// <see cref="GrammarPhrases"/>. Pass the grammar to the recognizer again afterwards.</summary>
+        public void SetHostGrammar(IEnumerable<string> phrases)
+        {
+            var normalized = new SortedSet<string>(StringComparer.Ordinal);
+            foreach (string phrase in phrases ?? new string[0])
+            {
+                List<string> words = Vocabulary.Words(phrase);
+                if (words.Count > 0 && !words.Contains(Vocabulary.Unknown))
+                    normalized.Add(string.Join(" ", words));
+            }
+            hostGrammar = new List<string>(normalized);
         }
 
         /// <summary>The objects the user can refer to: the ones the app shows (see <see cref="SceneObject"/>). Cancels
@@ -120,6 +181,11 @@ namespace SpatialModeling.VoiceCore
                     pending = null;
                     turn.Prompts.Add(Prompt.TargetDeleted);
                 }
+            }
+            if (choice?.Target != null && Find(choice.Target.Id) == null)
+            {
+                EndChoice(turn);
+                turn.Prompts.Add(Prompt.TargetDeleted);
             }
             return turn.Build();
         }
@@ -160,9 +226,11 @@ namespace SpatialModeling.VoiceCore
         public VoiceTurn DocumentChanged()
         {
             var turn = Begin();
-            if (pending != null)
+            if (pending != null || choice != null || resolving != null)
             {
                 pending = null;
+                resolving = null;
+                EndChoice(turn);
                 turn.Prompts.Add(Prompt.DocumentChanged);
             }
             objects = new List<SceneObject>();
@@ -171,28 +239,122 @@ namespace SpatialModeling.VoiceCore
             return turn.Build();
         }
 
-        /// <summary>The host connection closed (the app's Disconnected state): drops the pending command. The objects
-        /// stay until the fresh snapshot's <see cref="SetObjects"/>, or <see cref="DocumentChanged"/>.</summary>
+        /// <summary>The host connection closed (the app's Disconnected state): drops the pending command, the host's
+        /// question and its grammar. The objects stay until the fresh snapshot's <see cref="SetObjects"/>, or
+        /// <see cref="DocumentChanged"/>. The next host is asked again, even if this one didn't know <c>voice.resolve</c>.</summary>
         public VoiceTurn ConnectionLost()
         {
             var turn = Begin();
-            if (pending != null)
+            if (pending != null || choice != null || resolving != null)
             {
                 pending = null;
+                resolving = null;
+                EndChoice(turn);
                 turn.Prompts.Add(Prompt.ConnectionLost);
+            }
+            if (hostGrammar.Count > 0)
+            {
+                hostGrammar = new List<string>();
+                turn.GrammarChanged = true;
+            }
+            hostResolves = true;
+            return turn.Build();
+        }
+
+        /// <summary>The UI's Cancel button for the pending command or the host's question.</summary>
+        public VoiceTurn Cancel()
+        {
+            var turn = Begin();
+            if (pending != null || choice != null || resolving != null)
+            {
+                pending = null;
+                resolving = null;
+                EndChoice(turn);
+                turn.Prompts.Add(Prompt.Cancelled);
             }
             return turn.Build();
         }
 
-        /// <summary>The UI's Cancel button for the pending command.</summary>
-        public VoiceTurn Cancel()
+        /// <summary>Answers the host's question from a button: the candidate's <see cref="VoiceCandidate.Choice"/>.</summary>
+        public VoiceTurn Choose(int number)
         {
             var turn = Begin();
+            if (choice != null)
+                Pick(number, turn);
+            return turn.Build();
+        }
+
+        /// <summary>
+        /// The <see cref="VoiceTurn.Resolve"/> request went out with this message ID, or couldn't be sent (null): then
+        /// its words are handled as without a host.
+        /// </summary>
+        public VoiceTurn ResolveSent(VoiceResolve request, string messageId)
+        {
+            var turn = Begin();
+            if (resolving == null || resolving.Request != request)
+                return turn.Build(); // replaced by newer words meanwhile
+            if (messageId == null)
+                HearWithoutHost(turn);
+            else
+                resolving.MessageId = messageId;
+            return turn.Build();
+        }
+
+        /// <summary>
+        /// The host's <c>voice.candidates</c> (<see cref="VoiceCandidates.FromJson"/>), with the message's <c>re</c>.
+        /// <list type="bullet">
+        /// <item>run: the turn's <see cref="VoiceTurn.Command"/> runs the first candidate (<c>voice.run</c>, choice 1);</item>
+        /// <item>ask: the turn says <see cref="Prompt.AskChoice"/>; show <see cref="Choice"/> and switch the grammar;</item>
+        /// <item>reject: the words are handled as without a host.</item>
+        /// </list>
+        /// A run of words heard below <see cref="VoiceSessionOptions.MinConfidence"/> becomes a question. A pending command
+        /// is dropped for a run or a question. Answers to older words, or after <see cref="VoiceSessionOptions.HostTimeout"/>,
+        /// are ignored.
+        /// </summary>
+        public VoiceTurn HostAnswered(string re, VoiceCandidates answer)
+        {
+            var turn = Begin();
+            if (answer == null || !Answers(re) || TimedOutWaiting(turn))
+                return turn.Build();
+            Resolving asked = resolving;
+            var candidates = new List<VoiceCandidate>();
+            foreach (VoiceCandidate candidate in answer.Candidates)
+                if (candidate != null && candidate.Choice >= 1 && candidate.Choice <= 3 && candidates.Count < 3)
+                    candidates.Add(candidate);
+            if (answer.Decision == VoiceDecision.Reject || candidates.Count == 0)
+            {
+                HearWithoutHost(turn);
+                return turn.Build();
+            }
+            resolving = null;
             if (pending != null)
             {
-                pending = null;
-                turn.Prompts.Add(Prompt.Cancelled);
+                pending = null; // the host understood a new command
+                turn.Prompts.Add(Prompt.ReplacedPending);
             }
+            if (answer.Decision == VoiceDecision.Run && !asked.Request.LowConfidence)
+            {
+                RunCandidate(answer.Resolution, candidates[0], asked.Target, turn);
+                return turn.Build();
+            }
+            double seconds = Math.Min(answer.ExpiresIn > 0 ? answer.ExpiresIn : double.MaxValue, options.PendingTimeout.TotalSeconds);
+            choice = new PendingChoice(new VoiceCandidates(answer.Resolution, VoiceDecision.Ask, answer.Reason, seconds, candidates),
+                asked.Target, clock() + TimeSpan.FromSeconds(seconds));
+            turn.GrammarChanged = true;
+            turn.Prompts.Add(Prompt.AskChoice);
+            return turn.Build();
+        }
+
+        /// <summary>An <c>error</c> whose <c>re</c> is a <c>voice.resolve</c>: the words are handled as without a host. After
+        /// <c>unknown_type</c> (a host without voice) nothing more is sent to this connection's host.</summary>
+        public VoiceTurn HostError(string re, string code)
+        {
+            var turn = Begin();
+            if (!Answers(re) || TimedOutWaiting(turn))
+                return turn.Build();
+            if (code == "unknown_type")
+                hostResolves = false;
+            HearWithoutHost(turn);
             return turn.Build();
         }
 
@@ -203,24 +365,165 @@ namespace SpatialModeling.VoiceCore
         /// </summary>
         public void SetPromptPlaying(bool playing) => promptPlaying = playing;
 
-        /// <summary>Expires the pending command and lets a resting pointer answer "which object?".</summary>
+        /// <summary>Expires the pending command and the host's question, gives up waiting for the host after
+        /// <see cref="VoiceSessionOptions.HostTimeout"/>, and lets a resting pointer answer "which object?".</summary>
         public VoiceTurn Tick()
         {
             var turn = Begin();
+            TimedOutWaiting(turn);
             FillFromPointer(turn);
             return turn.Build();
         }
 
-        /// <summary>Handles one final recognized utterance.</summary>
+        /// <summary>Handles one final recognized utterance. Words still waiting for the host's answer are dropped.</summary>
         public VoiceTurn Hear(RecognitionResult result)
         {
             var turn = Begin();
             if (promptPlaying || string.IsNullOrWhiteSpace(result.Text))
                 return turn.Build();
+            if (choice != null)
+            {
+                HearChoice(result, turn);
+                return turn.Build();
+            }
+            resolving = null;
+            if (ForHost(result))
+                AskHost(result, turn);
+            else
+                HearHere(result, turn);
+            return turn.Build();
+        }
+
+        /// <summary>
+        /// Whether the words go to the host's resolver first (re-checked against the parser with #142's verb check):
+        /// <list type="bullet">
+        /// <item>no command verb ("shade smooth", "a monkey" with "add" lost);</item>
+        /// <item>words VoiceCore doesn't know after the verb ("add a monkey", "select all");</item>
+        /// <item>"apply" with more words ("apply the scale").</item>
+        /// </list>
+        /// Everything else stays on VoiceCore's own path: complete and partial core commands, undo, redo and cancel, two
+        /// different verbs (a mishearing, checked first), and only "[unk]". While a command waits for a field, answers
+        /// keep priority: only words without a verb that can't fill it go to the host, and none while it waits for its
+        /// object, where unknown words are an object's name as before.
+        /// </summary>
+        bool ForHost(RecognitionResult result)
+        {
+            if (!options.AskHost || !hostResolves)
+                return false;
+            ParsedUtterance parsed = CommandParser.Parse(result.Text, objects, pending?.Kind);
+            if (!parsed.HasWords || parsed.ConflictingVerbs)
+                return false;
+            bool needsTarget = pending != null && (pending.Missing & MissingFields.Target) != 0;
+            switch (parsed.Verb)
+            {
+                case null:
+                    return pending == null || (parsed.HasUnknownWords && !needsTarget);
+                case CommandKind.Undo:
+                case CommandKind.Redo:
+                case CommandKind.Cancel:
+                    return false;
+                case CommandKind.Apply:
+                    return parsed.MoreAfterVerb;
+                case CommandKind.Select when needsTarget:
+                    return false; // "select the banana" answers "which object?" as before
+                default:
+                    return parsed.HasUnknownWords;
+            }
+        }
+
+        /// <summary>Sends the words to the host, with the object they name or the context's (selection, pointer, only
+        /// object). Below <see cref="VoiceSessionOptions.MinConfidence"/> they still go, so that the host can ask:
+        /// Vosk gives "two" about 0.5 because "to" sounds the same.</summary>
+        void AskHost(RecognitionResult result, Turn turn)
+        {
+            SceneObject target = CommandParser.NamedObject(result.Text, objects) ?? FromContext(CommandKind.Move);
+            var request = new VoiceResolve(result.Text, result.Confidence, target, result.Confidence < options.MinConfidence);
+            resolving = new Resolving(request, result, target, clock());
+            turn.Resolve = request;
+        }
+
+        bool Answers(string re) => resolving?.MessageId != null && re == resolving.MessageId;
+
+        /// <summary>After the host timeout, handles the waiting words as without a host. True if it did.</summary>
+        bool TimedOutWaiting(Turn turn)
+        {
+            if (resolving == null || clock() - resolving.SentAt < options.HostTimeout)
+                return false;
+            HearWithoutHost(turn);
+            return true;
+        }
+
+        void HearWithoutHost(Turn turn)
+        {
+            RecognitionResult result = resolving.Result;
+            resolving = null;
+            HearHere(result, turn);
+        }
+
+        /// <summary>The answer to the host's question: only an exact answer phrase without "[unk]" counts, at the usual
+        /// confidence; anything else asks again.</summary>
+        void HearChoice(RecognitionResult result, Turn turn)
+        {
             if (result.Confidence < options.MinConfidence)
             {
                 turn.Prompts.Add(Prompt.LowConfidence);
-                return turn.Build();
+                return;
+            }
+            int? said = ChoiceWords.Read(result.Text, choice.Candidates);
+            if (said == 0)
+            {
+                EndChoice(turn);
+                turn.Prompts.Add(Prompt.Cancelled);
+            }
+            else if (said.HasValue)
+                Pick(said.Value, turn);
+            else
+                turn.Prompts.Add(Prompt.AskChoice);
+        }
+
+        void Pick(int number, Turn turn)
+        {
+            VoiceCandidate picked = null;
+            foreach (VoiceCandidate candidate in choice.Candidates)
+                if (candidate.Choice == number)
+                    picked = candidate;
+            if (picked == null)
+            {
+                turn.Prompts.Add(Prompt.AskChoice);
+                return;
+            }
+            PendingChoice asked = choice;
+            EndChoice(turn);
+            RunCandidate(asked.Resolution, picked, asked.Target, turn);
+        }
+
+        /// <summary>The <c>voice.run</c> command for one of the host's candidates.</summary>
+        void RunCandidate(string resolution, VoiceCandidate candidate, SceneObject target, Turn turn)
+        {
+            if (candidate.NeedsTarget && target != null && Find(target.Id) == null)
+            {
+                turn.Prompts.Add(Prompt.TargetDeleted);
+                return;
+            }
+            // Without a target the host answers with its own reason, which the app shows.
+            turn.Command = new VoiceCommand(resolution, candidate, candidate.NeedsTarget ? target : null);
+        }
+
+        void EndChoice(Turn turn)
+        {
+            if (choice == null)
+                return;
+            choice = null;
+            turn.GrammarChanged = true;
+        }
+
+        /// <summary>VoiceCore's own handling of an utterance, as without a host.</summary>
+        void HearHere(RecognitionResult result, Turn turn)
+        {
+            if (result.Confidence < options.MinConfidence)
+            {
+                turn.Prompts.Add(Prompt.LowConfidence);
+                return;
             }
 
             ParsedUtterance parsed = CommandParser.Parse(result.Text, objects, pending?.Kind);
@@ -228,7 +531,7 @@ namespace SpatialModeling.VoiceCore
             {
                 // Two commands in one transcript is a mishearing (or two requests at once): treated as low confidence.
                 turn.Prompts.Add(Prompt.LowConfidence);
-                return turn.Build();
+                return;
             }
             if (parsed.Verb == CommandKind.Cancel)
             {
@@ -239,7 +542,7 @@ namespace SpatialModeling.VoiceCore
                     pending = null;
                     turn.Prompts.Add(Prompt.Cancelled);
                 }
-                return turn.Build();
+                return;
             }
 
             if (pending != null)
@@ -248,7 +551,7 @@ namespace SpatialModeling.VoiceCore
                 if (parsed.Verb == null || answersTarget || parsed.Verb == CommandKind.Apply)
                 {
                     Fill(parsed, turn);
-                    return turn.Build();
+                    return;
                 }
                 // A new command never completes the old one.
                 pending = null;
@@ -259,7 +562,6 @@ namespace SpatialModeling.VoiceCore
                 turn.Prompts.Add(Prompt.Unsupported);
             else
                 Start(parsed, turn);
-            return turn.Build();
         }
 
         void Start(ParsedUtterance parsed, Turn turn)
@@ -416,13 +718,18 @@ namespace SpatialModeling.VoiceCore
             return null;
         }
 
-        /// <summary>Starts handling an input; an expired pending command is dropped first.</summary>
+        /// <summary>Starts handling an input; an expired pending command or host question is dropped first.</summary>
         Turn Begin()
         {
             var turn = new Turn();
             if (pending != null && clock() >= expiresAt)
             {
                 pending = null;
+                turn.Prompts.Add(Prompt.TimedOut);
+            }
+            if (choice != null && clock() >= choice.ExpiresAt)
+            {
+                EndChoice(turn);
                 turn.Prompts.Add(Prompt.TimedOut);
             }
             return turn;
@@ -432,7 +739,27 @@ namespace SpatialModeling.VoiceCore
         {
             public VoiceCommand Command;
             public readonly List<Prompt> Prompts = new List<Prompt>();
-            public VoiceTurn Build() => new VoiceTurn(Command, Prompts);
+            public VoiceResolve Resolve;
+            public bool GrammarChanged;
+            public VoiceTurn Build() => new VoiceTurn(Command, Prompts, Resolve, GrammarChanged);
+        }
+
+        /// <summary>Words sent to the host, kept to be handled as without a host if it can't help.</summary>
+        sealed class Resolving
+        {
+            public Resolving(VoiceResolve request, RecognitionResult result, SceneObject target, DateTime sentAt)
+            {
+                Request = request;
+                Result = result;
+                Target = target;
+                SentAt = sentAt;
+            }
+
+            public readonly VoiceResolve Request;
+            public readonly RecognitionResult Result;
+            public readonly SceneObject Target;
+            public readonly DateTime SentAt;
+            public string MessageId;
         }
 
         /// <summary>A command being assembled, with the number and unit as spoken.</summary>

@@ -7,13 +7,16 @@ namespace SpatialModeling.VoiceCore
     /// A complete voice command as the contract's <c>command</c> fields <c>op</c>, <c>target</c> and <c>args</c>
     /// (contracts/README.md, Commands), in meters and radians on Blender's axes. The sender adds the request fields
     /// from <c>welcome</c>, <c>base_revision</c>, <c>source</c> <see cref="Source"/> and the target's current
-    /// <c>generation</c>. Plain data: <see cref="Args"/> holds strings, doubles, double arrays and nested
-    /// dictionaries, so <c>JObject.FromObject(Args)</c> turns it into JSON.
+    /// <c>generation</c>. Plain data: <see cref="Args"/> holds strings, doubles, ints (voice.run's <c>choice</c>), double
+    /// arrays and nested dictionaries, so <c>JObject.FromObject(Args)</c> turns it into JSON.
     /// </summary>
     public sealed class HostCommand
     {
         /// <summary>The command's <c>source</c>.</summary>
         public const string Source = "voice";
+
+        /// <summary>The op that runs one of the host's own <c>voice.candidates</c>: args <c>resolution</c> and <c>choice</c>.</summary>
+        public const string RunOp = "voice.run";
 
         /// <summary>Box size of a voice "add", in meters, when the app doesn't pass one.</summary>
         public const double DefaultAddSize = 0.05;
@@ -32,7 +35,8 @@ namespace SpatialModeling.VoiceCore
         /// <summary>For example <c>object.rotate</c>.</summary>
         public string Op { get; }
 
-        /// <summary>The target object's ID, or null for an op without a target (object.add, history.undo, history.redo).</summary>
+        /// <summary>The target object's ID, or null for an op without a target (object.add, history.undo, history.redo, and
+        /// voice.run when its candidate needs none).</summary>
         public string TargetId { get; }
 
         /// <summary>The op's <c>args</c>; empty for object.delete, history.undo and history.redo.</summary>
@@ -67,6 +71,11 @@ namespace SpatialModeling.VoiceCore
                     args["dimensions"] = Vector(addDimensions ?? new[] { DefaultAddSize, DefaultAddSize, DefaultAddSize },
                         MinLength, MaxLength, nameof(addDimensions));
                     return new HostCommand("object.add", null, args);
+                case CommandKind.Run:
+                    // The host runs only a candidate it created for this resolution; the command never names an operator.
+                    args["resolution"] = command.Resolution ?? throw Incomplete(command);
+                    args["choice"] = command.Choice;
+                    return new HostCommand(RunOp, command.TargetId, args);
             }
 
             string target = command.TargetId ?? throw Incomplete(command);
