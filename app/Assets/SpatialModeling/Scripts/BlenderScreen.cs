@@ -355,11 +355,15 @@ namespace SpatialModeling
                 if (image == null) { yield return null; continue; }
                 // Keep checking when hidden: reopening never shows a queued/stale frame.
                 // Native DownloadHandlerTexture decodes off the render thread.
-                var request = UnityWebRequestTexture.GetTexture("http://127.0.0.1:8766/frame", true);
+                var request = UnityWebRequestTexture.GetTexture(P1PipelineProfile.CaptureUrl(), true);
                 requests[lane] = request;
                 request.timeout = 2;
                 if (etag != null) request.SetRequestHeader("If-None-Match", etag);
+                long requestAt = P1PipelineProfile.Now();
                 yield return request.SendWebRequest();
+                P1PipelineProfile.End("request_with_worker_decode_ms", requestAt);
+                P1PipelineProfile.Add("http_status/" + request.responseCode, 1);
+                P1PipelineProfile.Add("downloaded_bytes", request.downloadedBytes);
                 if (request.responseCode == 200 && request.result == UnityWebRequest.Result.Success)
                 {
                     if (!long.TryParse(request.GetResponseHeader("X-Captured-At"), out var captured)
@@ -369,7 +373,9 @@ namespace SpatialModeling
                         Unavailable("Capture returned an invalid or old frame");
                     else
                     {
+                        long contentAt = P1PipelineProfile.Now();
                         var decoded = DownloadHandlerTexture.GetContent(request);
+                        P1PipelineProfile.End("get_decoded_texture_ms", contentAt);
                         if (decoded == null) Unavailable("Cannot decode Blender image");
                         else if (captured <= lastCaptured && HasImage)
                         {
@@ -380,6 +386,7 @@ namespace SpatialModeling
                         }
                         else
                         {
+                            long assignmentAt = P1PipelineProfile.Now();
                             if (texture != null) Destroy(texture);
                             texture = decoded;
                             texture.filterMode = FilterMode.Trilinear;
@@ -388,6 +395,7 @@ namespace SpatialModeling
                             image.enabled = true;
                             var scale = Mathf.Min(ScreenWidth / texture.width, ScreenHeight / texture.height);
                             image.rectTransform.sizeDelta = new Vector2(texture.width * scale, texture.height * scale);
+                            P1PipelineProfile.End("destroy_filter_assign_texture_ms", assignmentAt);
                             lastCaptured = captured;
                             lastConfirmed = alive;
                             etag = request.GetResponseHeader("ETag");
@@ -431,7 +439,9 @@ namespace SpatialModeling
                 if (CaptureState != lastState && !CaptureState.StartsWith("Live Blender")) Debug.Log("P1_CAPTURE_STATE " + CaptureState);
                 lastState = CaptureState;
                 bool retryBackoff = request.responseCode != 200 && request.responseCode != 304;
+                long disposeAt = P1PipelineProfile.Now();
                 request.Dispose();
+                P1PipelineProfile.End("request_dispose_ms", disposeAt);
                 requests[lane] = null;
                 // The request itself yields. No extra 100ms sleep or second-frame
                 // delay: a fresh image can be presented on every render frame.
