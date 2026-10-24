@@ -216,18 +216,56 @@ def main(args, report):
                   space.local_view is not None and right.local_view_get(space) and not left.local_view_get(space), snapshot("local"))
             if invoke("Leave local view", bpy.ops.view3d.localview, frame_selected=False):
                 check("Local view returns to complete scene", space.local_view is None, snapshot("global"))
-        for label, property_name in (("Toolbar", "show_region_toolbar"), ("Sidebar", "show_region_ui")):
-            initial = getattr(space, property_name)
-            # Installed wm.py intentionally returns CANCELLED for non-Undo
-            # Screen properties after changing them. Verify the native effect.
-            if invoke(label + " toggle", bpy.ops.wm.context_toggle, expected_result={"CANCELLED"},
-                      optional=True, data_path="space_data." + property_name):
-                check(label + " native keymap route flips its own property", getattr(space, property_name) is not initial,
-                      {"initial": initial, "expected": not initial, "actual": getattr(space, property_name)}, optional=True)
-                if invoke(label + " restore", bpy.ops.wm.context_toggle, expected_result={"CANCELLED"},
-                          optional=True, data_path="space_data." + property_name):
-                    check(label + " native keymap route restores its own property", getattr(space, property_name) is initial,
-                          {"expected": initial, "actual": getattr(space, property_name)}, optional=True)
+        # Overlapping panels animate by default. Blender temporarily keeps a
+        # hiding region visible until its event-loop timer finishes; background
+        # mode does not run that displayed UI loop. Use Blender's supported
+        # accessibility preference ONLY inside this private test process so the
+        # very same native T/N operators complete synchronously. Never save it
+        # or change the product/helper/user's interactive Blender preferences.
+        # Blender 5.2.2 rna_space.cc chooses the synchronous update when
+        # USER_REDUCE_MOTION is set; installed wm.py returns CANCELLED for
+        # non-Undo Screen properties even after a successful native change.
+        prefs = bpy.context.preferences.view
+        panels = (("Toolbar", "show_region_toolbar"), ("Sidebar", "show_region_ui"))
+        original_motion = prefs.use_reduce_motion
+        original_panels = {name: getattr(space, name) for _, name in panels}
+        report["panel_fixture"] = {"original_reduce_motion": original_motion,
+                                   "private_reduce_motion": True, "original_panels": original_panels,
+                                   "transitions": [], "preference_saved": False}
+        try:
+            prefs.use_reduce_motion = True
+            check("Private headless fixture disables only panel animation", prefs.use_reduce_motion)
+            check("Panel operators use the actual selected native editor space",
+                  bpy.context.space_data.as_pointer() == space.as_pointer())
+            for label, property_name in panels:
+                other = next(name for _, name in panels if name != property_name)
+                for initial in (False, True):
+                    setattr(space, property_name, initial)
+                    check(f"{label} starts {'shown' if initial else 'hidden'}",
+                          getattr(space, property_name) is initial)
+                    for expected in (not initial, initial):
+                        other_before = getattr(space, other)
+                        if invoke(f"{label} toggle from {not expected}", bpy.ops.wm.context_toggle,
+                                  expected_result={"CANCELLED"}, data_path="space_data." + property_name):
+                            actual = getattr(space, property_name)
+                            report["panel_fixture"]["transitions"].append(
+                                {"panel": label, "before": not expected, "expected": expected, "actual": actual})
+                            check(f"{label} native keymap route reaches {expected}", actual is expected,
+                                  {"expected": expected, "actual": actual})
+                            check(f"{label} leaves the other panel unchanged", getattr(space, other) is other_before)
+            check("Both panel routes completed every shown/hidden round trip",
+                  len(report["panel_fixture"]["transitions"]) == 8)
+        finally:
+            # Restore panel state while synchronous updates are still enabled,
+            # then restore the preference even if a native assertion failed.
+            try:
+                for property_name, value in original_panels.items():
+                    setattr(space, property_name, value)
+                    check(property_name + " restored after private panel test", getattr(space, property_name) is value)
+            finally:
+                prefs.use_reduce_motion = original_motion
+                report["panel_fixture"]["restored_reduce_motion"] = prefs.use_reduce_motion
+                check("Original reduce-motion preference restored", prefs.use_reduce_motion is original_motion)
         snapshot("final")
 
 

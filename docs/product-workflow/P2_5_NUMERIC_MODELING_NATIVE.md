@@ -6,6 +6,56 @@ real typed Commands/Leases/Editor transactions with native receipts, and real
 result JSON labels every assertion with its method. Neither method proves shortcut
 delivery, mouse/hover behavior, capture, Windows focus or headset interaction.
 
+## Toolbar/sidebar follow-up: headless native route passes
+
+The later user-requested panel investigation resolves the two synchronous
+background failures recorded below. No P2.5 button mapping or native product
+operation needed changing. A private controlled probe,
+`evidence/p25-panel-motion-probe`, reproduced the immediate-read failure with
+default animation and successful hide/show with Blender's Reduce Motion enabled.
+The installed version is 5.2.2 LTS, build `d13f752e3b9c`. Its matching versioned
+[RNA region update](https://github.com/blender/blender/blob/v5.2.2/source/blender/makesrna/intern/rna_space.cc#L828)
+uses synchronous region updates when Reduce Motion is enabled. Otherwise the
+overlapping-panel hide animation finishes through the displayed UI timer, which
+the background test does not drive. The installed `wm.py` context toggle returns
+CANCELLED for this non-Undo Screen property even after a successful native change.
+
+The corrected fixture enables that preference only in the disposable background
+process, invokes the same `wm.context_toggle` routes bound to T/N, and restores
+original panel visibility and the preference in nested `finally` blocks. It does
+not save preferences or change any product, helper or personal Blender setting.
+Each panel starts both hidden and shown, toggles away and back, and checks that
+the other panel stays unchanged. Exact native state, correct editor space,
+eight completed transitions and all cleanup checks are mandatory assertions,
+not optional observations.
+
+Final evidence `evidence/p25-native-preview-panels-verified/` contains **60 required
+assertions passed**: the original 26 installed-keymap/viewport checks and 34 panel
+and fixture checks. All 31 shortcut bindings match, all eight panel transitions
+reach their expected state, pending/optional failures are empty, and both native
+process and runner exit zero. Private resource/TEMP paths and unchanged source
+and bytecode fingerprints are verified. No key events were injected; actual
+preview key delivery, visible animation/capture and VR remain separate gates.
+
+Preserved attempts:
+
+- `p25-native-preview-panels-synchronous`: native 60/60, runner exit 1 because
+  concurrent pytest wrote a cache file in the monitored test directory. This
+  establishes no overall isolation pass.
+- `p25-native-preview-panels-final`: sequential 60/60 and isolation pass.
+- `p25-native-preview-panels-verified`: final reporting/source version, 60/60 and
+  isolation pass. The runner now distinguishes native success from overall
+  failure: process/source/bytecode failure forces `outcome=failed, passed=false`.
+  Nine pure outcome tests (within 32 P2.5 tests) and repository Ruff pass. The
+  initial Ruff import-order failure and corrected log remain preserved.
+
+The original animation-assumption failures and earlier reporting history below
+remain unchanged. They are superseded for native headless panel semantics, not
+converted into actual GUI/key/headset acceptance. Unity/app/backend sources are
+unchanged, preserving the v11 candidate and its prior control/HTTP/build evidence.
+
+## Exact modeling and common native operations
+
 Final source-consistent background results on October 24, 2026:
 
 | Scene units | Create | Fresh-process reopen | Actual typed receipts | External evidence directory |
@@ -104,7 +154,9 @@ state changes. They do not establish injected-key delivery, mouse targeting,
 hover, Windows focus, visible capture updates or headset behavior. Camera view
 and the shading menu were checked for their default bindings only.
 
-Toolbar/sidebar results are **pending interactive verification**. Their actual
+At that initial checkpoint, toolbar/sidebar results were **pending interactive
+verification**; the later headless fixture correction above resolves their
+native operation semantics. Their actual
 native `wm.context_toggle` routes were invoked in the private editor, with
 property checks after each toggle. Blender's installed `bl_operators/wm.py`
 intentionally returns CANCELLED after modifying non-Undo Screen properties;

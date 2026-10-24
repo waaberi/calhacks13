@@ -6,6 +6,53 @@ P2 headset test is requested or repeated by this verification workflow. FPS is
 not an acceptance criterion. A compiler or simulated input pass cannot establish
 that a native Blender button or spatial drawing gesture works in the headset.
 
+## Toolbar and sidebar headless repair
+
+The user requested a focused headless investigation of the two unresolved panel
+assertions. The native panel routes now pass: **60 required assertions, 31/31
+installed shortcut bindings, eight real toolbar/sidebar transitions, no optional
+failures or pending observations, native and runner exit 0**. Evidence is
+`p25-native-preview-panels-verified/navigation-result.json` and `manifest.json`.
+
+The defect was in the test fixture's synchronous assumption. Blender animates
+overlapping regions; a hiding panel remains visible until the UI timer completes.
+The background process does not drive the displayed event loop. A controlled
+private probe reproduced unchanged immediate state with default animation and
+correct native hide/show changes with Reduce Motion enabled. Blender's versioned
+[RNA region update](https://github.com/blender/blender/blob/v5.2.2/source/blender/makesrna/intern/rna_space.cc#L828)
+selects the synchronous path for that supported preference. The fixture sets it
+only in its private process and restores both panel states and the original
+preference in `finally`; no user preferences are saved or changed. The actual
+`wm.context_toggle` route and T/N mappings remain unchanged. Its CANCELLED return
+for non-Undo Screen properties is expected; assertions verify the resulting
+native state independently.
+
+Both panels are tested starting hidden and shown, toggling away and back in each
+case. Every step checks the exact expected visibility and that the other panel
+does not change. Original panel state, selected native editor context and restored
+Reduce Motion are required gates. All 34 new panel/fixture assertions and the
+existing 26 keymap/navigation assertions pass. The original failed panel evidence
+remains preserved below as history, superseded only for this background native
+operation check. Actual injected keys, visible animation, capture and headset
+interaction still require the separate coordinated runtime trial.
+
+The first corrected native run passed its 60 native assertions but its runner
+rightly exited 1: a concurrent pytest process wrote bytecode in the fingerprinted
+test directory. That run is preserved as `p25-native-preview-panels-synchronous`;
+the sequential retry `p25-native-preview-panels-final` passed all isolation gates.
+The runner previously recorded native `passed=true` in that failed aggregate
+manifest. It now records separate native/overall outcomes and cannot report an
+overall pass after process/source/bytecode failure. Nine pure outcome tests,
+including those false-green cases, pass within **32 P2.5 Python tests**
+(`p25-panel-repair-pytest.log`). Ruff passes (`p25-panel-repair-ruff-verified.log`);
+the initial import-order failure was corrected and its log preserved. The final
+fresh native run above verifies the published script versions with source and
+bytecode unchanged and private resources/TEMP. No new backend or Unity runtime
+source changed. The v11 app tree and compiled source remain exactly as recorded
+below; its existing callback/cumulative/HTTP evidence remains applicable. No
+replacement build, Player, Blender GUI, capture/helper/P2 runtime control, headset,
+FPS work or main merge was needed.
+
 ## Common modeling and preview expansion
 
 Frozen source `c76b247f50f6891e9088bee0a5d0573e70cf6dd7` adds eight exact numeric
@@ -23,7 +70,7 @@ placement, capture or XR source change was needed.
 | Held-input release and native session-end ordering | 2 cases passed | `p25-common-controls-release-http-result.json` |
 | Existing actual Unity HTTP regressions | 9 cases passed | `p25-common-controls-http9-result.json` |
 | Actual typed exact-transform/custom-dimension native handlers and common modeling operators | 194 assertions / 70 typed receipts passed in four private background processes | `p25-native-modeling-unit1-context`, `p25-native-modeling-unit001-context` |
-| Installed Blender default keymap and native viewport state | 31/31 chords matched; 25 viewport assertions passed | `p25-native-preview-navigation-context`; two panel assertions remain pending as described below |
+| Installed Blender default keymap and native viewport state | 31/31 chords matched; 25 viewport assertions passed | `p25-native-preview-navigation-context`; historical panel failures are resolved by the fixture repair above |
 | Full Python suite plus new outcome tests | 873 passed / 36 skipped; 4 new reporting tests passed separately | `p25-common-modeling-pytest.log`, `p25-common-modeling-outcome-tests.log` |
 | Capture/input/launcher/bootstrap unittest suite | 77 passed | `p25-common-modeling-helper-final.log` |
 | Repository-wide Ruff | Passed | `p25-common-modeling-ruff.log` |
@@ -44,7 +91,8 @@ the initial ANY-modifier keymap inspection error, and both unresolved panel
 observations. Toolbar hide and sidebar restore each expected false but observed
 true synchronously in background Blender. The second navigation gate remains
 archived as failed (32/34 assertions), even though all required keymap/navigation
-assertions passed. Revised reporting distinguishes required failure, optional
+assertions passed. The subsequent fixture repair above establishes the native
+panel behavior headlessly without removing these failed records. Revised reporting distinguishes required failure, optional
 pending (exit 2, `passed=false`) and full pass; its four pure tests pass, but that
 reporting revision was not rerun in Blender. Actual panel UI verification remains
 pending; this is not evidence of successful panel toggling or a helper defect.

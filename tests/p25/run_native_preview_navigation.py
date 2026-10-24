@@ -24,6 +24,13 @@ def classify_result(result):
     return "pending" if result.get("pending") else "passed"
 
 
+def classify_run(result, *, process_exit, sources_unchanged, bytecode_unchanged):
+    """An otherwise passing native result cannot override runner isolation gates."""
+    if process_exit or not sources_unchanged or not bytecode_unchanged:
+        return "failed"
+    return classify_result(result)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--blender", type=Path, required=True)
@@ -56,20 +63,24 @@ def main():
     after = {name: fingerprint(path) for name, path in paths.items()}
     after["catalog"] = {str(catalog): hashlib.sha256(catalog.read_bytes()).hexdigest()}
     bytecode_after = {name: bytecode_fingerprint(path) for name, path in paths.items()}
+    outcome = classify_run(result, process_exit=done.returncode, sources_unchanged=before == after,
+                           bytecode_unchanged=bytecode_before == bytecode_after)
     manifest = {"method": "one factory-startup Blender background process; no GUI/input/socket/VR",
                 "git_source": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
                 "inputs_before": before, "input_sources_unchanged": before == after,
                 "source_bytecode_unchanged": bytecode_before == bytecode_after,
-                "exit": done.returncode, "passed": result.get("passed", False), "outcome": classify_result(result),
+                "exit": done.returncode, "passed": outcome == "passed", "outcome": outcome,
+                "native_outcome": classify_result(result),
                 "required_passed": result.get("required_passed", False), "isolation": result.get("isolation"),
                 "checks": len(result.get("checks", [])), "shortcuts": len(result.get("shortcuts", [])),
                 "optional_checks": len(result.get("optional_checks", [])),
                 "matched_shortcuts": sum(entry["matched"] for entry in result.get("shortcuts", [])),
+                "panel_fixture": result.get("panel_fixture"),
                 "pending": result.get("pending", [])}
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     print(f"P25_NATIVE_NAVIGATION exit={done.returncode} required_checks={manifest['checks']} "
           f"matched={manifest['matched_shortcuts']}/{manifest['shortcuts']} outcome={manifest['outcome']}", flush=True)
-    if done.returncode or before != after or bytecode_before != bytecode_after or manifest["outcome"] == "failed":
+    if manifest["outcome"] == "failed":
         print(result.get("error") or {"failed_required_checks": [entry for entry in result.get("checks", [])
                                                                 if not entry["passed"]],
                                       "input_sources_unchanged": before == after,
