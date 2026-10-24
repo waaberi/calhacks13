@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
@@ -8,6 +9,16 @@ namespace SpatialModeling
     // Viewer-only wire bounds and owner labels. Never changes native or display mesh materials.
     public sealed class NativeOwnershipOverlay : MonoBehaviour
     {
+        public readonly struct DisplayTarget
+        {
+            public readonly string Id;
+            public readonly Bounds WorldBounds;
+            public DisplayTarget(string id, Bounds bounds) { Id = id; WorldBounds = bounds; }
+        }
+        // Additional rendered data can participate without becoming generic editable objects.
+        public Func<IEnumerable<DisplayTarget>> AdditionalTargets;
+        public bool HasVisibleTarget(string id) => overlays.TryGetValue(id, out var o)
+            && o.go.activeInHierarchy && o.line.isActiveAndEnabled && o.label.isActiveAndEnabled;
         sealed class Overlay
         {
             public GameObject go;
@@ -76,6 +87,24 @@ namespace SpatialModeling
                 if (Camera.main != null) o.labelRoot.rotation = Quaternion.LookRotation(o.labelRoot.position - Camera.main.transform.position, Vector3.up);
                 o.label.text = owner + " is editing";
             }
+            if (menu.Session.Ready && menu.Session.SceneCurrent && AdditionalTargets != null)
+                foreach (var target in AdditionalTargets())
+                {
+                    string owner = menu.Session.ConflictOwner(target.Id);
+                    if (owner == null) continue;
+                    wanted.Add(target.Id);
+                    if (!overlays.TryGetValue(target.Id, out var o)) overlays[target.Id] = o = Create();
+                    var bounds = target.WorldBounds;
+                    var extents = bounds.extents + Vector3.one * 0.003f;
+                    var points = new Vector3[8];
+                    for (int i = 0; i < 8; i++) points[i] = bounds.center + Vector3.Scale(extents,
+                        new Vector3((i & 1) == 0 ? -1 : 1, (i & 2) == 0 ? -1 : 1, (i & 4) == 0 ? -1 : 1));
+                    var walk = new Vector3[Edges.Length]; for (int i = 0; i < Edges.Length; i++) walk[i] = points[Edges[i]];
+                    o.line.positionCount = walk.Length; o.line.SetPositions(walk);
+                    o.labelRoot.position = bounds.center + Vector3.up * (extents.y + 0.03f);
+                    if (Camera.main != null) o.labelRoot.rotation = Quaternion.LookRotation(o.labelRoot.position - Camera.main.transform.position, Vector3.up);
+                    o.label.text = owner + " is editing";
+                }
             var remove = new List<string>(); foreach (var id in overlays.Keys) if (!wanted.Contains(id)) remove.Add(id);
             foreach (var id in remove) { overlays[id].go.SetActive(false); Destroy(overlays[id].go); overlays.Remove(id); }
         }

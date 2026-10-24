@@ -12,6 +12,7 @@ namespace SpatialModeling
         WorkspaceNativeMenu menu;
         HostScene scene;
         Material material;
+        NativeOwnershipOverlay ownership;
         readonly Dictionary<string, GameObject> geometry = new Dictionary<string, GameObject>();
         readonly Dictionary<string, JObject> validSketches = new Dictionary<string, JObject>();
         int entityA, entityB = 1, dimension;
@@ -28,6 +29,20 @@ namespace SpatialModeling
             material.color = new Color(0.2f, 0.95f, 0.9f);
             menu.BuildSketchPage = _ => Home();
             menu.Session.Changed += Changed;
+            ownership = GetComponent<NativeOwnershipOverlay>();
+            if (ownership != null) ownership.AdditionalTargets = OwnershipTargets;
+        }
+        IEnumerable<NativeOwnershipOverlay.DisplayTarget> OwnershipTargets()
+        {
+            foreach (var pair in geometry)
+            {
+                if (pair.Value == null || !pair.Value.activeInHierarchy) continue;
+                bool found = false; Bounds bounds = default;
+                foreach (var line in pair.Value.GetComponentsInChildren<LineRenderer>())
+                    if (line.isActiveAndEnabled && line.positionCount > 1)
+                    { if (!found) { bounds = line.bounds; found = true; } else bounds.Encapsulate(line.bounds); }
+                if (found) yield return new NativeOwnershipOverlay.DisplayTarget(pair.Key, bounds);
+            }
         }
         void Changed()
         {
@@ -216,6 +231,7 @@ namespace SpatialModeling
         }
         void OnDisable()
         {
+            if (ownership != null) ownership.AdditionalTargets = null;
             if (menu != null) { menu.Session.Changed -= Changed; menu.BuildSketchPage = null; }
             foreach (var go in geometry.Values) if (go != null) Destroy(go); geometry.Clear();
             if (material != null) Destroy(material);
