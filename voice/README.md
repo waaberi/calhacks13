@@ -44,8 +44,8 @@ its `Command` if there is one.
 - **State:** on Wrong document call `DocumentChanged()`, on Disconnected `ConnectionLost()`, and on your Cancel button `Cancel()`.
   Show `session.Pending`: `Command` (its `ToString()` and `TargetName`), the `Missing` fields and `ExpiresAt`.
 - **Prompts:** show `prompt.Text` and play `Resources.Load<AudioClip>(prompt.ClipResource)`. While a clip plays, set
-  `session.SetPromptPlaying(true)` and `input.Paused = true`. Clear both about 0.3 s after it ends, because Air Link
-  plays audio late. Put details such as an owner's name or the host's message next to the text; the clip stays the same.
+  `input.Paused = true`, and clear it about 0.3 s after the clip ends, because Air Link plays audio late. No result then
+  contains a prompt. (`session.SetPromptPlaying` is only for a recognizer that listens by itself, such as Windows speech.) Put details such as an owner's name or the host's message next to the text; the clip stays the same.
 - **Sending:** `HostCommand.From(command)` gives `Op`, `TargetId` and `Args`. It returns null for Select (select it in the
   UI), Apply and Cancel (your draft's buttons). Ask for the controller confirmation before a Delete
   (`RequiresConfirmation`, prompt `ConfirmDelete`). For "add", pass the location where the pointer meets the table, in
@@ -99,7 +99,7 @@ void OnDestroy() { Microphone.End(null); input.Dispose(); }
 void Handle(VoiceTurn turn)
 {
     foreach (Prompt prompt in turn.Prompts)
-        QueuePrompt(prompt.Text, Resources.Load<AudioClip>(prompt.ClipResource));   // SetPromptPlaying + Paused around it
+        QueuePrompt(prompt.Text, Resources.Load<AudioClip>(prompt.ClipResource));   // input.Paused while it plays
     if (turn.Command == null)
         return;
     HostCommand command = HostCommand.From(turn.Command, addLocation: PointerOnTableInBlender());
@@ -171,6 +171,8 @@ Through `VoiceInput`, `PcmConverter` (48 kHz → 16 kHz) and libvosk 0.3.38 with
 
 The misses are mostly dropped filler words ("scale by one point five" still scales) or mangled robotic espeak verbs,
 which give no command. A synthetic one-word "z" is too short for Vosk; "the z axis" works. The plan's whole dialogue runs
-from speech for both flite voices, and for Piper with "the z axis" (`tests/voice/VoskTests.cs`). The same assemblies, compiled by Unity's Roslyn, also run the dialogue under Unity's own
-Mono 6.13 on Linux, and a prompt played into a paused `VoiceInput` is never recognized. TTS is cleaner than a headset
-microphone, so treat this as an upper bound until the Windows recordings.
+from speech for both flite voices, and for Piper with "the z axis" (`tests/voice/VoskTests.cs`). It also runs in the Unity
+6000.6.7f1 editor on Linux and in a Linux Mono player build (model from StreamingAssets, clips from Resources, only
+`libvosk.so` in the build's `Plugins/`), and the ask_axis clip fed into a paused `VoiceInput` is never recognized
+(unpaused, Vosk hears "axis x y on z"). TTS is cleaner than a headset microphone, so treat this as an upper bound until
+the Windows recordings.

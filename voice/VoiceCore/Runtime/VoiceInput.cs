@@ -46,9 +46,9 @@ namespace SpatialModeling.VoiceCore
         public string Error => error;
 
         /// <summary>
-        /// True while a prompt plays (set it together with <see cref="VoiceSession.SetPromptPlaying"/>): audio is dropped
-        /// and the utterance in progress is thrown away, so no result can contain the prompt. Speech after the prompt
-        /// still counts if push-to-talk stays down.
+        /// True while a prompt plays: audio is dropped and the utterance in progress is thrown away, so no result can
+        /// contain the prompt. Results of speech that ended before it still arrive, and speech after it counts if
+        /// push-to-talk stays down. (<see cref="VoiceSession.SetPromptPlaying"/> is for recognizers that listen by themselves.)
         /// </summary>
         public bool Paused
         {

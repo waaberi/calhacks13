@@ -207,6 +207,33 @@ namespace SpatialModeling.VoiceCore.Tests
         }
 
         [SkippableFact]
+        public void AnOpenMicrophoneTakesANewGrammarAtTheNextUtterance()
+        {
+            SkipWithoutModel();
+            VoiceSession session = ExampleScene();
+            using (VoiceInput input = Listen(session))
+            {
+                input.StartUtterance(); // once: Vosk ends utterances at pauses by itself
+                session.SetObjects(Contract.SnapshotObjects().Take(1)); // the shaft leaves the scene
+                input.SetGrammar(session.GrammarPhrases());
+                foreach (string fixture in new[] { "undo", "move-the-shaft-ten-millimeters-along-x" })
+                {
+                    (float[] samples, int rate) = Audio(Fixture(fixture));
+                    float[] withPause = samples.Concat(new float[rate]).ToArray();
+                    input.Write(withPause, withPause.Length, rate);
+                }
+                Assert.True(input.WaitIdle(Timeout));
+                var heard = new List<string>();
+                while (input.TryGetResult(out RecognitionResult r))
+                    heard.Add(r.Text);
+                Assert.Equal("undo", heard[0]);
+                Assert.Equal(2, heard.Count);
+                Assert.DoesNotContain("shaft", heard[1]);
+                input.StopUtterance();
+            }
+        }
+
+        [SkippableFact]
         public void APromptHeardWhilePausedIsNeverRecognized()
         {
             SkipWithoutModel();

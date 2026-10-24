@@ -45,8 +45,8 @@ namespace SpatialModeling.VoiceCore.Vosk
 
         public void SetGrammar(IReadOnlyList<string> phrases)
         {
-            // Vosk takes the grammar when the recognizer is made, so the next Start makes a new one; an utterance
-            // in progress keeps the old grammar.
+            // Vosk takes the grammar when the recognizer is made, so the next utterance gets a new one (at Start, or
+            // where Vosk itself ends an utterance); an utterance in progress keeps the old grammar.
             grammar = phrases == null ? null : VoskJson.Grammar(phrases);
             grammarChanged = true;
         }
@@ -58,6 +58,11 @@ namespace SpatialModeling.VoiceCore.Vosk
                 Native.vosk_recognizer_reset(recognizer);
                 return;
             }
+            Create(sampleRate);
+        }
+
+        void Create(int sampleRate)
+        {
             FreeRecognizer();
             recognizer = grammar == null
                 ? Native.vosk_recognizer_new(Model, sampleRate)
@@ -76,7 +81,11 @@ namespace SpatialModeling.VoiceCore.Vosk
             if (count > samples.Length)
                 throw new ArgumentOutOfRangeException(nameof(count));
             if (Native.vosk_recognizer_accept_waveform_s(recognizer, samples, count) != 0)
+            {
                 Raise(Native.vosk_recognizer_result(recognizer)); // Vosk found the end of an utterance
+                if (grammarChanged)
+                    Create(recognizerRate); // an open microphone never calls Start again
+            }
         }
 
         public void Stop()

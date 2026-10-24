@@ -13,7 +13,7 @@ URL="https://www.nuget.org/api/v2/package/Vosk/$VERSION"
 SHA256=d01f96e306f3b6abd68bd0eef6d8aacb15c870b7873a74074c775b13dd50397f # 24 MB nupkg, checked 2026-10-23
 
 dest="$(cd "$(dirname "$0")" && pwd)/VoiceCore/Plugins"
-if [ -f "$dest/Windows/libvosk.dll" ] && [ -f "$dest/macOS/libvosk.dylib" ] && [ -f "$dest/Linux/libvosk.so" ]; then
+if [ -f "$dest/.vosk-$VERSION" ]; then # written last, so an interrupted run starts over
   echo "Vosk $VERSION is already in $dest"
   exit 0
 fi
@@ -125,4 +125,5 @@ for dll in "$dest"/Windows/*.dll; do
 done
 meta macOS/libvosk.dylib OSX AnyCPU # x86_64 and arm64
 meta Linux/libvosk.so Linux x86_64
+echo "$SHA256" > "$dest/.vosk-$VERSION"
 echo "Vosk $VERSION ready in $dest"
