@@ -321,3 +321,36 @@ def test_late_applied_receipt_does_not_regress_newer_announced_head(tmp_path):
                                       "revision": 1, "checkpoint_hash": accepted_hash})
     assert client.head == latest
     assert client.applied_head["revision"] == 1 and client.applied_head["checkpoint_hash"] == accepted_hash
+
+
+def test_save_and_explicit_reload_preserve_edits_newer_than_rejected_snapshot(tmp_path):
+    client, doc, _, now = setup(tmp_path)
+    edit_turn(client)
+    pending = edited(client, doc, now, b"uploaded native draft")
+    doc.data = b"newer local native changes after upload"
+    client.mark_dirty()
+    client.receive("native.receipt", {"request_id": pending.request_id, "outcome": "rejected",
+                                      "code": "stale_revision"})
+    saved = tmp_path / "latest-user-copy.blend"
+    client.save_copy(saved)
+    assert saved.read_bytes() == b"newer local native changes after upload"
+    assert client.reload_host(discard=True)
+    feed(client, b"new authoritative original", revision=2)
+    backups = list(tmp_path.glob("before-reload-*.blend"))
+    assert len(backups) == 1 and backups[0].read_bytes() == saved.read_bytes()
+    assert (tmp_path / ("draft-" + pending.request_id + ".blend")).read_bytes() == b"uploaded native draft"
+
+
+def test_reload_backup_failure_never_replaces_current_local_data(tmp_path, monkeypatch):
+    client, doc, _, now = setup(tmp_path)
+    edited(client, doc, now, b"local unsent document")
+    assert client.reload_host(discard=True)
+    before = doc.data
+
+    def failed_capture(_path):
+        raise OSError("backup disk is full")
+
+    monkeypatch.setattr(doc, "capture", failed_capture)
+    feed(client, b"host replacement", revision=1)
+    assert doc.data == before and not client.applying
+    assert "backed up" in client.error

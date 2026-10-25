@@ -188,8 +188,10 @@ class NativeClient:
         return self._request_snapshot()
 
     def save_copy(self, path):
-        draft = self.watcher.pending or self.watcher.retained_draft
-        snapshot = draft.payload if draft is not None else self.document.capture(self.capture_path)
+        # A retained upload may predate edits made while its ACK was pending.
+        # Save the actual current native document; the immutable older draft is
+        # separately retained in draft-<request_id>.blend after refusal/drop.
+        snapshot = self.document.capture(self.capture_path)
         Path(path).write_bytes(snapshot.data)
 
     def receive(self, kind, payload):
@@ -312,6 +314,16 @@ class NativeClient:
             self._download = None
             self._request_snapshot()
             return
+        if self.has_native_document and self._discard_next:
+            # Explicit reload is destructive to the current local graph. Keep
+            # its latest settled state as well as any earlier in-flight draft.
+            # A failed backup must leave the current graph untouched.
+            try:
+                backup = self.document.capture(self.capture_path)
+                (self.directory / ("before-reload-" + complete["request_id"] + ".blend")).write_bytes(backup.data)
+            except (OSError, RuntimeError, ValueError):
+                self.error = "Current local work could not be backed up; reload was not applied"
+                return
         self._download = None
         self.applying = True
         path = self.directory / ("incoming-" + complete["request_id"] + ".blend")
