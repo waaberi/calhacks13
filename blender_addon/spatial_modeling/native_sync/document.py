@@ -6,6 +6,7 @@ loaded as data through libraries.load; this module never executes them or enable
 script auto-execution preferences.
 """
 import hashlib
+import logging
 import re
 import uuid
 from collections import Counter
@@ -25,11 +26,16 @@ MANIFEST_GROUPS = frozenset({
 })
 _UUID = re.compile(r"[0-9a-f]{32}\Z")
 _active = None
+_LOG = logging.getLogger(__name__)
 _PASSIVE_MODAL_OPERATORS = frozenset({"SPATIAL_MODELING_OT_input_gate"})
 
 
 class NativeDocumentError(RuntimeError):
     """Checkpoint data cannot safely replace this native document."""
+
+
+class NativeDocumentCancelled(NativeDocumentError):
+    """A user document load superseded a pending checkpoint transaction."""
 
 
 class NativeDocumentBusy(NativeDocumentError):
@@ -235,7 +241,8 @@ class NativeDocument:
             raise NativeDocumentError("Checkpoint active scene is not in its native manifest")
         old = _pointer_map()
         old_windows = [(window, window.scene) for window in bpy.context.window_manager.windows]
-        transaction = {"old": old, "windows": old_windows, "new": {}, "removed": False,
+        transaction = {"old": old, "old_session_ids": {ptr: item.session_uid for ptr, item in old.items()},
+                       "windows": old_windows, "new": {}, "removed": False,
                        "manifest": manifest, "done": on_done, "error": on_error,
                        "active_scene_uuid": active_scene_uuid}
         self._transaction = transaction
@@ -265,6 +272,7 @@ class NativeDocument:
                       if isinstance(item, bpy.types.Scene)}
             if not scenes:
                 raise NativeDocumentError("Checkpoint contains no native scene")
+            transaction["new_scenes"] = {item.as_pointer() for item in scenes.values()}
             chosen = scenes.get(active_scene_uuid) or next(iter(scenes.values()))
             for window, previous in old_windows:
                 window.scene = scenes.get(previous.get(UUID_PROPERTY), chosen)
@@ -276,18 +284,26 @@ class NativeDocument:
     apply_async = apply
 
     def _remove_old(self):
+        transaction = self._transaction
+        if transaction is None:
+            return
         try:
-            transaction = self._transaction
+            if any(window.scene.as_pointer() not in transaction["new_scenes"]
+                   for window in bpy.context.window_manager.windows):
+                raise NativeDocumentCancelled("The active native scene changed before checkpoint application")
             current = _pointer_map()
-            bpy.data.batch_remove(ids={current[ptr] for ptr in transaction["old"] if ptr in current})
+            bpy.data.batch_remove(ids={current[ptr] for ptr, session_id in transaction["old_session_ids"].items()
+                if ptr in current and current[ptr].session_uid == session_id})
             transaction["removed"] = True
             self._schedule(self._finish, .02)
         except Exception as error:  # noqa: BLE001 - preserve the pre-transaction undo checkpoint
             self._fail(error)
 
     def _finish(self):
+        transaction = self._transaction
+        if transaction is None:
+            return
         try:
-            transaction = self._transaction
             manifest = transaction["manifest"]
             for item in transaction["new"].values():
                 identity = item.get(UUID_PROPERTY)
@@ -330,13 +346,20 @@ class NativeDocument:
             self._clear()
             callback(error)
             return
+        windows = {window.as_pointer(): window for window in bpy.context.window_manager.windows}
         for window, previous in transaction["windows"]:
-            if _alive(previous):
-                window.scene = previous
+            try:
+                current_window = windows.get(window.as_pointer())
+            except ReferenceError:
+                current_window = None
+            if current_window is not None and _alive(previous):
+                current_window.scene = previous
         self._schedule(self._discard_staged, .02)
 
     def _discard_staged(self):
         transaction = self._transaction
+        if transaction is None:
+            return
         error = transaction["failure"]
         try:
             current = _pointer_map()
@@ -346,3 +369,22 @@ class NativeDocument:
         callback = transaction["error"]
         self._clear()
         callback(error)
+
+
+@bpy.app.handlers.persistent
+def _before_file_load(_unused):
+    # A real File Open/Revert owns the new document. Pending callbacks must not
+    # inspect, delete or roll back any IDs once its load begins.
+    document = _active
+    if document is None or document._transaction is None:
+        return
+    callback = document._transaction["error"]
+    document._clear()
+    try:
+        callback(NativeDocumentCancelled("A document load canceled the pending native checkpoint"))
+    except Exception:  # noqa: BLE001 - a callback must never prevent the user's document load
+        _LOG.exception("Native checkpoint cancellation callback failed during document load")
+
+
+if _before_file_load not in bpy.app.handlers.load_pre:
+    bpy.app.handlers.load_pre.append(_before_file_load)
