@@ -27,6 +27,11 @@ namespace SpatialModeling
         readonly List<LineRenderer> handles = new List<LineRenderer>();
         readonly List<LineRenderer> selectionLines = new List<LineRenderer>();
         readonly DirectRotationHandles rotationHandles = new DirectRotationHandles();
+        readonly DirectTranslationHandles translationHandles=new DirectTranslationHandles();
+        readonly LiveScaleFeedback scaleFeedback=new LiveScaleFeedback();
+        DirectTranslationHandles.Frame translationPickFrame,translationGestureFrame;
+        int translationAxis=-1;
+        bool translationPickedArrow;
         DirectRotationHandles.Frame rotationPickFrame;
         DirectRotationHandles.Hit rotationPick;
         DirectRotationHandles.Gesture rotationGesture;
@@ -103,7 +108,13 @@ namespace SpatialModeling
             if(held&&Session.Active&&Time.unscaledTime>=nextKeepAlive)
             {nextKeepAlive=Time.unscaledTime+4f;Session.KeepAlive();}
             if(enabled&&!held&&!Busy){DrawHandles();DrawSelection();Notice=ToolLabel();}
-            else {HideHandles();if(enabled&&held&&rotationGesture!=null)rotationHandles.Draw(rotationGesture.Frozen,rotationGesture.Axis);}
+            else
+            {
+                HideHandles();
+                if(enabled&&held&&rotationGesture!=null)rotationHandles.Draw(rotationGesture.Frozen,rotationGesture.Axis);
+                if(enabled&&held&&translationGestureFrame!=null)translationHandles.Draw(translationGestureFrame,translationAxis);
+            }
+            if(scaleFeedback.Visible)scaleFeedback.Draw(currentPoint,Camera.main);
         }
         public void Receive(JObject message)
         {
@@ -122,6 +133,7 @@ namespace SpatialModeling
         void Changed()
         {
             lastTransportAt=Time.unscaledTime;
+            if(scaleFeedback.Visible)scaleFeedback.Accept(Session.AcknowledgedParameters);
             if(Session.Active&&boundId==null)
             {
                 boundId=Session.EditSessionId;
@@ -131,7 +143,7 @@ namespace SpatialModeling
             {
                 terminalObserved=true;
                 foreach(var view in views.Values)if(view!=null&&boundId!=null)view.EndLivePresentation(boundId,Session.Phase=="committed");
-                boundId=null;held=waiting=false;rotationGesture=null;scaleContacts.Clear();
+                boundId=null;held=waiting=false;rotationGesture=null;translationGestureFrame=null;scaleContacts.Clear();scaleFeedback.Hide();
                 if(Session.Phase=="committed")
                 {
                     dirtySelection=false;
@@ -191,6 +203,8 @@ namespace SpatialModeling
                 held=false;
                 if(!moved)
                 {
+                    scaleFeedback.Hide();
+                    if(translationGestureFrame!=null){translationGestureFrame=null;Notice="Hold a coloured Move arrow and aim along its axis";return true;}
                     if(rotationGesture!=null){rotationGesture=null;Notice="Hold a coloured rotation ring and move around it to rotate";return true;}
                     Selection.Pick(picked.ObjectId,picked.Generation,pickedComponent,pickedIndex,(string)frozenModel["topology_token"],false);
                     dirtySelection=true;Selection.InvalidateIntent();
@@ -211,12 +225,22 @@ namespace SpatialModeling
             if(waiting){distance=4;return true;}
             if(grip)return false;
             var view=scene.PickObject(ray,out float hitDistance);
-            bool handleHit=TryHandle(ray,nearest,out var handleAxis,out var constraint,out float handleDistance);
+            bool ownMoveFence=view!=null&&view.ObjectId==Selection.ActiveId&&Mathf.Abs(hitDistance-nearest)<.0005f
+                &&((string)Model?["tool"]??"").EndsWith(".translate",StringComparison.Ordinal);
+            float moveArrowLimit=nearest;
+            if(ownMoveFence)
+            {
+                moveArrowLimit=nearest+.35f;
+                var blender=UnityEngine.Object.FindFirstObjectByType<BlenderScreen>();
+                if(blender!=null&&blender.RaycastSurface(ray,out float menuDistance))moveArrowLimit=Mathf.Min(moveArrowLimit,menuDistance);
+            }
+            bool handleHit=TryHandle(ray,nearest,out var handleAxis,out var constraint,out float handleDistance,moveArrowLimit);
             bool rotationRing=handleHit&&((string)Model?["tool"]??"").EndsWith(".rotate",StringComparison.Ordinal);
-            if(handleHit&&(view==null||handleDistance<=hitDistance+.015f||rotationRing&&view.ObjectId==Selection.ActiveId))
+            bool ownMoveArrow=handleHit&&translationPickedArrow&&ownMoveFence;
+            if(handleHit&&(view==null||handleDistance<=hitDistance+.015f||(rotationRing||ownMoveArrow)&&view.ObjectId==Selection.ActiveId))
             {view=FindView(Selection.ActiveId);hitDistance=handleDistance;}
             else handleHit=false;
-            if(view==null||hitDistance>nearest+.0005f)return false;
+            if(view==null||hitDistance>nearest+.0005f&&!ownMoveArrow)return false;
             distance=hitDistance;Notice=ToolLabel();
             if(!pressed)return true;
             if(!drawing.NativeStateCurrent||Model==null){Notice="Wait for current native Blender tool state";return true;}
@@ -240,6 +264,9 @@ namespace SpatialModeling
             bool plane=handleHit&&constraint.Count(value=>value)==2;
             gizmoAxis=handleHit&&!plane?handleAxis:(Vector3?)null;gizmoPlaneNormal=plane?handleAxis:(Vector3?)null;
             rotationGesture=handleHit&&rotationRing?new DirectRotationHandles.Gesture(rotationPickFrame,rotationPick,ray):null;
+            translationGestureFrame=handleHit&&translationPickedArrow?translationPickFrame:null;
+            if(((string)frozenModel["tool"]??"").EndsWith(".scale",StringComparison.Ordinal)&&(bool?)frozenModel["available"]==true)scaleFeedback.Begin();
+            else scaleFeedback.Hide();
             context=ToolContext(frozenModel);identity=Identity();operation=null;targets=null;
             views.Clear();maps.Clear();scaleContacts.Clear();knifePath.Clear();boundId=null;terminalObserved=false;
             held=true;moved=waiting=false;gestureEpoch++;Selection.InvalidateIntent();return true;
@@ -344,7 +371,8 @@ namespace SpatialModeling
             if(tool.EndsWith(".scale",StringComparison.Ordinal))
             {
                 float factor=Mathf.Exp(Mathf.Clamp(ScalarDrag(displayDelta)*3,-4.6f,4.6f));
-                var selected=gizmoConstraint??new[] {true,true,true};
+                var selected=gizmoConstraint??(settings["constraint_axis"] as JArray)?.Values<bool>().ToArray();
+                if(selected==null||selected.Length!=3||!selected.Any(value=>value))selected=new[] {true,true,true};
                 var scale=new JArray(selected[0]?factor:1,selected[1]?factor:1,selected[2]?factor:1);
                 var value=ScaleFor(picked.ObjectId,primaryMap,scale,false);
                 if(pickedComponent=="object"&&maps.Count>1)
@@ -619,6 +647,7 @@ namespace SpatialModeling
             gestureEpoch++;Selection.InvalidateIntent();held=waiting=moved=false;
             rotationGesture=null;
             scaleContacts.Clear();
+            translationGestureFrame=null;scaleFeedback.Hide();
             if(Session.Busy)Session.Cancel(reason);
             Notice=Session.Busy?Session.Notice:reason;HideHandles();
         }
@@ -635,7 +664,7 @@ namespace SpatialModeling
             return !float.IsPositiveInfinity(distance);
         }
         public void Dispose()
-        {Cancel("Controller owner disposed");Session.Changed-=Changed;rotationHandles.Dispose();if(handleRoot!=null)Release(handleRoot);if(selectionRoot!=null)Release(selectionRoot);if(handleMaterial!=null)Release(handleMaterial);}
+        {Cancel("Controller owner disposed");Session.Changed-=Changed;rotationHandles.Dispose();translationHandles.Dispose();scaleFeedback.Dispose();if(handleRoot!=null)Release(handleRoot);if(selectionRoot!=null)Release(selectionRoot);if(handleMaterial!=null)Release(handleMaterial);}
         public static string CanonicalTool(string native,string component)
         {
             string suffix=native=="builtin.move"?"translate":native=="builtin.rotate"?"rotate":native=="builtin.scale"?"scale":
@@ -646,7 +675,12 @@ namespace SpatialModeling
         static Matrix4x4 SwapMatrix(){var m=Matrix4x4.identity;m[1,1]=m[2,2]=0;m[1,2]=m[2,1]=1;return m;}
         static JArray MatrixArray(Matrix4x4 m){var a=new JArray();for(int r=0;r<4;r++)for(int c=0;c<4;c++)a.Add(m[r,c]);return a;}
         static void Release(UnityEngine.Object obj){if(Application.isPlaying)UnityEngine.Object.Destroy(obj);else UnityEngine.Object.DestroyImmediate(obj);}
-        void HideHandles(){rotationHandles.Hide();if(handleRoot!=null)handleRoot.SetActive(false);if(selectionRoot!=null)selectionRoot.SetActive(false);}
+        void HideHandles(){rotationHandles.Hide();translationHandles.Hide();if(handleRoot!=null)handleRoot.SetActive(false);if(selectionRoot!=null)selectionRoot.SetActive(false);}
+        DirectTranslationHandles.Frame TranslationFrame(WorkspaceObjectView view)
+        {
+            var pivot=SelectionPivotDisplay();var camera=Camera.main;
+            return new DirectTranslationHandles.Frame(pivot,new[]{Axis(0),Axis(1),Axis(2)},camera!=null?camera.transform.position:pivot+Vector3.back);
+        }
         DirectRotationHandles.Frame RotationFrame(WorkspaceObjectView view)
         {
             var pivot=SelectionPivotDisplay();var camera=Camera.main;
@@ -681,8 +715,9 @@ namespace SpatialModeling
                 basis=DirectModelEditMath.ToUnity(new JArray(matrix[index],matrix[3+index],matrix[6+index]));
             return view!=null?view.NativeToDisplayMatrix.MultiplyVector(basis).normalized:basis;
         }
-        bool TryHandle(Ray ray,float nearest,out Vector3 axis,out bool[] constraint,out float distance)
+        bool TryHandle(Ray ray,float nearest,out Vector3 axis,out bool[] constraint,out float distance,float moveArrowLimit=-1)
         {
+            translationPickedArrow=false;
             axis=default;constraint=null;distance=nearest;
             var view=FindView(Selection.ActiveId);string tool=(string)Model?["tool"]??"";
             if(view==null||!(tool.EndsWith(".translate")||tool.EndsWith(".rotate")||tool.EndsWith(".scale")))return false;
@@ -696,7 +731,14 @@ namespace SpatialModeling
                 distance=rotationPick.Distance;return true;
             }
             Vector3 pivot=SelectionPivotDisplay();bool hit=false;
-            for(int i=0;i<3;i++)
+            bool move=tool.EndsWith(".translate",StringComparison.Ordinal);
+            if(move)
+            {
+                translationPickFrame=TranslationFrame(view);
+                if(DirectTranslationHandles.TryPick(translationPickFrame,ray,moveArrowLimit>0?moveArrowLimit:nearest,out var pickedArrow))
+                {translationAxis=pickedArrow.Axis;translationPickedArrow=hit=true;distance=pickedArrow.Distance;axis=translationPickFrame.Axis(translationAxis);constraint=new[]{translationAxis==0,translationAxis==1,translationAxis==2};}
+            }
+            else for(int i=0;i<3;i++)
             {
                 Vector3 direction=Axis(i),a=pivot+direction*.025f,b=pivot+direction*.11f;
                 // An end-on axis overlaps the free-move center; it must not
@@ -708,11 +750,11 @@ namespace SpatialModeling
             if(!tool.EndsWith(".rotate"))for(int normal=0;normal<3;normal++)
             {
                 var n=Axis(normal);var plane=new Plane(n,pivot);
-                if(!plane.Raycast(ray,out float depth)||depth<0||depth>distance)continue;
+                if(!plane.Raycast(ray,out float depth)||depth<0||depth>Mathf.Min(distance,nearest))continue;
                 var offset=ray.GetPoint(depth)-pivot;int first=(normal+1)%3,second=(normal+2)%3;
                 float u=Vector3.Dot(offset,Axis(first)),v=Vector3.Dot(offset,Axis(second));
                 if(u>=.025f&&u<=.05f&&v>=.025f&&v<=.05f)
-                {distance=depth;axis=n;constraint=new[] {normal!=0,normal!=1,normal!=2};hit=true;}
+                {distance=depth;axis=n;constraint=new[] {normal!=0,normal!=1,normal!=2};hit=true;translationPickedArrow=false;}
             }
             return hit;
         }
@@ -727,8 +769,10 @@ namespace SpatialModeling
             var view=FindView(Selection.ActiveId);string tool=(string)Model?["tool"]??"";
             if(view==null||!(tool.EndsWith(".translate")||tool.EndsWith(".rotate")||tool.EndsWith(".scale"))){HideHandles();return;}
             if(tool.EndsWith(".rotate",StringComparison.Ordinal))
-            {if(handleRoot!=null)handleRoot.SetActive(false);rotationHandles.Draw(RotationFrame(view),highlightedRotationAxis);return;}
+            {translationHandles.Hide();if(handleRoot!=null)handleRoot.SetActive(false);rotationHandles.Draw(RotationFrame(view),highlightedRotationAxis);return;}
             rotationHandles.Hide();
+            bool move=tool.EndsWith(".translate",StringComparison.Ordinal);
+            if(move)translationHandles.Draw(TranslationFrame(view),translationAxis);else translationHandles.Hide();
             if(handleRoot==null)
             {
                 handleRoot=new GameObject("Native tool axes · no alternate modeling menu");
@@ -741,7 +785,7 @@ namespace SpatialModeling
                 }
             }
             var pivot=SelectionPivotDisplay();
-            handleRoot.SetActive(true);for(int i=0;i<3;i++){handles[i].SetPosition(0,pivot+Axis(i)*.025f);handles[i].SetPosition(1,pivot+Axis(i)*.11f);}
+            handleRoot.SetActive(true);for(int i=0;i<3;i++){handles[i].gameObject.SetActive(!move);handles[i].SetPosition(0,pivot+Axis(i)*.025f);handles[i].SetPosition(1,pivot+Axis(i)*.11f);}
             for(int normal=0;normal<3;normal++)
             {
                 var line=handles[3+normal];line.gameObject.SetActive(!tool.EndsWith(".rotate"));line.positionCount=5;

@@ -27,6 +27,8 @@ namespace SpatialModeling
         Transform pairTarget;
         Vector3 pairVector, pairMidpoint, pairScale, pairOffset;
         Quaternion pairFrame, pairRotation;
+        readonly LiveScaleFeedback pairScaleFeedback=new LiveScaleFeedback();
+        Vector3 pairFeedbackBaseline;
         bool loggedTracking;
         Transform trackingOrigin;
         int renderedFrame = -1;
@@ -127,6 +129,7 @@ namespace SpatialModeling
 
         void OnDisable()
         {
+            pairScaleFeedback.Dispose();
             Application.onBeforeRender -= BeforeRender;
             Release(left);
             Release(right);
@@ -166,6 +169,7 @@ namespace SpatialModeling
             var device = InputDevices.GetDeviceAtXRNode(h.node);
             if (!TryReadHand(h, out var hand, out var aim))
             {
+                pairScaleFeedback.Hide();
                 PreviewInteraction.Current?.TrackingLost(h.node);
                 Release(h);
                 h.visual.SetActive(false);
@@ -425,6 +429,7 @@ namespace SpatialModeling
         {
             if (!TryReadHand(h, out var hand, out var aim))
             {
+                pairScaleFeedback.Hide();
                 PreviewInteraction.Current?.TrackingLost(h.node);
                 Release(h);
                 h.visual.SetActive(false);
@@ -570,6 +575,7 @@ namespace SpatialModeling
                 // after those reads before applying any two-hand transform.
                 || left.target==null || left.target!=right.target)
             {
+                pairScaleFeedback.Hide();
                 if(pairTarget!=null)
                 {
                     foreach(var hand in new[]{left,right})
@@ -590,6 +596,7 @@ namespace SpatialModeling
             {
                 pairTarget=left.target; pairVector=vector; pairMidpoint=midpoint;
                 pairFrame=frame; pairRotation=pairTarget.rotation; pairScale=pairTarget.localScale;
+                pairFeedbackBaseline=pairTarget.localScale;
                 pairOffset=pairTarget.position-midpoint;
             }
             float ratio=left.part!=null ? 1f : Mathf.Clamp(vector.magnitude/pairVector.magnitude,.25f,4f);
@@ -609,6 +616,8 @@ namespace SpatialModeling
             }
             left.alignRequested=right.alignRequested=false;
             pairTarget.SetPositionAndRotation(pose.position,pose.rotation);
+            pairScaleFeedback.ShowDisplayScale(DisplayScaleFactors(pairTarget.localScale,pairFeedbackBaseline));
+            pairScaleFeedback.Draw(midpoint,Camera.main);
             if(scene.Table!=null && pairTarget==scene.Table.Menu && Camera.main!=null)
                 scene.Table.FaceMenuTowardUser(Camera.main.transform.position);
             left.part?.RememberArrangement(); right.part?.RememberArrangement();
@@ -637,7 +646,11 @@ namespace SpatialModeling
             hand.timingSeconds = hand.maximumFrameTime = hand.largestRawStep = hand.largestGripStep = hand.largestGripTurn = hand.largestDisplayStep = 0;
         }
 
-        public void CancelGrabs() { Release(left); Release(right); PreviewInteraction.Current?.DirectEditing?.Cancel("Placement or tracking changed"); }
+        public void CancelGrabs() { pairScaleFeedback.Hide();Release(left); Release(right); PreviewInteraction.Current?.DirectEditing?.Cancel("Placement or tracking changed"); }
+        public static Vector3 DisplayScaleFactors(Vector3 current,Vector3 original)=>new Vector3(
+            Mathf.Abs(original.x)>1e-10f?current.x/original.x:1,
+            Mathf.Abs(original.y)>1e-10f?current.y/original.y:1,
+            Mathf.Abs(original.z)>1e-10f?current.z/original.z:1);
         public void TogglePartMode() { CancelGrabs(); MoveIndividualParts = !MoveIndividualParts; }
         public void ResetArrangement() { CancelGrabs(); scene?.ResetObjectArrangement(); }
         public static Pose ToWorldPose(Transform origin, Pose local) => origin == null ? local

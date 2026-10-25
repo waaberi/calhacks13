@@ -23,6 +23,7 @@ namespace SpatialModeling
         public long Sequence { get; private set; }
         public JObject LastState { get; private set; }
         public JObject AppliedSelection => LastState?["selection"] as JObject;
+        public JObject AcknowledgedParameters => acknowledgedParameters==null?null:(JObject)acknowledgedParameters.DeepClone();
         public bool OutcomeUnknown { get; private set; }
         public string Notice { get; private set; } = "Choose a native tool and current selection";
 
