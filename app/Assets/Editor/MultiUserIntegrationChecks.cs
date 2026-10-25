@@ -20,6 +20,9 @@ public static class MultiUserIntegrationChecks
         {
             var h = go.AddComponent<HostScene>();
             var panel = panelGo.AddComponent<RemotePresencePanel>(); panel.host = h;
+            if (panelGo.GetComponent<TextMesh>() == null)
+                typeof(RemotePresencePanel).GetMethod("Awake", Private).Invoke(panel, null);
+            Check(panelGo.GetComponent<TextMesh>().text == "", "collaboration adds no startup placeholder text");
             Set(h, "actorId", "local-vr");
             var participants = (List<ActorInfo>)typeof(HostScene).GetField("participants", Private).GetValue(h);
             var leases = (List<LeaseInfo>)typeof(HostScene).GetField("leases", Private).GetValue(h);

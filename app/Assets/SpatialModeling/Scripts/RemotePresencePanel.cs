@@ -39,6 +39,7 @@ namespace SpatialModeling
             text = gameObject.AddComponent<TextMesh>();
             text.fontSize = 48; text.characterSize = 0.006f; text.anchor = TextAnchor.UpperLeft;
             text.color = Color.white;
+            text.text = "";
             VoiceUiAdapter.SetupText(text, gameObject);
         }
 
