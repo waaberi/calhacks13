@@ -26,8 +26,21 @@ public static class AICancellationChecks
 
     public static void Run()
     {
-        QueuedCancellation();SentCancellation();ControlRouting();NativeAiContext();
+        ReviewPageFence();QueuedCancellation();SentCancellation();ControlRouting();NativeAiContext();
         Debug.Log("AI_CANCELLATION_CHECK PASS actual reviewed-confirm/queued-vs-wire state/Cancel+context fence/no delayed replay/other owner preserved/sent receipt+unknown honest/core Undo+Redo synonyms+Save+Cancel in Edit Mode; no AI service or interactive runtime");
+    }
+    static void ReviewPageFence()
+    {
+        using var f=new Fixture();f.ReviewAi(A,true,8);
+        Check(f.ReviewPanel.Visible&&!f.ReviewPanel.AllPagesReviewed,"real AI review panel requires every page before confirmation");
+        Invoke(f.Voice,"ConfirmDelete");
+        Check(Get(f.Voice,"deleteWaiting")!=null&&Get(f.Voice,"aiSubmittedCommand")==null&&!f.DataAvailable,
+            "unreviewed pages retain the deliberate confirmation and send no command");
+        f.ReviewAllPages();Invoke(f.Voice,"ConfirmDelete");
+        string id=(string)Get(f.Voice,"aiSubmittedCommand");var wire=f.Read("command");
+        Check(id!=null&&(string)wire["id"]==id&&(string)wire["payload"]["op"]=="voice.run"&&!f.DataAvailable,
+            "visiting actual review pages permits one deliberately confirmed stored recipe");
+        f.Answer(id,"voice.run","applied");
     }
     static void QueuedCancellation()
     {
@@ -134,6 +147,7 @@ public static class AICancellationChecks
             &&(string)pose["selection"]["objects"][0]["id"]==Rig&&((JArray)pose["selection"]["indices"]).Count==0,"actual native Pose selection replaces stale direct mesh faces");
         f.ReviewAi(Rig);Invoke(f.Voice,"OnScene");
         Check(((VoiceCommand)Get(f.Voice,"deleteWaiting"))?.TargetId==Rig,"AI-only native visibility keeps a pending Pose review through actual OnScene refresh");
+        f.ReviewAllPages();
         Invoke(f.Voice,"ConfirmDelete");string poseRun=(string)Get(f.Voice,"aiSubmittedCommand");var poseWire=f.Read("command");
         Check((string)poseWire["payload"]["op"]=="voice.run"&&(string)poseWire["payload"]["target"]["id"]==Rig
             &&(long)poseWire["payload"]["target"]["generation"]==7,"reviewed nonmesh Pose candidate reaches actual existing confirmation and wire with native rig identity");
@@ -168,11 +182,12 @@ public static class AICancellationChecks
         readonly Type commonType;
         readonly TcpClient sender,receiver;
         readonly StreamReader reader;
-        readonly GameObject feedback;
+        readonly GameObject feedback,reviewPanelObject;
         public readonly HostScene Host;
         public readonly PreviewInteraction Preview;
         public readonly PreviewSpatialDrawing Drawing;
         public readonly VoiceUiAdapter Voice;
+        public readonly PendingCommandPanel ReviewPanel;
         public readonly List<CommandAnswer> Answers=new List<CommandAnswer>();
         public bool DataAvailable=>receiver.GetStream().DataAvailable;
         public Fixture()
@@ -192,26 +207,39 @@ public static class AICancellationChecks
             Voice=Host.gameObject.AddComponent<VoiceUiAdapter>();Voice.host=Host;
             var session=new VoiceSession(new VoiceSessionOptions { AskHost=true },()=>DateTime.UtcNow);session.EnableComposition(true);session.SetObjects(new[]{new SceneObject(A,"Alpha")});session.SetSelection(new[]{A});Set(Voice,"session",session);
             feedback=new GameObject("AI cancellation fixture feedback",typeof(TextMesh));Set(Voice,"feedback",feedback.GetComponent<TextMesh>());
+            reviewPanelObject=new GameObject("AI cancellation fixture review panel");reviewPanelObject.SetActive(false);
+            reviewPanelObject.transform.SetParent(Host.transform,false);
+            ReviewPanel=reviewPanelObject.AddComponent<PendingCommandPanel>();
+            if(Get(ReviewPanel,"text")==null)Invoke(ReviewPanel,"Awake");
+            ReviewPanel.head=Host.transform;Set(Voice,"panel",ReviewPanel);
             Host.CommandAnswered+=answer=>{Answers.Add(answer);Invoke(Voice,"OnAnswered",answer);};
         }
         public void NativeReady()=>commonType.GetMethod("NativeReady").Invoke(common,new object[]{"OBJECT"});
-        public void ReviewAi(string target=A,bool reviewHeader=true)
+        public void ReviewAi(string target=A,bool reviewHeader=true,int stepCount=1)
         {
             string transcript=target==A?"bevel selected edges two millimeters":"reset the selected rig pose bone Forearm";
             var session=(VoiceSession)Get(Voice,"session");var turn=session.ResolveRecipe(transcript);session.ResolveSent(turn.Resolve,"recipe-request");
             var context=(JObject)Invoke(Voice,"CaptureAiContext");Set(Voice,"aiExpectedContext",context.DeepClone());Set(Voice,"aiOriginal",transcript);
             Set(Voice,"aiRecipeRequest","recipe-request");Set(Voice,"aiFingerprint",context.ToString(Formatting.None));
+            var steps=new JArray();for(int index=0;index<stepCount;index++)steps.Add(new JObject { ["id"]="step"+(index+1),["tool"]=target==A?"mesh.bevel":"rig.pose_reset",["target"]=target,
+                ["params"]=target==A?new JObject{["width_m"]=.002}:new JObject{["bone"]="Forearm"} });
             var payload=new JObject { ["resolution"]=Resolution,["decision"]="run",["expires_in"]=30,
-                ["recipe_plan"]=new JObject { ["steps"]=new JArray(new JObject { ["id"]="step1",["tool"]=target==A?"mesh.bevel":"rig.pose_reset",["target"]=target,
-                    ["params"]=target==A?new JObject{["width_m"]=.002}:new JObject{["bone"]="Forearm"} }) },
+                ["recipe_plan"]=new JObject { ["steps"]=steps },
                 ["candidates"]=new JArray(new JObject { ["choice"]=1,["say"]="Reviewed native edit",["needs_target"]=true,["requires_confirmation"]=true,["target_id"]=target }) };
             if(!reviewHeader)payload.Remove("recipe_plan");
             Check((bool)Invoke(Voice,"AcceptAiCandidates","recipe-request",payload),"AI-only recipe response is fully handled without ordinary grammar fallback");
+        }
+        public void ReviewAllPages()
+        {
+            Check(ReviewPanel.Visible,"the actual pending-command panel displays the stored AI review");
+            int pages=0;while(!ReviewPanel.AllPagesReviewed)
+                Check(pages++<128&&ReviewPanel.MovePage(1),"actual next-page navigation visits every AI review page within the bounded fixture");
         }
         public string ConfirmAi(string target=A)
         {
             ReviewAi(target);
             Check(Get(Voice,"deleteWaiting")!=null,"reviewed AI command requires existing deliberate confirmation");
+            ReviewAllPages();
             Invoke(Voice,"ConfirmDelete");string id=(string)Get(Voice,"aiSubmittedCommand");Check(id!=null,"confirmed AI command keeps its exact cancellable request ID");return id;
         }
         public void ReleaseAndFlush()
@@ -226,7 +254,9 @@ public static class AICancellationChecks
         public void Answer(string id,string op,string outcome)=>Invoke(Host,"Answer",id,op,outcome,"","Native "+outcome,(long?)7,false,null);
         public void Dispose()
         {
-            Set(Host,"link",null);common.Dispose();UnityEngine.Object.DestroyImmediate(feedback);reader.Dispose();receiver.Dispose();sender.Dispose();
+            Set(Host,"link",null);common.Dispose();
+            if(reviewPanelObject!=null)UnityEngine.Object.DestroyImmediate(reviewPanelObject);
+            UnityEngine.Object.DestroyImmediate(feedback);reader.Dispose();receiver.Dispose();sender.Dispose();
         }
     }
 }
