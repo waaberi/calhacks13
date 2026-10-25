@@ -216,7 +216,8 @@ def run():
     before_weights = weights(obj)
     before_collections = sorted(c.name for c in bpy.data.collections)
     before_membership = tuple(obj.users_collection)
-    steps = [{'tool': 'vertex_group.rename', 'target': identity}]
+    steps = [{'tool': name, 'target': identity} for name in
+             ('vertex_group.rename', 'weights.assign', 'material.principled', 'collection.create', 'object.collection_link')]
     extra = tools.ExtraBackup(steps, editor)
     baseline = voice_sequence.Backup([obj])
     apply(obj, 'vertex_group.rename', {'name': 'Keep', 'new_name': 'Changed'})

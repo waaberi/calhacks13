@@ -24,7 +24,8 @@ def _unit():
 
 
 def _identity(editor, obj):
-    return editor.sync.object_id(obj)
+    return (obj.get("spatial_modeling_id")
+            or getattr(editor.sync, "stage_object_id", editor.sync.object_id)(obj))
 
 
 def _local(obj, kind=None):
@@ -550,19 +551,32 @@ class ExtraBackup:
         self.objects = []
         self.restored = False
         self.closed = False
-        if len(bpy.data.collections) > 256 or len(bpy.context.scene.objects) > 256:
-            raise ValueError("Atomic finishing edits require a bounded native scene")
-        self.collection_ids = {c.session_uid for c in bpy.data.collections}
-        for collection in bpy.data.collections:
-            self.collections.append((collection, collection.name, collection.hide_viewport,
-                                     collection.hide_render, tuple(collection.children)))
-        self.root_children = tuple(bpy.context.scene.collection.children)
+        tools = {step.get('tool', '') for step in steps}
+        self.capture_collections = any(tool.startswith(('collection.', 'object.collection_')) for tool in tools)
         weight_targets = {step.get('target') for step in steps
                           if isinstance(step.get('target'), str)
                           and step.get('tool', '').startswith(('vertex_group.', 'weights.'))}
+        material_targets = {step.get('target') for step in steps
+                            if isinstance(step.get('target'), str)
+                            and step.get('tool', '').startswith('material.')}
+        self.noop = not self.capture_collections and not weight_targets and not material_targets
+        if self.noop:
+            return
+        self.scene_uid = bpy.context.scene.session_uid
+        self.filepath = bpy.data.filepath
+        if self.capture_collections and (len(bpy.data.collections) > 256 or len(bpy.context.scene.objects) > 256):
+            raise ValueError("Atomic finishing edits require a bounded native scene")
+        self.collection_ids = {c.session_uid for c in bpy.data.collections} if self.capture_collections else set()
+        for collection in bpy.data.collections if self.capture_collections else ():
+            self.collections.append((collection, collection.name, collection.hide_viewport,
+                                     collection.hide_render, tuple(collection.children)))
+        self.root_children = tuple(bpy.context.scene.collection.children) if self.capture_collections else ()
         budget = 250000
         for obj in bpy.context.scene.objects:
             capture_groups = obj.type == 'MESH' and obj.get('spatial_modeling_id', '') in weight_targets
+            capture_material = obj.get('spatial_modeling_id', '') in material_targets
+            if not self.capture_collections and not capture_groups and not capture_material:
+                continue
             groups = [(g.name, g.lock_weight) for g in obj.vertex_groups] if capture_groups else []
             if len(groups) > 64:
                 raise ValueError("Atomic weight edits support at most 64 vertex groups per object")
@@ -583,6 +597,7 @@ class ExtraBackup:
             self.objects.append({"uid": obj.session_uid, "id": obj.get("spatial_modeling_id", ""),
                                  "collections": tuple(obj.users_collection), "groups": groups,
                                  "capture_groups": capture_groups,
+                                 "capture_material": capture_material,
                                  "weights": weights, "active_group": obj.vertex_groups.active_index if groups else 0,
                                  "active_material": obj.active_material_index})
 
@@ -590,6 +605,11 @@ class ExtraBackup:
         import bpy
         if self.closed:
             raise ValueError("Atomic finishing backup is closed")
+        if self.noop:
+            self.restored = True
+            return
+        if bpy.context.scene.session_uid != self.scene_uid or bpy.data.filepath != self.filepath:
+            raise ValueError("Native document changed; cross-document finishing rollback is forbidden")
         if bpy.context.mode != "OBJECT":
             raise ValueError("Restore the shared object/data backup before finishing metadata")
         live = {o.session_uid: o for o in bpy.context.scene.objects}
@@ -597,13 +617,14 @@ class ExtraBackup:
             obj = live.get(record["uid"]) or (self.editor.sync.find_object(record["id"]) if record["id"] else None)
             if obj is None:
                 raise ValueError("A saved native object was not restored by the shared backup")
-            expected = record["collections"]
-            for collection in expected:
-                if obj.name not in collection.objects:
-                    collection.objects.link(obj)
-            for collection in tuple(obj.users_collection):
-                if collection not in expected:
-                    collection.objects.unlink(obj)
+            if self.capture_collections:
+                expected = record["collections"]
+                for collection in expected:
+                    if obj.name not in collection.objects:
+                        collection.objects.link(obj)
+                for collection in tuple(obj.users_collection):
+                    if collection not in expected:
+                        collection.objects.unlink(obj)
             if obj.type == "MESH" and record['capture_groups']:
                 obj.vertex_groups.clear()
                 for name, locked in record["groups"]:
@@ -616,26 +637,33 @@ class ExtraBackup:
                         obj.vertex_groups[int(group)].add([int(index)], weight, 'REPLACE')
                 if record["groups"]:
                     obj.vertex_groups.active_index = record["active_group"]
-            obj.active_material_index = record["active_material"]
+            if record['capture_material']:
+                obj.active_material_index = record["active_material"]
         # Restore links first, then remove only collections created by this recipe.
         for collection, name, viewport, render, children in self.collections:
-            collection.name, collection.hide_viewport, collection.hide_render = name, viewport, render
+            if collection.name != name:
+                collection.name = name
+            if collection.hide_viewport != viewport:
+                collection.hide_viewport = viewport
+            if collection.hide_render != render:
+                collection.hide_render = render
             for child in children:
                 if child.name not in collection.children:
                     collection.children.link(child)
             for child in tuple(collection.children):
                 if child not in children:
                     collection.children.unlink(child)
-        root = bpy.context.scene.collection
-        for child in self.root_children:
-            if child.name not in root.children:
-                root.children.link(child)
-        for child in tuple(root.children):
-            if child not in self.root_children:
-                root.children.unlink(child)
-        for collection in list(bpy.data.collections):
-            if collection.session_uid not in self.collection_ids:
-                bpy.data.collections.remove(collection)
+        if self.capture_collections:
+            root = bpy.context.scene.collection
+            for child in self.root_children:
+                if child.name not in root.children:
+                    root.children.link(child)
+            for child in tuple(root.children):
+                if child not in self.root_children:
+                    root.children.unlink(child)
+            for collection in list(bpy.data.collections):
+                if collection.session_uid not in self.collection_ids:
+                    bpy.data.collections.remove(collection)
         bpy.context.view_layer.update()
         self.restored = True
 
