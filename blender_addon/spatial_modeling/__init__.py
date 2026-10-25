@@ -102,11 +102,11 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
     spacetime_where: bpy.props.EnumProperty(
         name="SpacetimeDB",
         items=(
-            ("LOCAL", "This PC", "A SpacetimeDB server on this PC decides leases. Remote "
-             "Blenders join over the LAN"),
-            ("CLOUD", "Maincloud", "SpacetimeDB on Maincloud decides leases and carries "
+            ("LOCAL", "This PC", ("A SpacetimeDB server on this PC decides leases. Remote "
+             "Blenders join over the LAN")),
+            ("CLOUD", "Maincloud", ("SpacetimeDB on Maincloud decides leases and carries "
              "remote Blenders' connections through the bridge, from any network "
-             "(spacetime/README.md)"),
+             "(spacetime/README.md)")),
         ),
         default="LOCAL",
         update=_restart,
@@ -133,7 +133,7 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
     cloud_database: bpy.props.StringProperty(
         name="Database",
         description="The database the module is published as on Maincloud (names are global)",
-        default="",
+        default="calhacks13-spatial-modeling",
         update=_restart,
     )
 

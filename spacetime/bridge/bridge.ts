@@ -5,7 +5,7 @@
 //   host PC:   npm run bridge -- host     # carries connections to this PC's Blender, 127.0.0.1:8767
 //   remote PC: npm run bridge -- join     # remote Blender connects to 127.0.0.1:8767 as if on a LAN
 //
-// Options (defaults shown): --url https://maincloud.spacetimedb.com  --database spatial-modeling
+// Options (defaults shown): --url https://maincloud.spacetimedb.com  --database calhacks13-spatial-modeling
 //   host: --blender 127.0.0.1:8767     join: --listen 127.0.0.1:8767
 // The session token comes from SPATIAL_MODELING_TOKEN or is asked for. It never leaves this PC:
 // the room id and proof sent to SpacetimeDB are hashes of the key lan.py derives from it.
@@ -37,7 +37,7 @@ function hostPort(text: string): { host: string; port: number } {
 
 const MODE = process.argv[2];
 const URL = option('url', 'https://maincloud.spacetimedb.com');
-const DATABASE = option('database', 'spatial-modeling');
+const DATABASE = option('database', 'calhacks13-spatial-modeling');
 const BLENDER = hostPort(option('blender', '127.0.0.1:8767'));
 const LISTEN = hostPort(option('listen', '127.0.0.1:8767'));
 
