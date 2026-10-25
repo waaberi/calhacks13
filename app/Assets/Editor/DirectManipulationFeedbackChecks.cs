@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using Newtonsoft.Json.Linq;
@@ -19,8 +20,8 @@ public static class DirectManipulationFeedbackChecks
     static void State(DirectModelEditingChecks.Fixture f,string phase,long sequence,string re)=>typeof(LiveControllerChecks).GetMethod("State",BindingFlags.Static|BindingFlags.NonPublic).Invoke(null,new object[]{f,phase,sequence,re});
     public static void Run()
     {
-        ArrowVisualAndMath();ArrowNativeRoute();ArrowOuterFences();MoveBodyAndPlane();ScaleFormat();ScaleAcknowledgments();ScaleCommitAndSelection();ScaleMultiTarget();DisplayScale();
-        Debug.Log("DIRECT_MANIPULATION_FEEDBACK_CHECK PASS RGB-Move-arrowheads/native-constrained-trigger-route/frozen-reflected-affine-frame/nearer-fence/free-body+planes/acknowledged-scale-multiplier/axis-factors/no-queued-or-late-ACK-display/cancel+commit-reset; physical acceptance pending");
+        ArrowVisualAndMath();ArrowNativeRoute();ArrowOuterFences();MoveBodyAndPlane();ScaleFormat();ScaleAcknowledgments();ScaleCommitAndSelection();ScaleMultiTarget();DisplayScale();ScaleQuietRendering();
+        Debug.Log("DIRECT_MANIPULATION_FEEDBACK_CHECK PASS RGB-Move-arrowheads/native-constrained-trigger-route/frozen-reflected-affine-frame/nearer-fence/free-body+planes/acknowledged-scale-multiplier/axis-factors/no-queued-or-late-ACK-display/cancel+commit-reset/concise-single-line-native-vs-display-render; physical acceptance pending");
     }
     static void ArrowVisualAndMath()
     {
@@ -169,6 +170,46 @@ public static class DirectManipulationFeedbackChecks
         var rebased=current*.8f;feedback.ShowDisplayScale(WorkspaceInteraction.DisplayScaleFactors(rebased,original));
         Check(feedback.Label.Contains("×1.40"),"rebase does not reset the user's cumulative grab-start multiplier");
         feedback.Hide();Check(!feedback.Visible&&feedback.Factors==Vector3.one,"ending the pair hides and resets display feedback");
+    }
+    static void ScaleQuietRendering()
+    {
+        var cameraObject=new GameObject("Quiet scale render fixture camera");var camera=cameraObject.AddComponent<Camera>();camera.transform.position=Vector3.back;
+        var feedback=new LiveScaleFeedback();
+        try
+        {
+            feedback.Begin();feedback.Draw(Vector3.zero,camera);var root=GameObject.Find("Live native scale multiplier");
+            var text=(UnityEngine.UI.Text)Get(feedback,"text");Check(root!=null&&root.GetComponentsInChildren<UnityEngine.UI.Text>(true).Length==1,"only the requested multiplier has a runtime text component");
+            Check(text.text=="Scale ×1.00 · pending"&&!text.text.Contains("\n"),"before ACK the actual rendered multiplier is concise and honestly pending");
+            feedback.Accept(new JObject{["scale"]=new JArray(1.25,1.25,1.25)});feedback.Draw(Vector3.zero,camera);
+            Check(text.text=="Scale ×1.25 · Blender"&&!text.text.Contains("larger")&&!text.text.Contains("applied"),"actual native scale render retains the acknowledged factor and source without prose");
+            feedback.Accept(new JObject{["scale"]=new JArray(1.2,1,.7)});feedback.Draw(Vector3.zero,camera);
+            Check(text.text.Contains("X ×1.20")&&text.text.Contains("Z ×0.70")&&!text.text.Contains("\n"),"concise runtime axis readout preserves actual independent factors");
+            feedback.ShowDisplayScale(Vector3.one*1.5f);feedback.Draw(Vector3.zero,camera);
+            Check(text.text=="Display scale ×1.50 · VR view"&&!text.text.Contains("Blender"),"actual arrangement multiplier remains explicitly VR-only");
+            RenderQuietScale(feedback,camera);
+            feedback.Hide();feedback.Accept(new JObject{["scale"]=new JArray(9,9,9)});feedback.Draw(Vector3.zero,camera);
+            Check(!root.activeSelf,"late acknowledgement cannot recreate a cancelled multiplier");
+        }
+        finally{feedback.Dispose();UnityEngine.Object.DestroyImmediate(cameraObject);}
+        Check(GameObject.Find("Live native scale multiplier")==null,"quiet multiplier hierarchy is disposed");
+    }
+    static void RenderQuietScale(LiveScaleFeedback feedback,Camera camera)
+    {
+        string directory=Environment.GetEnvironmentVariable("CALHACKS_GLASS_EVIDENCE");if(string.IsNullOrWhiteSpace(directory))return;
+        const int width=900,height=240;var sheet=new Texture2D(width*3,height,TextureFormat.RGB24,false);var row=new Texture2D(width,height,TextureFormat.RGB24,false);var target=new RenderTexture(width,height,24);var previous=RenderTexture.active;
+        try
+        {
+            camera.enabled=false;camera.stereoTargetEye=StereoTargetEyeMask.None;camera.clearFlags=CameraClearFlags.SolidColor;camera.backgroundColor=new Color(.025f,.035f,.055f);camera.cullingMask=1<<29;camera.fieldOfView=18;camera.transform.LookAt(new Vector3(.1f,.1f,0));camera.targetTexture=target;target.Create();
+            for(int panel=0;panel<3;panel++)
+            {
+                feedback.Begin();if(panel==1)feedback.Accept(new JObject{["scale"]=new JArray(1.25,1.25,1.25)});if(panel==2)feedback.ShowDisplayScale(Vector3.one*1.5f);feedback.Draw(Vector3.zero,camera);
+                var root=GameObject.Find("Live native scale multiplier");foreach(var child in root.GetComponentsInChildren<Transform>(true))child.gameObject.layer=29;
+                Canvas.ForceUpdateCanvases();camera.Render();RenderTexture.active=target;row.ReadPixels(new Rect(0,0,width,height),0,0);row.Apply();
+                Check(row.GetPixels32().Count(p=>p.r>180&&p.g>180&&p.b>180)>100,"actual concise scale state is visibly rendered");sheet.SetPixels(panel*width,0,width,height,row.GetPixels());
+            }
+            sheet.Apply();Directory.CreateDirectory(directory);File.WriteAllBytes(Path.Combine(directory,"quiet-scale-feedback.png"),sheet.EncodeToPNG());
+        }
+        finally{camera.targetTexture=null;RenderTexture.active=previous;target.Release();UnityEngine.Object.DestroyImmediate(target);UnityEngine.Object.DestroyImmediate(row);UnityEngine.Object.DestroyImmediate(sheet);}
     }
     static void ScaleMultiTarget()
     {

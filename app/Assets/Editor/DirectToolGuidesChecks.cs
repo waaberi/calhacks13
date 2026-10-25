@@ -24,7 +24,7 @@ public static class DirectToolGuidesChecks
     public static void Run()
     {
         SelectionAndNormals();ExactQuadRing();KnifeRadiusAndReadouts();RealResourcesAndAppearance();
-        Debug.Log("DIRECT_TOOL_GUIDES_CHECK PASS native_sparse_indices/face_normals/native_mirror/reflected_nonuniform_map/exact_quad_ring/no_fake_nonquad/knife_samples/actual_snap/native_radius/ACK_only/read_only/bounded_pool/dispose/production_render; physical acceptance pending");
+        Debug.Log("DIRECT_TOOL_GUIDES_CHECK PASS native_sparse_indices/face_normals/native_mirror/reflected_nonuniform_map/exact_quad_ring/no_fake_nonquad/knife_samples/actual_snap/native_radius/ACK_only/read_only/bounded_pool/dispose/production_render/quiet_geometry_no_automatic_text; physical acceptance pending");
     }
     static void SelectionAndNormals()
     {
@@ -93,6 +93,13 @@ public static class DirectToolGuidesChecks
             var frame=Frame("mesh.extrude","face",new[]{101});guides.Draw(frame,camera);var root=GameObject.Find("Native Blender contextual guides");Check(root!=null&&guides.Visible,"actual production root is visible");
             foreach(var line in root.GetComponentsInChildren<LineRenderer>(true)){Check(line.sharedMaterial.color.a>.99f,"actual shader material carries visible opaque guide colour");Check(line.startWidth>=.0025f&&line.startWidth<=.007f,"bounded world linewidth");}
             int initial=root.GetComponentsInChildren<LineRenderer>(true).Length;for(int i=0;i<5;i++)guides.Draw(frame,camera);Check(root.GetComponentsInChildren<LineRenderer>(true).Length==initial,"redraw reuses bounded line/dot pools");
+            foreach(string tool in new[]{"mesh.selection","mesh.extrude","mesh.inset","mesh.bevel","mesh.loop_cut","mesh.knife","mesh.rotate","mesh.scale"})
+            {
+                frame=Frame(tool,tool=="mesh.loop_cut"?"edge":"face",new[]{tool=="mesh.loop_cut"?11:101});frame.HoverIndex=101;frame.HoverComponent="face";
+                frame.HoverPoint=Vector3.zero;frame.Held=true;frame.Waiting=true;frame.Acknowledged=new JObject{["width_m"]=.003};frame.KnifePath=new[]{Vector3.zero,Vector3.right*.05f};guides.Draw(frame,camera);
+                Check(guides.Last.Valid&&root.GetComponentsInChildren<LineRenderer>(false).Length>0,"hover/held native contextual geometry stays visible for "+tool);
+                Check(root.GetComponentsInChildren<UnityEngine.UI.Text>(true).Length==0&&root.GetComponentsInChildren<TextMesh>(true).Length==0&&root.GetComponentsInChildren<Canvas>(true).Length==0,"real runtime guides contain no automatic tool prose or metric text during "+tool);
+            }
             Check(root.GetComponentsInChildren<Collider>(true).Length==0,"read-only guides never intercept accepted controller routing");
             guides.Hide();Check(!root.activeSelf&&!guides.Visible,"mode/cancel caller can hide entire guide immediately");
             string output=Environment.GetEnvironmentVariable("CALHACKS_GLASS_EVIDENCE");if(!string.IsNullOrWhiteSpace(output))RenderSheet(guides,camera,output);
@@ -118,7 +125,7 @@ public static class DirectToolGuidesChecks
                 if(tile==5){frame.Radius=.24f;frame.Map=Matrix4x4.Scale(new Vector3(1.2f,.7f,1));frame.SnapPoint=new Vector3(.17f,-.08f,0);frame.Acknowledged=new JObject{["scale"]=new JArray(1.25,1,1)};}
                 guides.Draw(frame,camera);var root=GameObject.Find("Native Blender contextual guides");foreach(var child in root.GetComponentsInChildren<Transform>(true))child.gameObject.layer=30;
                 Canvas.ForceUpdateCanvases();camera.Render();RenderTexture.active=target;pixels.ReadPixels(new Rect(0,0,width,height),0,0);pixels.Apply();sheet.SetPixels(tile%3*width,(1-tile/3)*height,width,height,pixels.GetPixels());
-                int bright=pixels.GetPixels32().Count(p=>p.r>170||p.g>170||p.b>170);Check(bright>150,"production camera capture contains visible guide lines and labels for "+tools[tile]);
+                int bright=pixels.GetPixels32().Count(p=>p.r>170||p.g>170||p.b>170);Check(bright>150,"production camera capture contains visible guide geometry without instructional writing for "+tools[tile]);
             }
             sheet.Apply();Directory.CreateDirectory(directory);File.WriteAllBytes(Path.Combine(directory,"direct-tool-guides.png"),sheet.EncodeToPNG());
         }
