@@ -26,8 +26,47 @@ public static class AICancellationChecks
 
     public static void Run()
     {
-        ReviewPageFence();QueuedCancellation();SentCancellation();ControlRouting();NativeAiContext();
+        ReplacedRequestFence();ReviewPageFence();QueuedCancellation();SentCancellation();ControlRouting();NativeAiContext();
         Debug.Log("AI_CANCELLATION_CHECK PASS actual reviewed-confirm/queued-vs-wire state/Cancel+context fence/no delayed replay/other owner preserved/sent receipt+unknown honest/core Undo+Redo synonyms+Save+Cancel in Edit Mode; no AI service or interactive runtime");
+    }
+    static void ReplacedRequestFence()
+    {
+        using(var f=new Fixture())
+        {
+            f.ReviewAi();f.ReviewAllPages();
+            Check(Get(f.Voice,"deleteWaiting")!=null&&f.ReviewPanel.Visible,"old review initially can be confirmed");
+            int sequence=(int)Get(f.Voice,"aiSequence");
+            // This accepted replacement fails admission before any coroutine or
+            // service request, exactly where the old review used to survive.
+            f.Drawing.NativeState["model_edit"]=new JObject { ["options"]=new JObject { ["native_context_fingerprint_unavailable"]=true } };
+            Invoke(f.Voice,"StartAiRecipe","inset the selected faces two millimeters");
+            Check((int)Get(f.Voice,"aiSequence")>sequence&&!(bool)Get(f.Voice,"aiBusy")
+                &&Get(f.Voice,"deleteWaiting")==null&&Get(f.Voice,"aiReview")==null&&!f.ReviewPanel.Visible,
+                "new request immediately revokes old confirmation even when new admission fails");
+            Invoke(f.Voice,"ConfirmDelete");
+            Check(!f.DataAvailable&&Get(f.Voice,"aiSubmittedCommand")==null,"old stick confirmation cannot execute after replacement failure");
+            Check(!(bool)Invoke(f.Voice,"AcceptAiCandidates","recipe-request",new JObject { ["decision"]="run" }),
+                "a late old review response cannot recreate the revoked AI review");
+        }
+        using(var f=new Fixture())
+        {
+            f.NativeReady();string id=f.ConfirmAi();
+            Check(f.Host.IsCommandQueued(id),"old confirmed edit waits for native release");
+            Check((bool)Invoke(f.Voice,"ReplaceAiRequest"),"replacement can cancel own unsent edit");
+            f.ReleaseAndFlush();f.ReleaseAndFlush();
+            Check(!f.Host.IsCommandQueued(id)&&!f.DataAvailable&&f.Answers.Single(a=>a.RequestId==id).Outcome=="cancelled",
+                "native release cannot replay a replaced queued AI edit");
+        }
+        using(var f=new Fixture())
+        {
+            string id=f.ConfirmAi();f.Read("command");
+            Check(!(bool)Invoke(f.Voice,"ReplaceAiRequest"),"new AI interpretation waits for an already-sent edit receipt");
+            Check(f.Host.IsCommandInFlight(id)&&!f.DataAvailable&&!f.Answers.Any(a=>a.RequestId==id),
+                "replacement never fabricates a rollback or duplicate for a sent edit");
+            f.Answer(id,"voice.run","applied");
+            Check(f.Answers.Single(a=>a.RequestId==id).Outcome=="applied","native receipt remains authoritative after replacement refusal");
+        }
+        Debug.Log("AI_REPLACEMENT_CHECK PASS revoke old review on failed replacement/no late-review resurrection/queued edit no release replay/sent edit waits actual receipt; no AI service");
     }
     static void ReviewPageFence()
     {

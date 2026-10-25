@@ -63,6 +63,22 @@ public class GeminiRecipeTests : IDisposable
         GeminiVoiceInterpreter.Answer answer=null;Drain(new GeminiVoiceInterpreter().Interpret("inset faces",new JObject(),Catalog(),()=>true,value=>answer=value));
         Assert.Single(bodies);Assert.NotNull(bodies[0]["generationConfig"]["thinkingConfig"]);Assert.Null(answer.Draft);Assert.NotNull(answer.Error);
     }
+    [Theory]
+    [InlineData(0,"connection")]
+    [InlineData(401,"configuration")]
+    [InlineData(403,"configuration")]
+    [InlineData(429,"Wait")]
+    [InlineData(503,"temporarily unavailable")]
+    [InlineData(400,"complete command")]
+    public void ServiceFailuresExplainRecoveryWithoutProviderBodiesOrRetries(int status,string expected)
+    {
+        int requests=0;
+        UnityWebRequest.Responder=web=>{requests++;return(status,"private-provider-body-never-display");};
+        GeminiVoiceInterpreter.Answer answer=null;
+        Drain(new GeminiVoiceInterpreter().Interpret("inset faces",new JObject(),Catalog(),()=>true,value=>answer=value));
+        Assert.Equal(1,requests);Assert.Null(answer.Draft);
+        Assert.Contains(expected,answer.Error);Assert.DoesNotContain("private-provider",answer.Error);
+    }
     [Fact] public void StaleContextAfterNetworkReturnDropsResponseWithoutFallback()
     {
         bool current=true,called=false;UnityWebRequest.Responder=web=>(200,Reply(Valid));

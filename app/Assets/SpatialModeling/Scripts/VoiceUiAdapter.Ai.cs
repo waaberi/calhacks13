@@ -184,7 +184,8 @@ namespace SpatialModeling
         }
         void StartAiRecipe(string text)
         {
-            aiSequence++; ai?.Cancel(); int sequence = aiSequence;
+            if (!ReplaceAiRequest()) return;
+            int sequence = aiSequence;
             var context = CaptureAiContext();
             if (context["options"]?["native_context_fingerprint_unavailable"] != null)
             { Note("The complete Blender context could not be captured. Narrow the visible scene and repeat the edit."); return; }
@@ -193,6 +194,17 @@ namespace SpatialModeling
             aiExpectedContext = context; aiFingerprint = context.ToString(Formatting.None); aiBusy = true;
             resultLine = "Preparing the complete AI editing plan";
             StartCoroutine(AwaitAiRecipe(sequence,text,context));
+        }
+        // A new interpretation must revoke the previous confirmation immediately,
+        // including when this next request is refused or fails before a review.
+        bool ReplaceAiRequest()
+        {
+            bool alreadySent = InvalidateAi();
+            DropDelete(Prompt.ReplacedPending);
+            panel?.Hide();
+            if (!alreadySent) return true;
+            Note("The previous AI edit was already sent. Wait for Blender's result before asking for another edit.");
+            return false;
         }
         IEnumerator AwaitAiRecipe(int sequence, string text, JObject context)
         {
