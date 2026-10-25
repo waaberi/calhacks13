@@ -22,7 +22,13 @@ namespace SpatialModeling.VoiceCore.Whisper
     /// <summary>Settings for <see cref="VoiceRecognizers.Create"/>. <see cref="ForStreamingAssets"/> fills the paths.</summary>
     public sealed class VoiceRecognizerSettings
     {
-        public RecognizerKind Kind = RecognizerKind.FastPath;
+        /// <summary>Whisper for every utterance (the default: the setup Waaberi approved, small.en on the GPU with the
+        /// Blender prompt, its own words sent to the host). FastPath and Vosk stay available.</summary>
+        public RecognizerKind Kind = RecognizerKind.Whisper;
+
+        /// <summary>Snap Whisper's transcript onto the grammar's phrases. Off by default: the host resolver reads
+        /// Whisper's own words, as in the approved test.</summary>
+        public bool SnapWhisperToGrammar;
 
         /// <summary>The Vosk model directory, for example StreamingAssets/vosk-model-small-en-us-0.15.</summary>
         public string VoskModelPath;
@@ -66,7 +72,7 @@ namespace SpatialModeling.VoiceCore.Whisper
 
         /// <summary>Append the grammar's words (object names, choice words) to the prompt. Measured with whisper tiny.en
         /// alone on the TTS corpus: 235 instead of 226 of 270 right through the resolver.</summary>
-        public bool PromptWithGrammar = true;
+        public bool PromptWithGrammar;
 
         /// <summary>See <see cref="PhraseSnapper.DefaultThreshold"/>.</summary>
         public float SnapThreshold = PhraseSnapper.DefaultThreshold;
@@ -151,10 +157,11 @@ namespace SpatialModeling.VoiceCore.Whisper
                     {
                         server.EnsureRunning();
                     }
-                    catch
+                    catch (Exception why)
                     {
                         server.Dispose();
-                        throw;
+                        log("Voice: Whisper is unavailable (" + why.GetType().Name + ": " + why.Message + "); using Vosk");
+                        return VoskSpeechRecognizer.Load(settings.VoskModelPath);
                     }
                     log("Voice: Whisper only (" + Describe(settings) + ")");
                     return Recognizer(settings, server);
@@ -204,7 +211,8 @@ namespace SpatialModeling.VoiceCore.Whisper
 
         static WhisperServerRecognizer Recognizer(VoiceRecognizerSettings settings, WhisperServer server) =>
             new WhisperServerRecognizer(settings.WhisperPort, settings.WhisperPrompt, settings.PromptWithGrammar,
-                settings.WhisperTimeoutMs, settings.SnapThreshold, settings.WhisperGuessConfidence) { Server = server };
+                settings.WhisperTimeoutMs, settings.SnapThreshold, settings.WhisperGuessConfidence)
+            { Server = server, SnapToGrammar = settings.SnapWhisperToGrammar };
 
         static void Stop(WhisperServer server, Task starting)
         {

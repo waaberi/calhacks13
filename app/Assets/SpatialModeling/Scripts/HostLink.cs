@@ -48,6 +48,8 @@ namespace SpatialModeling
         public bool SocketOpen => stream != null;
         public long SilenceMs => clock.ElapsedMilliseconds - Interlocked.Read(ref lastReceiveMs);
 
+        public void Reconnect() { try { client?.Close(); } catch (SocketException) { } }
+
         // Ends this link for good: its thread exits and it never posts another event.
         public void Stop()
         {
@@ -128,6 +130,16 @@ namespace SpatialModeling
             return id;
         }
 
+        public void SendEnvelope(JObject envelope)
+        {
+            var s = stream;
+            if (s == null) return;
+            // Caller supplies the stable request id; retry/receipt logic must not
+            // silently generate a second command with a new transaction identity.
+            var bytes = Utf8.GetBytes(envelope.ToString(Formatting.None) + "\n");
+            lock (writeLock) { try { s.Write(bytes, 0, bytes.Length); } catch { } }
+        }
+
         // ---------- decoding, on this thread ----------
 
         void Dispatch(byte[] bytes, int length)
@@ -176,8 +188,17 @@ namespace SpatialModeling
                         { Re = msg["re"]?.Type == JTokenType.String ? (string)msg["re"] : "", Text = p?.ToString(Formatting.None) ?? "" });
                         break;
                 }
+                // Additive consumers validate their own phase-specific payloads.
+                // Scene application is queued first, so menu selection sees the
+                // current native target before processing a transaction receipt.
+                Post(new HostEvent(HostEventKind.Message) { RawMessage = msg });
             }
-            catch (Exception e) { Warn($"Ignored a {type} message: {e.Message}"); }
+            catch (Exception e)
+            {
+                Warn($"Ignored a {type} message: {e.Message}");
+                if (type == "scene.snapshot" || type == "scene.update")
+                    Post(new HostEvent(HostEventKind.InvalidScene));
+            }
         }
 
         static JObject Parse(byte[] bytes, int length)
@@ -211,32 +232,52 @@ namespace SpatialModeling
             return e;
         }
 
-        HostEvent DecodeScene(JObject p, bool snapshot)
+        internal static HostEvent DecodeScene(JObject p, bool snapshot)
         {
             if (p == null) throw new FormatException("no payload");
             var e = new HostEvent(HostEventKind.Scene) { Snapshot = snapshot };
-            if (p["document"] is JObject d && d["revision"] != null) e.Revision = (long)d["revision"];
+            if (p["document"] is JObject d && d["revision"]?.Type == JTokenType.Integer)
+            {
+                e.Revision = (long)d["revision"];
+                e.DocumentId = (string)d["id"] ?? "";
+                e.OpenEpoch = (string)d["open_epoch"] ?? "";
+            }
+            if (!Guid.TryParseExact(e.DocumentId, "N", out _) || !Guid.TryParseExact(e.OpenEpoch, "N", out _)
+                || !e.Revision.HasValue || e.Revision < 0)
+                throw new FormatException("invalid document identity/revision");
+            var units = p["document"]?["units"];
+            double scale = (double?)units?["scale_length"] ?? double.NaN;
+            if (double.IsNaN(scale) || double.IsInfinity(scale) || scale <= 0)
+                throw new FormatException("invalid document units");
             if (p["removed"] is JArray removed)
                 foreach (var r in removed) e.Removed.Add((string)r);
             if (p["objects"] is JArray objects)
             {
                 foreach (var o in objects)
                 {
-                    // One bad object is skipped; it doesn't cost the rest of the scene.
-                    try { e.Objects.Add(DecodeObject(o as JObject ?? throw new FormatException("not an object"))); }
-                    catch (Exception ex) { Warn($"Skipped object {(o as JObject)?["id"]}: {ex.Message}"); }
+                    // Never label an incomplete snapshot current or lose one delta.
+                    e.Objects.Add(DecodeObject(o as JObject ?? throw new FormatException("not an object")));
                 }
             }
+            else throw new FormatException("objects array is missing");
+            var ids = new HashSet<string>();
+            foreach (var obj in e.Objects)
+                if (!ids.Add(obj.Id)) throw new FormatException("duplicate object ID");
             return e;
         }
 
         static ObjectRecord DecodeObject(JObject o)
         {
             var r = new ObjectRecord { Id = (string)o["id"] };
-            if (string.IsNullOrEmpty(r.Id)) throw new FormatException("no id");
+            if (!Guid.TryParseExact(r.Id, "N", out _)) throw new FormatException("invalid object id");
             r.Name = (string)o["name"] ?? r.Id;
+            r.ParentId = (string)o["parent"];
+            if (o["generation"]?.Type != JTokenType.Integer || (long)o["generation"] < 0)
+                throw new FormatException("invalid object generation");
+            r.Generation = (long)o["generation"];
+            if (r.ParentId != null && !Guid.TryParseExact(r.ParentId, "N", out _))
+                throw new FormatException("invalid parent id");
             r.Visible = (bool?)o["visible"] ?? true;
-            if (o["generation"] != null && o["generation"].Type == JTokenType.Integer) r.Generation = (long)o["generation"];
 
             if (o["transform"] is JObject t)
             {
@@ -248,6 +289,7 @@ namespace SpatialModeling
                 r.Rotation = BlenderFrame.Rotation(rot[0], rot[1], rot[2], rot[3]);
                 r.Scale = BlenderFrame.Point(sc[0], sc[1], sc[2]);
             }
+            else throw new FormatException("transform is missing");
 
             // Linear RGBA, or null: no material.
             var c = o["color"];
@@ -330,17 +372,19 @@ namespace SpatialModeling
         }
     }
 
-    enum HostEventKind { Opened, Closed, Welcome, Scene, Error, Warning, Result, VoiceCandidates, VoiceGrammar }
+    enum HostEventKind { Opened, Closed, Welcome, Scene, Error, Warning, InvalidScene, Message, Result, VoiceCandidates, VoiceGrammar }
 
     sealed class HostEvent
     {
         public readonly HostEventKind Kind;
         public string Text = "";   // Closed: why. Welcome: document name. Error: the host's message. Warning.
         public string Code = "";   // Error
+        public string DocumentId = "", OpenEpoch = "";
+        public JObject RawMessage;
         public bool Snapshot;      // Scene
         public long? Revision;
         public string Re = "", Op = "", Outcome = "";                                    // Result, Error
-        public string SessionId = "", HostEpoch = "", ActorId = "", DocumentId = "", OpenEpoch = "";   // Welcome
+        public string SessionId = "", HostEpoch = "", ActorId = "";   // Welcome (DocumentId and OpenEpoch above)
         public bool CanEdit;                                                              // Welcome
         public readonly List<string> Removed = new List<string>();
         public readonly List<ObjectRecord> Objects = new List<ObjectRecord>();
@@ -351,9 +395,9 @@ namespace SpatialModeling
     // One wire object, already in Unity's frame.
     sealed class ObjectRecord
     {
-        public string Id, Name;
+        public string Id, Name, ParentId;
+        public long Generation;
         public bool Visible;
-        public long? Generation;
         public bool HasTransform;
         public Vector3 Position, Scale;
         public Quaternion Rotation;

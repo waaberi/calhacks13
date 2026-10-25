@@ -24,7 +24,10 @@ namespace SpatialModeling
         public event Action<string, string> VoiceGrammarReceived;      // (re, payload JSON)
         public event Action<string, string> RequestFailed;             // (re, error code)
 
-        string sessionId = "", hostEpoch = "", actorId = "", documentId = "", openEpoch = "";
+        string sessionId = "", hostEpoch = "", actorId = "";
+        // The document named by welcome. Kept apart from HostScene.documentId/openEpoch, which track
+        // the applied snapshot: P2 compares those to reset the scene and placement on a new document.
+        string welcomeDocumentId = "", welcomeOpenEpoch = "";
         bool canEdit;
         bool welcomed;   // welcome arrived on this connection: voice.* requests may go before the snapshot
         readonly Dictionary<string, long> generations = new Dictionary<string, long>();
@@ -33,17 +36,17 @@ namespace SpatialModeling
         // True only while the scene is current and the host lets this connection edit.
         public bool CanSend => link != null && link.SocketOpen && connected && canEdit && status == Status.Connected;
 
-        void Handle(HostEvent e)
+        internal void Handle(HostEvent e)
         {
             bool wasConnected = connected;
             HandleCore(e);
             switch (e.Kind)
             {
                 case HostEventKind.Welcome:
-                    bool newDocument = documentId.Length > 0 && (documentId != e.DocumentId || openEpoch != e.OpenEpoch);
+                    bool newDocument = welcomeDocumentId.Length > 0 && (welcomeDocumentId != e.DocumentId || welcomeOpenEpoch != e.OpenEpoch);
                     welcomed = true;
                     sessionId = e.SessionId; hostEpoch = e.HostEpoch; actorId = e.ActorId; canEdit = e.CanEdit;
-                    documentId = e.DocumentId; openEpoch = e.OpenEpoch;
+                    welcomeDocumentId = e.DocumentId; welcomeOpenEpoch = e.OpenEpoch;
                     pendingOps.Clear();
                     if (newDocument) DocumentChanged?.Invoke();
                     Welcomed?.Invoke();
@@ -62,7 +65,7 @@ namespace SpatialModeling
                 case HostEventKind.Scene:
                     if (e.Snapshot) generations.Clear();
                     foreach (var id in e.Removed) generations.Remove(id);
-                    foreach (var o in e.Objects) if (o.Generation.HasValue) generations[o.Id] = o.Generation.Value;
+                    foreach (var o in e.Objects) generations[o.Id] = o.Generation;
                     SceneChanged?.Invoke();
                     break;
                 case HostEventKind.Result:
@@ -98,8 +101,8 @@ namespace SpatialModeling
             {
                 ["session_id"] = sessionId,
                 ["host_epoch"] = hostEpoch,
-                ["document_id"] = documentId,
-                ["open_epoch"] = openEpoch,
+                ["document_id"] = welcomeDocumentId,
+                ["open_epoch"] = welcomeOpenEpoch,
                 ["actor_id"] = actorId,
                 ["base_revision"] = revision,
                 ["source"] = source,
