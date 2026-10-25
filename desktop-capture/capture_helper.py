@@ -409,15 +409,6 @@ def measured_frame_rate(times, now):
     return (len(times) - 1) / span if len(times) > 1 and span > 0 else 0
 
 
-def stop_capture(control):
-    # windows-capture's stop() joins the native thread and re-raises whatever
-    # ended it as a plain Exception. That must not end the capture loop.
-    try:
-        control.stop()
-    except Exception as exc:  # noqa: BLE001
-        print(f"CAPTURE_STOP_ERROR {type(exc).__name__}: {exc}", flush=True)
-
-
 def capture_loop(api, latest, stop, fps):
     previous = None
     while not stop.is_set():
