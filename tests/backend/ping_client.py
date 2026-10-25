@@ -10,7 +10,7 @@ tests: it ends up in your shell history. Without TLS the client first sends hell
 as the host requires in that mode.
 
 Blender must be running with the add-on enabled in Host role, and for the LAN
-port with "Let a Client-role Blender join over the LAN" on. The pong is sent
+port with "Let a Client-role Blender join" on. The pong is sent
 from Blender's main thread, so it waits while Blender is busy (for example,
 rendering). The tests reuse Client. Exits 0 if the ping was answered.
 """

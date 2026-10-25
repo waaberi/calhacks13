@@ -50,8 +50,9 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
         update=_sync_roles,
     )
     lan_enabled: bpy.props.BoolProperty(
-        name="Let a Client-role Blender join over the LAN",
-        description=f"Listen on port {lan.PORT} for a second Blender with the session token",
+        name="Let a Client-role Blender join",
+        description=(f"Listen on port {lan.PORT} for a second Blender with the session token, "
+                     "directly on the LAN or through the Maincloud bridge"),
         default=False,
         update=_restart,
     )
@@ -108,6 +109,44 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
         update=_restart,
     )
 
+    spacetime_where: bpy.props.EnumProperty(
+        name="SpacetimeDB",
+        items=(
+            ("LOCAL", "This PC", ("A SpacetimeDB server on this PC decides leases. Remote "
+             "Blenders join directly on the LAN")),
+            ("CLOUD", "Maincloud", ("SpacetimeDB on Maincloud decides leases and carries "
+             "remote Blenders' connections through the bridge, from any network "
+             "(spacetime/README.md)")),
+        ),
+        default="LOCAL",
+        update=_restart,
+    )
+
+    spacetime_url: bpy.props.StringProperty(
+        name="Server",
+        description=(
+            "SpacetimeDB server that decides leases and holds the session state. Run it "
+            "on this PC with `spacetime start --listen-addr 127.0.0.1:3000`. Blank: "
+            "Blender decides leases in memory"
+        ),
+        default="http://127.0.0.1:3000",
+        update=_restart,
+    )
+
+    spacetime_database: bpy.props.StringProperty(
+        name="Database",
+        description="The database the module is published as on this PC's server",
+        default="spatial-modeling",
+        update=_restart,
+    )
+
+    cloud_database: bpy.props.StringProperty(
+        name="Database",
+        description="The database the module is published as on Maincloud (names are global)",
+        default="calhacks13-spatial-modeling",
+        update=_restart,
+    )
+
     client_address: bpy.props.StringProperty(name="Host address", default="127.0.0.1")
     client_port: bpy.props.IntProperty(name="Host port", default=lan.PORT, min=1, max=65535)
     client_token: bpy.props.StringProperty(name="Session token", subtype="PASSWORD")
@@ -133,6 +172,15 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
         layout.label(text=f"VR app: {host.status}")
         for actor in host.participants():
             layout.label(text=f"Connected: {actor['name']} ({actor['role']})", icon="USER")
+        layout.row().prop(self, "spacetime_where", expand=True)
+        if self.spacetime_where == "CLOUD":
+            layout.prop(self, "cloud_database")
+            name = self.cloud_database.strip() or "<database>"
+            layout.label(text=f"Remote Blenders: run `npm run bridge -- host --database {name}`")
+        else:
+            layout.prop(self, "spacetime_url")
+            layout.prop(self, "spacetime_database")
+        layout.label(text=host.spacetime_status())
         box = layout.box()
         box.prop(self, "lan_enabled")
         col = box.column()

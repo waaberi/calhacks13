@@ -12,7 +12,18 @@ from mathutils import Vector
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "blender_addon"))
-from spatial_modeling import document, edits, host, leases, live_edit, modeling_tools, protocol, session, spatial_model_edit, sync
+from spatial_modeling import (
+    document,
+    edits,
+    host,
+    leases,
+    live_edit,
+    modeling_tools,
+    protocol,
+    session,
+    spatial_model_edit,
+    sync,
+)
 
 
 def run(output):

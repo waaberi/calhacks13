@@ -12,6 +12,9 @@ cover and answers the messages.
   targets exist (not_found), then the store grants it or refuses with
   lease_conflict and the blocking lease in details.lease. Everyone gets
   session.update with the new lease, then the sender gets lease.granted.
+  With SpacetimeDB running, its `acquire` reducer makes that decision on the
+  store's background thread (session_store.MirroredStore), and the answer goes
+  out when host.py's drain timer polls the store: Blender never waits for it.
 - lease.release: no reply on success, then everyone gets session.update.
   not_found if no such lease is live, permission_denied if it is someone else's.
 - check(), step 6 of every command (commands.py), right before it is applied.
@@ -143,16 +146,22 @@ class Leases:
                                 "full. This ID may have been used before; restart the hosting "
                                 "session before requesting a new reservation.", rid)
         if stored is not None:
-            if stored[0] == digest:
-                return protocol.message(stored[1], stored[2], re=rid)  # nothing granted again
-            return server.error("duplicate_request", "This request ID was already used for a "
-                                "different lease.acquire. Use a new ID.", rid)
-        reply = self._acquire(rid, p, conn)
-        self.requests[rid] = (digest, reply["type"], reply["payload"])
+            if stored[0] != digest:
+                return server.error("duplicate_request", "This request ID was already used "
+                                    "for a different lease.acquire. Use a new ID.", rid)
+            if stored[1] is None:
+                return None  # still being decided; the answer goes out when it is
+            return protocol.message(stored[1], stored[2], re=rid)  # nothing granted again
+        self.requests[rid] = (digest, None, None)
         while len(self.requests) > self.max_requests:
             self.requests.popitem(last=False)
             self.evicted = True
-        return reply
+
+        def answer(reply):
+            self.requests[rid] = (digest, reply["type"], reply["payload"])
+            return reply
+
+        return self._acquire(rid, p, conn, answer)
 
     def release(self, msg, conn):
         problem = release_problem(msg)
@@ -166,9 +175,12 @@ class Leases:
             return server.error(e.code, e.message, msg["id"], e.details)
         return None
 
-    def _acquire(self, rid, p, conn):
+    def _acquire(self, rid, p, conn, answer):
+        """The reply to send now, or None if the store decides later; then the reply goes to
+        conn when it does. answer(reply) records each reply for deduplication."""
+
         def refused(code, text, details=None):
-            return server.error(code, text, rid, details)
+            return answer(server.error(code, text, rid, details))
 
         actor = self.session.participants.get(conn)
         if not getattr(conn, "can_edit", False):
@@ -189,11 +201,28 @@ class Leases:
         if missing:
             return refused("not_found", f"{len(missing)} of the targets don't exist (any more): "
                            f"{', '.join(missing)}.")
-        try:
-            lease = self.grant(actor["actor_id"], p["mode"], p["targets"])
-        except session_store.SessionError as e:
-            return refused(e.code, e.message, e.details)
-        return protocol.message("lease.granted", {"lease": lease}, re=rid)
+        mode = p["mode"]
+        covered = self.covered(p["targets"]) if mode == "shared" else []
+        now = {"deciding": True, "reply": None}
+
+        def decided(lease, error):
+            if error is not None:
+                if error.code == "lease_conflict":
+                    error = self._conflict(error.details and error.details.get("lease"),
+                                           mode == "exclusive", "lease")
+                reply = refused(error.code, error.message, error.details)
+            else:
+                self._granted(lease)
+                reply = answer(protocol.message("lease.granted", {"lease": lease}, re=rid))
+            if now["deciding"]:
+                now["reply"] = reply
+            else:
+                conn.send(reply)  # a no-op if the connection has closed meanwhile
+
+        self.store.acquire_async(actor["actor_id"], mode, covered, decided,
+                                 names=self._names(covered))
+        now["deciding"] = False
+        return now["reply"]
 
     # Granting and ending, also for the host's own participant (#77)
 
@@ -211,10 +240,13 @@ class Leases:
                 raise self._conflict(e.details and e.details.get("lease"), mode == "exclusive",
                                      "lease") from None
             raise
+        self._granted(lease)
+        return lease
+
+    def _granted(self, lease):
         self.session.leases_changed()
         what = ", ".join(lease["targets"]) or "the whole document"
-        log.info("%s holds a %s lease on %s", lease["owner"]["name"], mode, what)
-        return lease
+        log.info("%s holds a %s lease on %s", lease["owner"]["name"], lease["mode"], what)
 
     def end(self, lease_id, actor_id):
         """End actor_id's lease and tell everyone. Raises SessionError not_found or
@@ -228,6 +260,11 @@ class Leases:
         self.session.leases_changed()
 
     # Checks
+
+    def _names(self, ids):
+        """{ID: object name} for the leased IDs that are objects, for SpacetimeDB's labels."""
+        names = getattr(self.editor, "names", None)
+        return names(ids) if names is not None and ids else {}
 
     def covered(self, ids):
         """ids followed by their linked data (see the module docstring), without repeats."""

@@ -98,6 +98,11 @@ class Editor:
     def generation(self, object_id):
         return self.sync.generation(object_id)  # None: no such object
 
+    def names(self, ids):
+        """{ID: object name} for the IDs that are objects here (SpacetimeDB's `label` table)."""
+        objects = ((i, self.sync.find_object(i)) for i in ids)
+        return {i: obj.name for i, obj in objects if obj is not None}
+
     def linked(self, ids):
         """The IDs of the objects that changing the objects `ids` can change too.
 

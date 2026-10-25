@@ -1,126 +1,134 @@
 # SpacetimeDB session state
 
-The SpacetimeDB spike (issue #16, [PHASE_PLAN.md › SpacetimeDB session state](../PHASE_PLAN.md#spacetimedb-session-state)). Owner: Waaberi.
-
-The module holds the session state the host shares: **participants**, **object leases** and the **receipt log** (activity is the receipts of applied commands). It never holds geometry, scene snapshots or native commands; those stay on the direct host connection. The wire format in [contracts/README.md](../contracts/README.md) doesn't change: the host builds `session.update`, `lease.granted` and `receipts` from these tables, or from memory if SpacetimeDB isn't used.
+The SpacetimeDB module is Coplanar's session authority. Its `acquire` reducer decides who may edit which object, its tables hold who is connected and what each person is editing, and on Maincloud it relays the second Blender's connection between networks ([below](#across-the-internet)). It only relays that connection as TLS ciphertext it can't read, and it never stores geometry, snapshots or commands. The wire format in [contracts/README.md](../contracts/README.md) doesn't change: the host builds `session.update`, `lease.granted` and refusals from these tables.
 
 | File | What it is |
 | --- | --- |
-| [`src/index.ts`](src/index.ts) | The module: tables `participant`, `lease`, `receipt` (public) and `authority` (private), and the reducers. |
-| [`../blender_addon/spatial_modeling/session_store.py`](../blender_addon/spatial_modeling/session_store.py) | The host's side: one `SessionStore` interface, `MemoryStore` (fallback) and `SpacetimeStore` (stdlib HTTP). |
-| [`LatencyProbe/`](LatencyProbe/) | C# console app on the official C# SDK; stands in for the Unity app. |
-| [`measure.py`](measure.py) | Measures HTTP round trips and subscription latency (stdlib only). |
+| [`src/index.ts`](src/index.ts) | The module: its tables, reducers and views. |
+| [`../blender_addon/spatial_modeling/session_store.py`](../blender_addon/spatial_modeling/session_store.py) | The host's side: the `SessionStore` interface, `SpacetimeStore` (stdlib HTTP), `MemoryStore`, and `MirroredStore`, which the host uses to send lease requests to SpacetimeDB on a background thread. |
+| [`board/`](board/) | The session board: a live page subscribed to the module with the TypeScript SDK. |
+| [`bridge/`](bridge/) | The internet bridge: carries a remote Blender's connection to the host through the module. |
+| [`LatencyProbe/`](LatencyProbe/) | A C# console app on the official C# SDK that measures subscription latency. |
+| [`measure.py`](measure.py) | Measures reducer, SQL and subscription round trips (stdlib only). |
 | [`../tests/backend/test_session_store.py`](../tests/backend/test_session_store.py) | Runs every store test against both stores; the SpacetimeDB half is skipped when no server is running. |
-| [`../tests/backend/spacetime_blender_check.py`](../tests/backend/spacetime_blender_check.py) | Criteria 3 and 4 in Blender's own Python. |
 
-## Verdict
+## The module
 
-**All four pass criteria pass on Waaberi's Linux PC; two still need the real hardware.** Criterion 1 still has to be run on Talia's Windows PC, and criterion 2 was measured with a C# console app on the same SDK, not with the Unity app. Recommendation: **use SpacetimeDB for session state**, behind `SessionStore`, and keep `MemoryStore` as the fallback the host picks when no server is running. It costs Talia one extra window (`spacetime start`) and a one-time Node.js install. Latency is about 4 ms, 60 times under the target. Each call blocks Blender's main thread for 1 to 5 ms; an acquire with its read-back takes 12 ms at p95.
+| Table | Visibility | Holds |
+| --- | --- | --- |
+| `participant` | public | Everyone in the session: actor ID, name and role (VR, Blender client or host). |
+| `lease` | public | Who is editing which objects, and when each lease expires. |
+| `label` | public | The names of leased objects, for the session board. |
+| `refusal` | public | The latest refused lease requests: who asked, for what, and the lease that blocked them. |
+| `receipt` | public | Summaries of applied requests. The host currently answers `receipt.query` from its own log in `commands.py`. |
+| `authority` | private | The host's identity. Only the host can call the session reducers. |
+| `room`, `pipe`, `frame` | private | The internet relay. Each bridge reads its own rows through the `my_pipe` and `my_frame` views. |
 
-| # | Criterion | Result | Measured |
-| --- | --- | --- | --- |
-| 1 | `spacetime start` on localhost; the module publishes | Pass (Linux; Windows still to do) | Server up on `127.0.0.1:3000` at once; `spacetime publish` builds and publishes in 0.8 s. |
-| 2 | A subscriber sees a lease change within 250 ms | Pass (C# console app, not Unity yet) | Python reducer call to C# `OnInsert` callback: median 4.0 ms, p95 5.0 ms, max 20.5 ms. With `FrameTick()` once per 90 Hz frame, as in Unity: median 8.9 ms, p95 14.0 ms, max 30.5 ms. |
-| 3 | Blender's own Python acquires through a reducer with `urllib`; a second acquire of the same object is rejected | Pass | Blender 5.2.2's bundled Python 3.13.13, background and GUI: acquire in 3 to 6 ms, the second acquire rejected with `lease_conflict` ("Talia is editing this") in 3 to 5 ms. |
-| 4 | Restarting Blender loses neither the receipt log nor the current leases | Pass, but see below | A new Blender process with the same host token reads the same lease and receipt, and the same acquire is still rejected. Both also survive a restart of the SpacetimeDB server, including `kill -9`. |
+Reducers: `claim_host` and `reset_host`; `join`, `leave`, `acquire`, `renew`, `release` and `expire` for the session; `record_receipt`, `set_labels` and `note_refusal`; `open_room`, `open_pipe`, `send`, `ack` and `close_pipe` for the relay.
 
-**About criterion 4.** The rows survive. But under the contract, the owners' connections close when the host restarts, and every reconnect gets a new `actor_id`, so nobody can renew those leases afterwards. With the contract's 6 s TTL they lapse on their own, as the contract wants. The check used a 120 s TTL to show the data survives. What a restart really preserves is the **receipt log**: after a crash, `receipt.query` can answer for requests the host recorded before it went down. That is the one thing `MemoryStore` can't do.
+## Setup
 
-### Measured numbers
+Pin version **2.13.0** of everything: the CLI and server, the npm package (pinned in `package-lock.json`) and any client SDK.
 
-AMD Ryzen AI 9 HX 370, Fedora 44, SpacetimeDB 2.13.0 standalone, Node.js 26.12.0, .NET SDK 10.0.402, Blender 5.2.2. Server, Python and probe on one machine over `127.0.0.1`. Two runs of `python spacetime/measure.py` (n = 200, then n = 300; the table shows the second run, and the first agrees within about 1 ms). Milliseconds:
+1. **Node.js 22 or later** builds the module. On Windows: `winget install OpenJS.NodeJS.LTS`, then open a new terminal.
+2. **SpacetimeDB CLI and server.** On Windows, in PowerShell: `iwr https://windows.spacetimedb.com -useb | iex`. On Linux or macOS: `curl -sSf https://install.spacetimedb.com | sh`. Then, in a new terminal:
 
-| Measurement | median | p95 | max |
-| --- | --- | --- | --- |
-| Reducer call over HTTP (`renew`), back to back | 1.8 | 2.6 | 11.8 |
-| Reducer call over HTTP (`acquire`), 20 to 50 ms apart | 3.7 | 4.4 | 13.9 |
-| SQL query, one table | 0.9 | 1.4 | 2.4 |
-| `session()`: participants and leases, 2 queries (one poll) | 2.4 | 3.2 | 12.5 |
-| `acquire()` including its read-back | 4.4 | 12.3 | 18.4 |
-| Subscription: reducer call to C# `OnInsert`, `FrameTick` every 1 ms | 4.0 | 5.0 | 20.5 |
-| Subscription: reducer call to C# `OnDelete`, `FrameTick` every 1 ms | 4.0 | 4.8 | 10.1 |
-| Subscription: `OnInsert`, `FrameTick` every 11 ms (90 Hz) | 8.9 | 14.0 | 30.5 |
-| Subscription: `OnDelete`, `FrameTick` every 11 ms (90 Hz) | 9.2 | 14.0 | 14.9 |
-
-Spaced-out calls take about 2 ms longer than back-to-back ones. I haven't checked why; the CPU waking from idle is a guess. Expect the spaced figure in real use. The subscriber's callback arrives about 0.3 ms after the HTTP call returns.
-
-**How often the host can poll:** it doesn't have to. The host is the only writer, so it reads `session()` (about 2.5 ms) only after its own writes, to send `session.update`. Leases that expire need no poll either: `leases()` already leaves them out, and the host calls `expire()` on its own schedule so subscribers stop showing them. If polling is ever needed, 10 polls a second would take about 25 ms of every second, 2.5 % of the main thread. Renewing on every client heartbeat (every 2 s per client) is under 2 calls a second.
-
-## Setup on Talia's Windows PC
-
-PowerShell, as Talia (not as administrator). Pin version **2.13.0** of everything: the CLI and server, the npm package (pinned in `package-lock.json`) and the client SDK.
-
-1. **Node.js** builds the module. Install the LTS: `winget install OpenJS.NodeJS.LTS`, then open a new terminal and check `node --version`. (Tested here with Node 26; I haven't tried the LTS.)
-2. **SpacetimeDB CLI and server:**
-
-   ```powershell
-   iwr https://windows.spacetimedb.com -useb | iex
-   # open a new terminal so `spacetime` is on PATH
+   ```sh
    spacetime version install 2.13.0
    spacetime version use 2.13.0
    spacetime --version            # must say 2.13.0
    ```
 
-   If the Visual C++ runtime is missing, the installer downloads and installs it, which shows a UAC prompt. The installer prints where it keeps its configuration and data; note both paths.
 3. **Start the server on localhost only**, in its own terminal, and keep it open while you work:
 
-   ```powershell
+   ```sh
    spacetime start --listen-addr 127.0.0.1:3000
    ```
 
-   Always pass `--listen-addr 127.0.0.1:3000`. Without it, the server listens on every network interface (`0.0.0.0:3000`) with no TLS. If Windows Firewall asks whether to allow access, choose **Cancel**. If port 3000 is taken, use another port here and give the same URL to the add-on and the Unity app.
+   Always pass `--listen-addr 127.0.0.1:3000`. Without it, the server listens on every network interface (`0.0.0.0:3000`) with no TLS. If Windows Firewall asks whether to allow access, choose **Cancel**. If port 3000 is taken, use another port here and give the same URL to the add-on.
 4. **Publish the module**, from a checkout of this repo:
 
-   ```powershell
+   ```sh
    cd spacetime
    npm ci
    spacetime publish -y           # spacetime.json: local server, database "spatial-modeling"
    spacetime sql spatial-modeling "SELECT * FROM lease"   # an empty table
    ```
 
-   The first publish logs the CLI into the local server. That CLI identity owns the database. Publish again after a module change; the data is kept unless the schema changes incompatibly.
-5. **The host claims the database** the first time the add-on connects (in P3B). To see who holds it, run `spacetime sql spatial-modeling "SELECT * FROM authority"`: slot 0 is the publisher and slot 1 the host. Only the owner can read that table. If the host's token is lost, free the slot with `spacetime call spatial-modeling reset_host`, then restart the host.
-6. *(Optional)* **Measure on this PC.** Install the .NET SDK (`winget install Microsoft.DotNet.SDK.10`) and generate the probe's bindings (`spacetime generate --lang csharp --out-dir LatencyProbe\module_bindings --module-path . -y`). Then run the measurement with Blender's own Python, so no other Python is needed: `& "C:\Program Files\Blender Foundation\Blender 5.2\5.2\python\bin\python.exe" measure.py`. It publishes its own `spatial-modeling-bench` database and leaves `spatial-modeling` alone.
+   The first publish logs the CLI into the local server, and that CLI identity owns the database. Publish again after a module change; the data is kept unless the schema changes incompatibly.
+5. **Start the host.** The host claims the database the first time the add-on connects. To see who holds it, run `spacetime sql spatial-modeling "SELECT * FROM authority"`: slot 0 is the publisher and slot 1 the host. If the host's token is lost, free the slot with `spacetime call spatial-modeling reset_host`, then restart the host.
 
-**Windows risks** (none of this has been tried on Windows yet):
+## How the host uses it
 
-- Connecting to a closed port on Windows takes about 2 s rather than failing at once. So the host should create the `SpacetimeStore` once, when it starts, and fall back to `MemoryStore` if that raises `StoreUnavailable`. It shouldn't retry on every request. The store's timeout is 1 s.
-- urllib uses the Windows proxy settings. `SpacetimeStore` turns proxies off, so a system proxy can't capture localhost traffic.
-- Port 3000 is a common development port; it may already be in use.
-- The server signs tokens with keys in the CLI's configuration directory (`--jwt-key-dir`). Deleting that directory makes every token invalid, the publisher's included. `SpacetimeStore` gets a new identity when its token is refused, but it can't claim a database that still names the old host. I haven't tested recovery; it probably means wiping the server's data directory and publishing again. Back up the configuration directory, and don't delete it.
-- I haven't tried `spacetime publish` on Windows for a TypeScript module.
+The host add-on uses SpacetimeDB through `MirroredStore` in `session_store.py`. The **SpacetimeDB** preference picks **This PC** (`http://127.0.0.1:3000` by default) or **Maincloud**, and the preferences show which store is deciding.
 
-## For Jihyeon: the Unity subscription
+- **SpacetimeDB decides.** When a client (VR or the remote Blender) asks for a lease, the add-on hands the request to a background thread (`spacetime-mirror`). The thread calls the module's `acquire` reducer, which grants or refuses it atomically, and the host answers the client with that decision. A lease that only SpacetimeDB holds still refuses the request.
+- **Blender never waits.** The main thread only hands the request over; the answer goes out on the add-on's next 20 ms drain. On localhost a client gets its answer in about 5 to 25 ms.
+- **Every read is local.** The host keeps the leases SpacetimeDB granted in memory, so each command's lease check, the desktop lock and `session.update` never touch the network.
+- **The rest is copied, in order.** Joins, leaves, releases and the host desktop's own leases apply locally at once. The thread copies them in the order leave, release, join, acquire, so the reducer always decides against the current session. The reducers check those copies too, and a disagreement is logged.
+- **Refusals and names.** The thread records each refusal in the `refusal` table and the names of leased objects in `label`, for the session board.
+- **Lifetime.** Leases have the contract's 6 s TTL, and the thread renews them every 2 s, even while a render keeps Blender busy. If Blender quits or crashes, subscribers stop seeing its leases within 6 s.
+- **If the server drops.** Blender keeps deciding leases in memory and retries every 5 s. When the server is back, the thread clears what an earlier host left and copies the current session there. If a reducer call fails midway, memory decides that request, and SpacetimeDB gets the current state on reconnect.
+- **Token.** It's kept in Blender's config folder as `spatial_modeling/spacetime-host-token` (`spacetime-host-token-maincloud` for Maincloud). If the preferences say "another identity is already the host", run `spacetime call spatial-modeling reset_host` and re-enter the SpacetimeDB preference.
 
-1. **SDK:** in Package Manager, choose **+ › Add package from git URL** and enter `https://github.com/clockworklabs/com.clockworklabs.spacetimedbsdk.git#v2.13.0`. The same SDK is on NuGet as `SpacetimeDB.ClientSDK` 2.13.0, which is what `LatencyProbe` uses.
-2. **Bindings:** generate them from the module, for example from the repo root:
+The remote Blender client joins through the host's TLS LAN port (8767): directly on a LAN, or through the bridges [across the internet](#across-the-internet).
 
-   ```sh
-   spacetime generate --lang csharp --out-dir app/Assets/SpacetimeDB/module_bindings --module-path spacetime -y
-   ```
+## The session board
 
-   Pick the folder inside `app/` yourself, commit the generated files with their `.meta` files, and generate again whenever `spacetime/src/` changes. Generating needs `npm ci` in `spacetime/` first. The "could not format generated files" warning just means `dotnet` isn't on PATH, and is harmless.
-3. **Connect and subscribe.** [`LatencyProbe/Program.cs`](LatencyProbe/Program.cs) is a complete example: `DbConnection.Builder().WithUri("http://127.0.0.1:3000").WithDatabaseName("spatial-modeling")`, then subscribe to `SELECT * FROM lease` and `SELECT * FROM participant`. In Unity, the SDK's `SpacetimeDBNetworkManager` calls `FrameTick()` every frame.
-4. **What the rows mean.** `lease.owner_id` is the owner's `actor_id`; look up the name with `conn.Db.Participant.ActorId.Find(ownerId)`. An `exclusive` lease has no targets and covers the whole document. Times are Unix milliseconds (`ulong`). Every renewal rewrites `expires_at`, so handle `OnUpdate` as well as `OnInsert` and `OnDelete`, and treat a lease as gone once `expires_at` has passed.
-5. **Read only.** The bindings include the reducers, but only the host can call them; Unity gets `permission_denied`. Lease requests stay `lease.acquire` over the host connection. `session.update` over that connection carries the same lists, so the app must keep working without SpacetimeDB.
-6. **Criterion 2 in Unity:** in `OnInsert`, log `DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (long)row.AcquiredAt`. `acquired_at` is the server's clock when the reducer ran, on the same PC. The target is under 250 ms.
+A live page of who's connected, who's editing what, and every SpacetimeDB decision as it happens, such as "SpacetimeDB refused Lee's request for Cube: Talia is editing Cube", each with how fast the subscription pushed it. It only reads.
 
-## For the host (P3B)
+```sh
+cd spacetime
+npm ci                 # once, and after pulling module changes
+npm run board          # then open http://127.0.0.1:3100
+npm run board -- --url http://127.0.0.1:3000 --database spatial-modeling --port 3100   # the defaults
+```
 
-- Pick the store once, at host start: `SpacetimeStore(token_path)`, and fall back to `MemoryStore()` on `StoreUnavailable`. Show which one is in use in the add-on status. Never switch during a session; that would split the state.
-- Keep the token outside Git and outside the `.blend` file, for example in `bpy.utils.user_resource('CONFIG', path="spatial_modeling", create=True)`.
-- Call `renew(actor_id)` whenever a client is heard from, `leave(actor_id)` when its connection closes, and `expire()` now and then. For a command sent without a lease, check `conflict(...)`. Record a receipt as `pending` before applying and as final afterwards, so a crash between the two leaves a record.
-- Every call blocks Blender's main thread for its round trip. If a server stalls, a call waits up to the 1 s timeout and then raises `StoreUnavailable`. Treat that like `internal_error`: the outcome is unknown.
+[`board/server.ts`](board/server.ts) subscribes with the official TypeScript SDK and pushes each change to [`board/index.html`](board/index.html) over Server-Sent Events. It listens on 127.0.0.1 only. `board/module_bindings/` is generated; after changing `src/`, regenerate it with `spacetime generate --lang typescript --out-dir board/module_bindings --module-path . -y`.
 
-**Where the host is now (#75).** Leases and presence go through `SessionStore`: `session.Session(store=...)` takes one, and `host.start()` passes none, so the host uses `MemoryStore(lease_ttl_ms=None)`. There, leases end only on release or when the owner's connection closes; the server closes a connection it hasn't heard from for 6 s, timed on its reader thread. SpacetimeDB isn't wired in yet, on purpose, until criterion 1 passes on Windows (#16). Before switching, settle these:
+## Across the internet
 
-- **Renewal while Blender is busy.** `renew()` would run on the main thread, which stops during a render. A render over 6 s would let every lease lapse in SpacetimeDB although the clients kept pinging, and `renew()` doesn't revive a lapsed lease. Renew from the reader thread's last-heard times when the main thread resumes, before anything else, or give the rows a longer TTL and let the host end them on leave.
-- **Cost per command.** Step 6 of every command reads the leases: two SQL queries, about 2.5 ms each time, on the main thread.
-- **Receipts** still live in `commands.py`, not in the store.
+For two PCs with no shared network, so no LAN address, port forwarding or VPN is needed. Both PCs connect out to the same database on Maincloud, and a small Node bridge on each PC carries the host connection through it. Neither add-on changes how it connects.
 
-## Security notes
+```
+remote Blender --TLS-PSK--> join bridge --wss--> Maincloud <--wss-- host bridge --> host Blender :8767
+  (127.0.0.1:8767)                         room / pipe / frame                       (LAN port on)
+```
 
-- Only the identity that called `claim_host` first can write. That is the first caller, so the host must claim right after the first publish. Check this before a demo (step 5). Anonymous HTTP callers get a fresh identity each time and are rejected.
-- SQL `INSERT`, `UPDATE` and `DELETE` are refused for everyone except the database owner (tested), so the reducers are the only way to write.
-- The server sends `Access-Control-Allow-Origin: *`. Any web page open in a browser on Talia's PC can read the public tables: names, lease targets and receipt summaries. It can't write. Keep secrets out of these tables; there are none now.
+The module is published on Maincloud as `calhacks13-spatial-modeling`. The add-on and both bridges use that name by default.
+
+### Run it
+
+Every PC needs Node 22 or later and `npm ci` in `spacetime/`.
+
+1. **Host PC:** in the add-on, turn on the LAN port with TLS and switch **SpacetimeDB** to **Maincloud**. Then run `npm run bridge -- host` and paste the session token when asked.
+2. **Remote PC:** run `npm run bridge -- join` with the same token. In the Client-role add-on, connect to `127.0.0.1` port `8767` with that token and turn on **Use TLS with the token**.
+
+Both bridges take `--url` (default `https://maincloud.spacetimedb.com`) and `--database` (default `calhacks13-spatial-modeling`). The host bridge also takes `--blender HOST:PORT`, and the join bridge takes `--listen HOST:PORT`. Both default to `127.0.0.1:8767`. Set `SPATIAL_MODELING_TOKEN` to skip the token prompt.
+
+### Changing the module
+
+After changing `src/`, regenerate the bridge's bindings and republish (this needs the publisher's `spacetime login`):
+
+```
+spacetime generate --lang typescript --out-dir bridge/module_bindings --module-path . -y
+spacetime publish -s maincloud -y calhacks13-spatial-modeling
+```
+
+The first add-on to connect in Maincloud mode becomes the host. If the wrong identity claims it, or the host's token is lost, the publisher frees the slot with `spacetime call -s maincloud calhacks13-spatial-modeling reset_host`.
+
+### How the relay works
+
+- **Relay.** Each TCP connection is a `pipe`, and its bytes travel as numbered `frame` rows. `send` checks that the caller owns the pipe and that frames arrive in order, and the receiver deletes them with `ack`. At most 64 frames of 64 KiB are in flight in each direction. When a bridge disconnects, `on_disconnect` closes its room or pipes, and Blender reconnects as it does after any lost connection.
+- **Encryption.** The bridges pass the TLS-PSK bytes through unchanged, so Maincloud only stores ciphertext. The join bridge refuses any connection that doesn't start with a TLS handshake, so the add-on's no-TLS fallback can't send the token through the relay.
+- **Access.** `room`, `pipe` and `frame` are private. Each bridge sees only its own rows, through the `my_pipe` and `my_frame` views. The session token never leaves either PC. A bridge sends a room ID and a proof, both derived from the token, so only someone with the token can open the room or connect to it.
+- **Local or cloud.** Either way, the same `acquire` reducer decides leases. Each server has its own host token, so the host keeps its claim on both when you switch between them. Calls to Maincloud take a few hundred milliseconds, but they run on the mirror thread, so Blender never waits for them.
+
+The VR headset stays at the host's PC: the Unity app talks to its own PC's host on `127.0.0.1:8765`.
+
+## Security
+
+- Only the identity that called `claim_host` first can write, so the host should connect right after the first publish (setup step 5). Anonymous HTTP callers get a fresh identity each time and are rejected.
+- SQL `INSERT`, `UPDATE` and `DELETE` are refused for everyone except the database owner, so the reducers are the only way to write.
+- The session tables are public. Anyone who knows the database name can read participant names, lease targets, refusals and receipt summaries, and the local server sends `Access-Control-Allow-Origin: *`, so any web page on the host PC can read them too. Nobody else can write, and no secrets are stored there.
 - Session tokens and SpacetimeDB tokens stay out of Git. `spacetime/.gitignore` covers `node_modules/`, `dist/` and the generated bindings.

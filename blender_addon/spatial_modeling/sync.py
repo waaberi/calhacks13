@@ -41,7 +41,8 @@ again: the ID given to each object (by its session_uid, which survives
 Undo/Redo) is remembered until the next file load and given back.
 
 Change observation: depsgraph_update_post marks the scene as changed and notes
-whose geometry changed; undo_post and redo_post mark everything, since Undo
+whose geometry changed; so does frame_change_post, since a frame change during
+playback or scrubbing doesn't run depsgraph_update_post; undo_post and redo_post mark everything, since Undo
 replaces data-blocks. A flush looks every object up again, diffs its record
 (name, parent, visibility, transform, color) and the collections holding it
 with what clients have, and re-evaluates only meshes that may have changed,
@@ -526,6 +527,7 @@ def _on_load_pre(*_args):
 
 _HANDLERS = (
     (bpy.app.handlers.depsgraph_update_post, _on_depsgraph_update),
+    (bpy.app.handlers.frame_change_post, _on_depsgraph_update),
     (bpy.app.handlers.undo_post, _on_undo_redo),
     (bpy.app.handlers.redo_post, _on_undo_redo),
     (bpy.app.handlers.save_pre, _on_save_pre),

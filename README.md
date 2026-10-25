@@ -1,4 +1,4 @@
-# Spatial Modeling
+# Coplanar
 
 ![Blender 5.2](https://img.shields.io/badge/Blender-5.2-E87D0D?logo=blender&logoColor=white)
 ![Unity 6](https://img.shields.io/badge/Unity-6-000000?logo=unity&logoColor=white)
@@ -6,19 +6,21 @@
 ![SpacetimeDB](https://img.shields.io/badge/SpacetimeDB-session_state-5B3FD9)
 ![CalHacks 13](https://img.shields.io/badge/CalHacks-13-FDB515)
 
-Spatial Modeling lets you edit a real Blender project in VR, together with someone working in desktop Blender.
+**3D modeling is better with friends.** Coplanar turns Blender into a multiplayer VR workspace where you can build together, from a headset or a desktop.
+
+**[coplanar.design](https://coplanar.design)** · [Devpost](https://devpost.com/software/coplanar)
 
 Put on a Quest and your scene appears on a table in your room, at real size. Grab objects, move them, rotate them and type exact values. Give it voice commands. Every edit happens in Blender itself, so the file, Undo, Redo and Save all work as usual. A teammate on another PC can open the same session in their own Blender and edit alongside you.
 
-Built at CalHacks 13 by Waaberi Ibrahim, Lee Jae-yeon, Jihyeon and Talia.
+Built at CalHacks 13 by Waaberi, Jaeyeon, Jihyeon and Talia.
 
 ## Features
 
 - **Your Blender scene in VR.** Place a worktable anywhere in your room. Objects sit on it at their true dimensions, and changes made in Blender show up in the headset right away.
 - **Hands-on editing.** Move, rotate, scale, add and delete objects with the controllers. A hand menu takes exact numbers when you need precision, and it works for left- and right-handed users.
 - **Voice commands.** Say "rotate this 90 degrees". If something is missing, it asks a short question, such as which axis, and then finishes the command. Recognition runs offline.
-- **Two people, one scene.** A second person joins from Blender on their own PC over an encrypted LAN connection. Everyone sees every change.
-- **No conflicts.** When someone is editing an object, other edits to it are blocked with a message saying who has it. This covers Blender's own editing shortcuts, fields and gizmos too. Edits through Blender's menus, F3 search, the Outliner or a script can't be stopped in advance: the host catches them right after, warns, and gives everyone the re-read scene.
+- **Two people, one scene.** A second person joins from Blender on their own PC, from any network, over an encrypted connection relayed through SpacetimeDB Maincloud, or directly on a shared LAN. Everyone sees every change.
+- **No conflicts, decided by SpacetimeDB.** Every edit needs a lease on its object, and SpacetimeDB's `acquire` reducer grants or refuses each one atomically. Other edits to a leased object are blocked with a message saying who has it. This covers Blender's own editing shortcuts, fields and gizmos too. Edits through Blender's menus, F3 search, the Outliner or a script can't be stopped in advance: the host catches them right after, warns, and gives everyone the re-read scene.
 - **CAD sketches.** Draw sketches with real dimensions and constraints. Change a dimension and the solver updates the shape. Built on CAD Sketcher.
 - **Blender on a screen in VR.** A panel shows the live Blender window, so you don't need to take the headset off.
 - **Native Blender history.** Each edit is one Undo step. Save from VR, reopen in Blender, and everything is there.
@@ -34,6 +36,7 @@ flowchart LR
     app["Unity VR app<br/>+ VoiceCore"]
     capture["Screen capture helper"]
     stdb[("SpacetimeDB")]
+    board["Session board"]
   end
   subgraph pc2["Second PC"]
     client["Blender + add-on<br/>(Client)"]
@@ -41,17 +44,16 @@ flowchart LR
   quest["Quest 3S"]
   app <-->|"JSON lines over TCP, localhost"| host
   capture -->|"Blender window as JPEG"| app
-  client <-->|"TLS 1.3, LAN"| host
+  client <-->|"TLS 1.3, via Maincloud bridge or LAN"| host
   quest <-->|"Quest Link"| app
-  host -.->|"who is editing what"| stdb
-  stdb -.-> app
+  host <-->|"lease requests and decisions"| stdb
+  stdb -->|"live subscription"| board
 ```
 
 - **[Blender add-on](blender_addon/spatial_modeling/)** (Python): one add-on with two roles, Host and Client. It needs nothing beyond the Python that ships with Blender. Every object gets a stable ID that survives renames, Undo and save/reopen.
 - **[VR app](app/)** (Unity 6, OpenXR, XR Interaction Toolkit): the room, the table, controller input, the hand menu and the Blender screen panel.
-- **[VoiceCore](voice/VoiceCore/)** (C#): offline speech recognition with Vosk and a command grammar. It remembers the parts of a command it already has and asks only for what's missing.
-- **Secure LAN link:** the second Blender connects over TLS 1.3 using the session token as a pre-shared key. There are no certificates to set up.
-- **[SpacetimeDB](spacetime/):** tracks who is connected, who is editing which object, and a log of applied edits that survives a restart.
+- **[VoiceCore](voice/VoiceCore/)** (C#): local speech recognition with Whisper, voice command parsing and follow-up questions. It remembers the parts of a command it already has and asks only for what's missing.
+- **[SpacetimeDB](spacetime/)** (TypeScript module): the session's authority. Its `acquire` reducer decides who may edit which object, and its tables hold who is connected, the current leases, the names of leased objects and every refusal. On Maincloud it also relays the second Blender's TLS connection between networks. The [session board](spacetime/README.md#the-session-board) subscribes to it and shows every decision live.
 - **[Wire format](contracts/README.md):** every message has a JSON Schema and an example, and CI checks both.
 
 ## Using it
@@ -61,14 +63,18 @@ You need:
 - a Windows PC with the Meta Horizon Link app
 - a Quest 3S, connected with a Link cable or Air Link
 - Blender 5.2.2
+- Node.js and the SpacetimeDB CLI 2.13.0 ([setup](spacetime/README.md))
 - optionally, a second PC with Blender 5.2.2 for a second editor
 
 Then:
 
-1. Link `blender_addon/spatial_modeling` into Blender's `extensions/user_default/` folder, enable Spatial Modeling under Preferences › Add-ons, and choose Host.
-2. Open a `.blend` file, for example [`samples/mechanical/p0_reference_v2.blend`](samples/mechanical/).
-3. Connect the Quest through Link and start the VR app.
-4. To add a second editor, turn on "Let a Client-role Blender join over the LAN" in the host's add-on preferences and note the session token. On the other PC, install the add-on, choose Client, and enter the host's address and the token.
+1. Start SpacetimeDB and publish the module: run `spacetime start --listen-addr 127.0.0.1:3000` in its own terminal, then `npm ci` and `spacetime publish -y` in `spacetime/`. To watch who is editing what, run `npm run board` there and open http://127.0.0.1:3100.
+2. Link `blender_addon/spatial_modeling` into Blender's `extensions/user_default/` folder, enable Spatial Modeling under Preferences › Add-ons, and choose Host.
+3. Open a `.blend` file, for example [`samples/mechanical/p0_reference_v2.blend`](samples/mechanical/).
+4. Connect the Quest through Link and start the VR app.
+5. To add a second editor, turn on "Let a Client-role Blender join" in the host's add-on preferences and note the session token. On the other PC, install the add-on and choose Client.
+   - **From any network:** switch the host's **SpacetimeDB** preference to **Maincloud** and run `npm run bridge -- host` in `spacetime/`. On the other PC run `npm run bridge -- join`, then connect the Client to `127.0.0.1` with the token. See [Across the internet](spacetime/README.md#across-the-internet).
+   - **On a shared LAN:** connect the Client to the host's address with the token.
 
 ## Building from source
 
@@ -79,7 +85,7 @@ Then:
   ```
   Then open `app/` in Unity and press Play, or build for Windows.
 - **Tests:** Python 3.13 with `pip install ruff pytest jsonschema`, then `ruff check .` and `pytest tests`. VoiceCore's tests need the .NET 10 SDK: run `voice/fetch-model.sh`, then `dotnet test tests/voice`. CI runs both on every PR.
-- **SpacetimeDB (optional):** Node.js and the SpacetimeDB CLI. See [spacetime/README.md](spacetime/README.md). Without it, the host keeps session state in memory.
+- **SpacetimeDB module:** `npm ci` in `spacetime/`, then `spacetime publish -y` after any change to `spacetime/src/`. See [spacetime/README.md](spacetime/README.md).
 
 Team notes and repo rules are in [CONTRIBUTING.md](CONTRIBUTING.md). The demo script is in [docs/demo/DEMO_STEPS.md](docs/demo/DEMO_STEPS.md).
 
