@@ -26,8 +26,33 @@ public static class AICancellationChecks
 
     public static void Run()
     {
-        ReplacedRequestFence();ReviewPageFence();QueuedCancellation();SentCancellation();ControlRouting();NativeAiContext();
+        TargetClarification();ReplacedRequestFence();ReviewPageFence();QueuedCancellation();SentCancellation();ControlRouting();NativeAiContext();
         Debug.Log("AI_CANCELLATION_CHECK PASS actual reviewed-confirm/queued-vs-wire state/Cancel+context fence/no delayed replay/other owner preserved/sent receipt+unknown honest/core Undo+Redo synonyms+Save+Cancel in Edit Mode; no AI service or interactive runtime");
+    }
+    static void TargetClarification()
+    {
+        foreach(string missing in new[]{"target","factor"})
+        {
+            using var f=new Fixture();
+            var before=(JObject)Invoke(f.Voice,"CaptureAiContext");
+            Set(f.Voice,"aiOriginal","make two times smaller");Set(f.Voice,"aiQuestion","Which object?");
+            Set(f.Voice,"aiQuestionMissing",new JArray(missing));Set(f.Voice,"aiQuestionUntil",DateTime.UtcNow.AddSeconds(30));
+            Set(f.Voice,"aiExpectedContext",before);Set(f.Voice,"aiFingerprint",before.ToString(Formatting.None));
+            Check(f.Voice.SelectObject(A),"actual VR object selection accepted");Invoke(f.Voice,"TickAi");
+            if(missing=="factor")
+            {Check(Get(f.Voice,"aiQuestion")==null,"selection change cannot rebind an unrelated amount question");continue;}
+            Check((string)Get(f.Voice,"aiOriginal")=="make two times smaller"&&Get(f.Voice,"aiQuestion")!=null,
+                "actual VR selection preserves original intent while answering a target question");
+            Check((string)Get(f.Voice,"aiIntentTarget")==A&&(bool)Invoke(f.Voice,"AiContextCurrent"),"selection answer captures exact current intended target");
+            var hint=VoiceIntentContext.SelectedObject((JObject)Get(f.Voice,"aiExpectedContext"),f.Voice.SelectedObjectId);
+            Check((string)hint["selected_object"]?["id"]==A,"Gemini receives explicit VR object ID without rewriting native selection");
+            string combined=GeminiVoiceInterpreter.ComposeRequest((string)Get(f.Voice,"aiOriginal"),(string)Get(f.Voice,"aiQuestion"),"item selected");
+            Check(combined.Contains("make two times smaller")&&combined.Contains("item selected"),"acknowledgement retains intended scale and complete conversation");
+            Set(f.Host,"revision",8L);Invoke(f.Voice,"TickAi");
+            Check(Get(f.Voice,"aiQuestion")==null,"geometry revision still invalidates target clarification");
+            Check(!f.DataAvailable,"selection clarification never sends a native edit or starts service request by itself");
+        }
+        Debug.Log("AI_TARGET_CLARIFICATION_CHECK PASS actual VR selection retains target question+original scale/exact hint/native fingerprint unchanged/other question+geometry fences; no AI service");
     }
     static void ReplacedRequestFence()
     {
