@@ -226,22 +226,30 @@ def _fit(payload):
     """Make the payload fit in one line by sending the biggest meshes as null. Rare.
 
     The contract limits a line to 16 MiB (roughly 90,000 triangles in a
-    snapshot). Each object left without its mesh is logged.
+    snapshot). Each object left without its mesh is logged. Each mesh is
+    encoded once and the payload's size kept as a sum: encoding the whole
+    payload again after each null froze Blender for a minute on 200 objects.
     """
     objects = payload["objects"]
     if _estimate(objects) <= FIT_BYTES:
         return payload
-    while _size(payload) > FIT_BYTES:
-        meshes = [o for o in objects if o.get("mesh")]
-        if not meshes:
-            break  # protocol.encode will refuse it
-        biggest = max(meshes, key=lambda o: len(o["mesh"]["positions"]) + len(o["mesh"]["indices"]))
+    meshes = [o for o in objects if o.get("mesh")]
+    sizes = [_size(o["mesh"]) for o in meshes]
+    bare = [dict(o, mesh=None) if o.get("mesh") else o for o in objects]
+    total = _size(dict(payload, objects=bare)) + sum(sizes) - 4 * len(sizes)  # "null" is 4 bytes
+    order = sorted(range(len(meshes)), reverse=True,  # biggest first; ties in object order
+                   key=lambda i: len(meshes[i]["mesh"]["positions"]) + len(meshes[i]["mesh"]["indices"]))
+    for i in order:
+        if total <= FIT_BYTES:
+            break
+        biggest = meshes[i]
         text = (f"Spatial Modeling: {biggest['name']}'s mesh ({len(biggest['mesh']['indices']) // 3} "
                 "triangles) is too large to send; clients get it without a mesh")
         print(text)
         log.warning(text)
         biggest["mesh"] = None
-    return payload
+        total -= sizes[i] - 4
+    return payload  # still too big without any mesh: protocol.encode will refuse it
 
 
 def _snapshot_payload(st, doc):

@@ -99,7 +99,8 @@ def poll():
         requests.disconnected()
         _can_edit = False
         presence.clear()
-        state.stale("Connection stopped — reconnect explicitly; last scene is stale")
+        if not state.status.startswith("Connection refused"):  # keep why the host refused
+            state.stale("Connection stopped — reconnect explicitly; last scene is stale")
     try:
         for _ in range(32):
             try:

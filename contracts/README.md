@@ -45,8 +45,12 @@ Every message has this envelope:
 | `lease.granted` | host → client, answers `lease.acquire` | the `lease` | P3B |
 | `lease.release` | client → host | `lease_id`; no reply on success | P3B |
 | `session.update` | host → every client | every participant and every lease | P1, P3B, P5 |
+| `voice.resolve` | client → host | `text` heard, recognizer `confidence`, optional `target` | P4 |
+| `voice.candidates` | host → client, answers `voice.resolve` | `resolution`, `decision` (`run`, `ask` or `reject`), `reason`, `expires_in`, up to 3 `candidates` | P4 |
+| `voice.grammar_query` | client → host | `{}` | P4 |
+| `voice.grammar` | host → client, answers `voice.grammar_query` | `version` and `phrases` for the recognizer | P4 |
 
-There is no voice message type and no frame message type; see [Voice](#voice) and [Blender screen](#blender-screen).
+Voice commands themselves are ordinary `command`s (see [Voice](#voice)). There is no frame message type; see [Blender screen](#blender-screen).
 
 ### LAN port
 
@@ -194,7 +198,7 @@ A `command` adds:
 | `base_revision` | The latest revision this client had applied. |
 | `source` | `ui` or `voice`: how the user asked. Shown in receipts and activity. |
 | `op` | What to do (table below). Unknown ops are `invalid_message`. |
-| `target` | `{id, generation}` of the object or sketch to change, with the generation the client last saw. Required for the ops that have a target, forbidden for the others. |
+| `target` | `{id, generation}` of the object or sketch to change, with the generation the client last saw. Required for the ops that have a target, forbidden for the others, optional for `voice.run`. |
 | `args` | The op's arguments. Ops without arguments send `{}`. |
 | `lease` | Optional `lease_id` of a lease this actor holds that covers the target. A lease that has ended is `not_found`; someone else's, or one that doesn't cover the target, is `permission_denied`. See [Leases and presence](#leases-and-presence). |
 
@@ -208,6 +212,7 @@ A `command` adds:
 | `history.undo`, `history.redo` | none | `{}` | Blender's shared history. `base_revision` must equal the current revision, so nobody undoes a change they haven't seen. Refused with `lease_conflict` while another participant holds a lease. |
 | `document.save` | none | `{}` | Saves to the current file; `failed` if it was never saved. Save As is done only at the host desktop, in host Blender: there is no Save As over the wire, so no client sends file paths. |
 | `sketch.*` | sketch | see [Sketches](#sketches) | |
+| `voice.run` | optional: the object, when the candidate `needs_target` | `resolution`, `choice` (1 to 3) | Runs a candidate of `voice.candidates`; see [Voice](#voice). The receipt's `created` has new IDs. |
 
 **Selection is local to each client.** There is no select command: selecting in VR or in the Client role's Blender changes nothing on the host (not the host Blender's selection, not the revision, not the Undo history), and the host desktop's selection isn't sent to anyone. Others' selections may show up through presence later.
 
@@ -287,7 +292,31 @@ The host checks permission before every native change (P3B). [`leases.py`](../bl
 
 ## Voice
 
-VoiceCore runs inside the Unity app, so voice adds no message type: a completed voice command is an ordinary `command` with `source: "voice"`, and its receipt and activity carry that source so the host and the other participant see who said what. Clarifying questions stay inside Unity; VoiceCore builds the command only once it is complete, using the target's current generation, and drops a pending command when the client sees Wrong document or Disconnected.
+VoiceCore runs inside the Unity app. Every voice command is an ordinary `command` with `source: "voice"`, and its receipt and activity carry that source so the host and the other participant see who said what. VoiceCore drops a pending command or question when the client sees Wrong document or Disconnected.
+
+**Two paths.** What VoiceCore fully understands itself (move, rotate, scale, add a cube, delete, undo, redo) it turns into `object.*` and `history.*` commands as before; its clarifying questions stay inside Unity, and it sends the command once it is complete, with the target's current generation. Anything else that sounds like a command (no verb it knows, unknown words after the verb, "apply" plus more words) goes to the host as `voice.resolve`, which matches it against about 40 curated Blender operations ([`voice_ops.py`](../blender_addon/spatial_modeling/voice_ops.py)): add a monkey, donut, cone, plane, sphere, camera, light, empty or text; shade smooth, flat or auto smooth; Subdivision Surface, Mirror, Solidify, Decimate, Bevel, Array, Wireframe, Remesh, Boolean, Weld, Screw and Triangulate modifiers, with their numbers ("level two", "five copies along z", "two millimeters", "fifty percent"); apply transforms, set origin, separate by loose parts, recalculate or flip normals, merge by distance, smooth vertices (only when the vertices are named, one gentle pass, refused if the mesh would shrink below 80%) and convert to mesh (it applies every modifier, so only when asked for by name: "convert to mesh", "apply all modifiers"; never for "add a modifier" or "add a mirror modifier"). "Make it smooth" is Shade smooth. A voice add goes on top of the selection: centred over it, at its size (2 to 25 cm), a quarter of that above it, moved up until it overlaps nothing. The host doesn't know where the headset looks, but the selection is what the user is looking at: over the 20 mm cube of Talia's P0 reference an add is 11° off the app's initial view (HostScene, 5x). Blender's 2 m default cube is 10 m around the user at 5x, so nothing beside or above it is in view; demo with parts of about 100 mm. Without a selection an add is 10 cm at the 3D cursor, moved along +X until it overlaps nothing. Undo, Redo and Cancel never go to the host. A host without voice answers `error` `unknown_type`, and VoiceCore falls back to its own path.
+
+| `voice.resolve` field | Meaning |
+| --- | --- |
+| `text` | The transcript, 1 to 500 characters. |
+| `confidence` | The recognizer's, 0 to 1 (Vosk: its lowest word's). Below 0.5 the host only asks, never runs. |
+| `target` | Optional `{id, generation}`: the object the user means (selected or pointed at). |
+
+The host answers `voice.candidates` (with `re`) and changes nothing:
+
+| `decision` | When | Then |
+| --- | --- | --- |
+| `run` | Every word of the best phrase was heard, its score is at least 0.85 and 0.05 above the next, and `confidence` is at least 0.5. | Send `voice.run` choice 1 at once and show or speak its `say`. |
+| `ask` | The best score is at least 0.60, or the words ask for a modifier without naming one ("add a modifier": always 1. Array, 2. Mirror on X, 3. Bevel). `reason` may carry a note such as "levels capped at 2". | Ask "one, two or three?" (while asking, VoiceCore listens only for choice words); send the choice, or nothing on "cancel". |
+| `reject` | Nothing fits, or it is something voice doesn't do (join, duplicate, hide, Edit Mode tools), or host Blender isn't in Object Mode, or the words were only fillers ("hello", "well", "right", "come", "okay": the grammar's common words), with or without a number. `candidates` is empty. | Speak `reason`, a short sentence ("I don't know that command."). For fillers `reason` is null: say nothing. |
+
+**Demo phrase for "which one?".** Say "add a modifier" with a mesh selected. It names no modifier, so the host always asks, with the same three choices: 1. Array, 2. Mirror on X, 3. Bevel (none of the cue-card phrases asks any more). It is a whole grammar phrase, so Whisper's "add a modifier," snaps onto it exactly. Vosk loses the leading "add" of Piper's clip, as with other "add ..." phrases, so it takes the Whisper path (about 1 s). "The modifier", "a modifier" and a low-confidence "add array modifier" ask the same three. Answer "one", "two" or "three", or "cancel". Each choice adds one modifier, which one Undo takes back. Array ("one") shows the change best: Mirror on X changes nothing visible on a part that is symmetric about its origin.
+
+Each candidate has `choice` (1 to 3, best first), `say` (what to show and speak, with its values: "Array, 5 copies along Z"), `needs_target` and, for display only, `operator`, `properties` and `set` (modifier properties set afterwards). The `resolution` expires after `expires_in` seconds (30) and runs at most once.
+
+**`voice.run`** is a `command` with op `voice.run`, `args` `{resolution, choice}` and the usual request fields. It names `target` (with the generation the client has now) exactly when the chosen candidate `needs_target`; an add has no target, so nobody's lease on the selected object blocks it. It is checked like every command, leases included, and the host runs only a candidate it created itself: `not_found` if the resolution is unknown, expired or already run. On the host it is `failed`, with nothing changed, when it needs an object and none (or another one than in `voice.resolve`) is named, when host Blender isn't in Object Mode, or when the result would be too heavy to show in VR: over 50,000 evaluated triangles or 8 MiB of mesh JSON (flat shading costs about 192 bytes a triangle). The host then undoes it and says so in `error.message`. Numbers are capped: Subdivision Surface level 2, Array 2 to 20 copies, Bevel 4 segments. A voice operation changes an existing modifier of the same type rather than adding another, leaves the host desktop's selection and active object as they were, and is one Undo step named after its `summary` ("Voice: Array, 5 copies along Z on Shaft").
+
+**Grammar.** `voice.grammar_query` (`{}`, after `welcome`) asks for the recognizer's phrase list; the host answers `voice.grammar` with `version` (it changes whenever the list does) and `phrases`: every operation's trigger phrases, numbers, units, axes, the demo's "add a modifier", the choice words, common words that let chatter be heard as chatter, and VoiceCore's own words. The client adds its object names and `[unk]`. It leaves out "to", which sounds like "two" (CommandParser only skips it); "level to" still means level 2. A host without voice answers `unknown_type`: keep the built-in grammar.
 
 ## Sketches
 
@@ -357,6 +386,8 @@ python3 contracts/fakes/fake_host.py            # 127.0.0.1:8765; Ctrl-C stops i
 ```
 
 It serves the scene from the examples, with the same IDs, as `fake_bracket.blend`: Base plate (100 × 60 × 10 mm box), Shaft (cylinder, 20 mm diameter, 40 mm tall) standing on it as its child, a Camera without a mesh, and the 100 × 60 mm sketch. The meshes are real and render. It follows [Connecting](#connecting), answers `ping`, and applies `object.add`, `object.move`, `object.rotate`, `object.scale`, `object.delete`, `history.undo`, `history.redo` and `document.save` as [Commands](#commands) describes: scene.update to everyone, then result, then activity, with request-ID deduplication and `receipt.query` as [Reconnecting](#reconnecting) describes (stop and start it again to simulate a host restart: a new `host_epoch`, no receipts). Sketch ops get `rejected` with `failed`. It grants and checks leases with the host's rules and messages ([Leases and presence](#leases-and-presence)); its linked data is an object's descendants and the objects sharing its mesh, so leasing Base plate also reserves Shaft. A sketch can be leased by its ID. Each run starts at revision 0 with a new `open_epoch`.
+
+Voice is canned (the real host matches about 40 operations): `voice.resolve` with "join" in the text gets `reject`, "monkey" a `run` of Add a monkey (no target; `voice.run` adds a 40 mm box named Suzanne), "copies" or "array" a `run` of "Array, 5 copies along Z" on the target, and anything else an `ask` between Subdivision Surface, Shade smooth and Shade auto smooth. `voice.run` follows the host's rules (single use, 30 s, the target only when `needs_target`, the same target as in `voice.resolve`); the fake has no modifiers, so a target only gets a new generation. `voice.grammar_query` gets the real host's phrase list from [`examples/voice.grammar.json`](examples/voice.grammar.json).
 
 | Flag | What it does | Tests the app's |
 | --- | --- | --- |

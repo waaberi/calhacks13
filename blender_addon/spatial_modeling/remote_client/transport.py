@@ -156,6 +156,8 @@ class ReadOnlyLink:
                                 self._post(kind, (reply_to, body))
                         if len(buffer) > protocol.MAX_LINE_BYTES:
                             raise protocol.ProtocolError("Host message exceeds size limit")
+            except lan.HandshakeError:  # a wrong token, or a host without TLS
+                self._post("disconnected", "TLS handshake failed — check the session token; retrying")
             except (OSError, ValueError, KeyError, TypeError, AttributeError, NotImplementedError):
                 # Never include credentials or received text in a diagnostic.
                 self._post("disconnected", "Disconnected — reconnecting; last scene is stale")

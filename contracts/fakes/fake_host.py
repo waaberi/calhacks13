@@ -24,6 +24,10 @@ their owner disconnects. Linked data here is an object's descendants (Base
 plate's lease covers Shaft) and objects sharing its mesh; the real host also
 adds objects whose modifiers or constraints use it.
 
+Voice: voice.resolve gets canned voice.candidates (run, ask or reject; see
+voice_answer()), voice.run runs one of them once, and voice.grammar_query gets the
+real host's phrase list from contracts/examples/voice.grammar.json.
+
 Standard library only and Python 3.9 or newer, so it runs on a Mac without
 Blender. The framing repeats blender_addon/spatial_modeling/protocol.py so this
 file runs on its own; tests/backend/test_fakes.py checks that they agree.
@@ -39,6 +43,7 @@ import sys
 import time
 import traceback
 import uuid
+from pathlib import Path
 
 VERSION = 1
 MAX_LINE_BYTES = 16 * 1024 * 1024
@@ -72,7 +77,7 @@ HOST_ACTOR = {
 }
 
 OBJECT_OPS = ("object.add", "object.move", "object.rotate", "object.scale", "object.delete")
-SUPPORTED_OPS = OBJECT_OPS + ("history.undo", "history.redo", "document.save")
+SUPPORTED_OPS = OBJECT_OPS + ("history.undo", "history.redo", "document.save", "voice.run")
 SKETCH_OPS = (
     "sketch.create",
     "sketch.add_line",
@@ -84,6 +89,8 @@ SKETCH_OPS = (
 CONTRACT_OPS = SUPPORTED_OPS + SKETCH_OPS
 UNTARGETED_OPS = ("object.add", "history.undo", "history.redo", "document.save", "sketch.create")
 NO_ARGS_OPS = ("object.delete", "history.undo", "history.redo", "document.save")
+OPTIONAL_TARGET_OPS = ("voice.run",)
+VOICE_EXPIRES_IN = 30  # seconds a voice.candidates resolution can be run
 REQUEST_FIELDS = ("session_id", "host_epoch", "document_id", "open_epoch", "actor_id")
 PRIMITIVES = {"cube": "Cube", "sphere": "Sphere", "cylinder": "Cylinder"}
 
@@ -278,11 +285,21 @@ def _check_no_args(args):
         raise Invalid("args must be {} for this op")
 
 
+def _check_voice_run(args):
+    _fields(args, "args", ("resolution", "choice"))
+    _uuid(args["resolution"], "args.resolution")
+    choice = args["choice"]
+    whole = isinstance(choice, int) or (isinstance(choice, float) and choice.is_integer())
+    if isinstance(choice, bool) or not whole or not 1 <= choice <= 3:
+        raise Invalid("args.choice must be 1, 2 or 3")
+
+
 ARGS_CHECKS = {
     "object.add": _check_add,
     "object.move": _check_move,
     "object.rotate": _check_rotate,
     "object.scale": _check_scale,
+    "voice.run": _check_voice_run,
 }
 for _op in NO_ARGS_OPS:
     ARGS_CHECKS[_op] = _check_no_args
@@ -304,9 +321,10 @@ def check_command(p):
     if op in UNTARGETED_OPS:
         if "target" in p:
             raise Invalid(f"{op} takes no target")
-    else:
-        if "target" not in p:
+    elif "target" not in p:
+        if op not in OPTIONAL_TARGET_OPS:
             raise Invalid(f"{op} needs a target {{id, generation}}")
+    else:
         target = _fields(p["target"], "target", ("id", "generation"))
         _uuid(target["id"], "target.id")
         _integer(target["generation"], "target.generation")
@@ -372,6 +390,62 @@ def check_receipt_query(p):
         _uuid(value, f"request_ids[{i}]")
     if len(set(ids)) != len(ids):
         raise Invalid("request_ids must not repeat")
+
+
+def check_voice_resolve(p):
+    _fields(p, "voice.resolve payload", ("text", "confidence"), ("target",))
+    _text(p["text"], "text", 500)
+    _number(p["confidence"], "confidence", (0.0, 1.0))
+    if "target" in p:
+        target = _fields(p["target"], "target", ("id", "generation"))
+        _uuid(target["id"], "target.id")
+        _integer(target["generation"], "target.generation")
+
+
+# Voice: canned answers, so the Unity app can build the voice.candidates flow without
+# Blender. The real host matches about 40 operations (blender_addon/.../voice_ops.py).
+
+def _voice_candidate(say, operator, properties, set_, needs_target):
+    return {"say": say, "operator": operator, "properties": properties, "set": set_,
+            "needs_target": needs_target}
+
+
+VOICE_MONKEY = _voice_candidate("Add a monkey", "mesh.primitive_monkey_add", {}, {}, False)
+VOICE_ARRAY = _voice_candidate("Array, 5 copies along Z", "object.modifier_add",
+                               {"type": "ARRAY"},
+                               {"count": 5, "relative_offset_displace": [0.0, 0.0, 1.0]}, True)
+VOICE_ASK = [
+    _voice_candidate("Subdivision Surface, level 1", "object.modifier_add", {"type": "SUBSURF"},
+                     {"levels": 1, "render_levels": 1}, True),
+    _voice_candidate("Shade smooth", "object.shade_smooth", {}, {}, True),
+    _voice_candidate("Shade auto smooth", "object.shade_auto_smooth", {}, {}, True),
+]
+GRAMMAR_EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "voice.grammar.json"
+
+
+def voice_answer(text):
+    """The fake's canned (decision, reason, candidates) for a transcript: "join" is rejected,
+    "monkey" runs Add a monkey, "copies" or "array" runs an Array on the target, and anything
+    else asks between three smoothing operations."""
+    words = re.findall(r"[a-z]+", text.lower())
+    if "join" in words:
+        return "reject", "Join isn't available by voice. Use host Blender.", []
+    if "monkey" in words:
+        found = [VOICE_MONKEY]
+    elif "copies" in words or "array" in words:
+        found = [VOICE_ARRAY]
+    else:
+        return "ask", None, [dict(c, choice=i) for i, c in enumerate(VOICE_ASK, 1)]
+    return "run", None, [dict(c, choice=i) for i, c in enumerate(found, 1)]
+
+
+def voice_grammar():
+    """The real host's phrase list, as contracts/examples/voice.grammar.json has it."""
+    try:
+        return json.loads(GRAMMAR_EXAMPLE.read_text("utf-8"))["payload"]
+    except (OSError, ValueError, KeyError):  # this file was copied on its own
+        return {"version": "fake", "phrases": ["add a monkey", "five copies", "smooth", "one",
+                                               "two", "three", "cancel"]}
 
 
 # Meshes: triangulated, local space, meters, counter-clockwise seen from outside,
@@ -833,6 +907,7 @@ class FakeHost:
         self.receipts = {}  # request id -> (payload as canonical JSON, receipt)
         self.leases = {}  # lease_id -> lease, in the order they were granted
         self.lease_requests = {}  # lease.acquire id -> (payload as canonical JSON, reply)
+        self.voice_resolutions = {}  # resolution -> (expires at, candidates, target ID or None)
         self._numbers = itertools.count(1)
         self._server = None
         self._stopped = None
@@ -1073,6 +1148,11 @@ class FakeHost:
                 self.on_lease_acquire(conn, msg)
             elif kind == "lease.release":
                 self.on_lease_release(conn, msg)
+            elif kind == "voice.resolve":
+                self.on_voice_resolve(conn, msg)
+            elif kind == "voice.grammar_query":
+                _fields(msg["payload"], "voice.grammar_query payload", ())
+                conn.send(message("voice.grammar", voice_grammar(), re=mid))
             else:
                 text = f"The fake host doesn't handle {kind!r} messages."
                 conn.send(error("unknown_type", text, mid))
@@ -1125,6 +1205,44 @@ class FakeHost:
         self.log(f"{conn.label}: welcomed ({p['role']}, {p['app']['name']} {p['app']['version']}); "
                  f"sent the snapshot at revision {scene.revision}")
         self.broadcast_session()
+
+    def on_voice_resolve(self, conn, msg):
+        p = msg["payload"]
+        check_voice_resolve(p)
+        decision, reason, candidates = voice_answer(p["text"])
+        resolution = new_id()
+        if decision != "reject":
+            target = p.get("target")
+            target_id = target["id"] if target and target["id"] in self.scene.objects else None
+            now = time.monotonic()
+            self.voice_resolutions = {r: v for r, v in self.voice_resolutions.items()
+                                      if v[0] > now}
+            self.voice_resolutions[resolution] = (now + VOICE_EXPIRES_IN, candidates, target_id)
+        self.log(f"{conn.label}: voice {p['text']!r}: {decision} "
+                 f"{[c['say'] for c in candidates] or reason}")
+        conn.send(message("voice.candidates", {
+            "resolution": resolution, "decision": decision, "reason": reason,
+            "expires_in": VOICE_EXPIRES_IN, "candidates": candidates}, re=msg["id"]))
+
+    def run_voice(self, args, target):
+        """voice.run: (summary, created, changes) or a (code, text) refusal. Single use."""
+        kept = self.voice_resolutions.pop(args["resolution"], None)
+        if kept is None or kept[0] <= time.monotonic() or args["choice"] > len(kept[1]):
+            return "not_found", "That voice choice has expired. Say it again."
+        _, candidates, target_id = kept
+        c = candidates[int(args["choice"]) - 1]
+        if not c["needs_target"]:  # the fake's one add: a 40 mm box named like Blender's monkey
+            name = self.scene.unique_name("Suzanne")
+            record = _object(new_id(), name, "MESH", None, [0, 0, 0.02], [1, 0, 0, 0], None,
+                             box_mesh([0.04, 0.04, 0.04]))
+            return f"Voice: added {name}", [record["id"]], {record["id"]: record}
+        if target is None:
+            return "failed", f"{c['say']} needs an object. Select one, then say it again."
+        if target_id is not None and target["id"] != target_id:
+            return "failed", "That choice was for another object. Say it again."
+        # The fake has no modifiers: the target only gets a new generation.
+        summary = f"Voice: {c['say']} on {target['name']}"
+        return summary, None, {target["id"]: dict(target)}
 
     def on_receipt_query(self, conn, msg):
         p = msg["payload"]
@@ -1397,6 +1515,12 @@ class FakeHost:
                 return rejected("failed", "Nothing to undo." if undo else "Nothing to redo.")
             summary = ("Undid: " if undo else "Redid: ") + done[0]
             update = done[1]
+        elif op == "voice.run":
+            done = self.run_voice(args, target)
+            if len(done) == 2:
+                return rejected(*done)
+            summary, created, changes = done
+            update = scene.commit(changes, summary)
         else:  # document.save
             update = scene.save()
             summary = f"Saved {DOCUMENT_NAME}"
