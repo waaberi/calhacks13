@@ -6,5 +6,6 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <Compile Include="../../app/Assets/SpatialModeling/Scripts/GeminiVoiceInterpreter.cs" Link="Production/GeminiVoiceInterpreter.cs" />
+    <Compile Include="../../app/Assets/SpatialModeling/Scripts/VoiceDialogPages.cs" Link="Production/VoiceDialogPages.cs" />
   </ItemGroup>
 </Project>

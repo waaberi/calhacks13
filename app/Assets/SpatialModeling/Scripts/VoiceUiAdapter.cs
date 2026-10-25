@@ -229,7 +229,10 @@ namespace SpatialModeling
             };
             host.RequestFailed += (re, code) =>
             {
+                Debug.Log("VOICE host request refused " + re + ": " + code);
                 if (re == grammarQuery) { if (code == "unknown_type") session.HostHasNoVoice(); }
+                else if (re == aiRecipeRequest)
+                { InvalidateAi(); Note("Blender could not prepare the AI review (" + code + "). Nothing was run."); }
                 else Handle(session.HostError(re, code));
             };
         }
@@ -496,7 +499,7 @@ namespace SpatialModeling
                 { voicePayload["recipe"] = aiPendingDraft; voicePayload["context"] = aiExpectedContext; aiPendingDraft = null; }
                 string id = host.SendVoice(VoiceResolve.Type, voicePayload);
                 if (voicePayload["recipe"] != null) { aiRecipeRequest = id; aiFingerprint = CaptureAiContext().ToString(Newtonsoft.Json.Formatting.None); }
-                Debug.Log($"VOICE resolve '{turn.Resolve.Text}' target {turn.Resolve.TargetId ?? "-"} sent {id ?? "(not sent)"}");
+                Debug.Log($"VOICE resolve '{turn.Resolve.Text}' target {turn.Resolve.TargetId ?? "-"} sent {id ?? "(not sent)"} route={(voicePayload["recipe"] != null ? "gemini-recipe" : "basic-host")}");
                 Handle(session.ResolveSent(turn.Resolve, id));
             }
             if (vc == null) return;
@@ -593,9 +596,15 @@ namespace SpatialModeling
         {
             if (!SelectionPopups && IsSelectionPopup(text)) return;
             if (!ShowTranscription && text.StartsWith("Heard:", StringComparison.Ordinal)) return;
-            feedback.text = text;
+            feedback.text = string.Join("\n", VoiceDialogPages.Build(text,64,100));
             feedback.gameObject.SetActive(true);
-            noteUntil = Time.time + 4f;
+            var cam = Camera.main;
+            if (cam != null)
+            {
+                feedback.transform.position = cam.transform.TransformPoint(new Vector3(0f, -.43f, 1.25f));
+                feedback.transform.rotation = cam.transform.rotation;
+            }
+            noteUntil = Time.time + Mathf.Clamp(text.Length / 18f,4f,15f);
         }
 
         IEnumerator PlayLoop()
@@ -624,11 +633,9 @@ namespace SpatialModeling
         {
             var cam = Camera.main;
             if (cam == null || !feedback.gameObject.activeSelf) return;
-            var t = feedback.transform;
-            // Below the status line (up to 3 lines from y = -0.1), so the two backings don't overlap.
-            t.position = cam.transform.TransformPoint(new Vector3(-0.35f, -0.3f, 1.1f));
-            t.rotation = cam.transform.rotation;
             FitBacking(feedback);
+            var bounds = feedback.GetComponent<MeshRenderer>().localBounds;
+            feedback.transform.localScale = Vector3.one * Mathf.Min(1f,.95f/Mathf.Max(.001f,bounds.size.x),.35f/Mathf.Max(.001f,bounds.size.y));
         }
     }
 }

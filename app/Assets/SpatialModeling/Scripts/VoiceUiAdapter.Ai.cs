@@ -21,7 +21,7 @@ namespace SpatialModeling
         JObject aiPendingDraft, aiExpectedContext;
         string aiRecipeRequest, aiOriginal, aiQuestion, aiFingerprint, aiRunResolution, aiSubmittedCommand;
         DateTime aiQuestionUntil;
-        int aiSequence, aiReviewPage, aiReviewedThrough;
+        int aiSequence;
         bool aiBusy;
         void InitializeAi() { ai = new GeminiVoiceInterpreter(geminiModel); }
         public void SetAi(bool enabled) { InvalidateAi(); aiMode = enabled; }
@@ -146,11 +146,20 @@ namespace SpatialModeling
         void HearOrInterpret(RecognitionResult result, bool fromMic)
         {
             string text = fromMic ? RawAiTranscript() ?? result.Text : result.Text;
-            if (aiReview != null && Regex.IsMatch(text.Trim(), @"^(next|next page|previous|previous page|back)$", RegexOptions.IgnoreCase))
-            { aiReviewPage = Mathf.Clamp(aiReviewPage + (text.StartsWith("next",StringComparison.OrdinalIgnoreCase) ? 1 : -1), 0, Math.Max(0,(aiReview.Count-1)/3)); aiReviewedThrough = Math.Max(aiReviewedThrough,aiReviewPage); return; }
+            string navigation = Regex.Replace(text.Trim(), @"[.!?]+$", "").Trim();
+            if (panel.Visible && Regex.IsMatch(navigation, @"^(next|next page|previous|previous page|back)$", RegexOptions.IgnoreCase)
+                && panel.MovePage(navigation.StartsWith("next",StringComparison.OrdinalIgnoreCase) ? 1 : -1)) return;
             if (Control(text) || session.Pending != null || session.Choice != null || session.CompositionQuestion != null || session.WaitingForHost)
             { Handle(session.Hear(result)); return; }
             bool mesh = (string)(PreviewInteraction.Current?.Drawing?.NativeState["model_edit"] as JObject)?["mode"] == "EDIT_MESH";
+            string creation = !mesh && aiQuestion == null ? VoiceDialogPages.BasicCreation(text) : null;
+            if (creation != null)
+            {
+                // Preserve the app's small, beside-selection Add defaults. Never
+                // ask a model to invent Blender's two-metre cube for this phrase.
+                Debug.Log("VOICE basic creation normalized to " + creation);
+                Handle(session.Hear(new RecognitionResult(creation,result.Confidence))); return;
+            }
             bool newTool = Regex.IsMatch(text, @"\b(extrude|inset|knife|loop\s*cut|dissolve|proportional|snapping)\b|\b(bevel|merge|delete)\b.*\b(vertices|edges|faces|selected)\b", RegexOptions.IgnoreCase);
             if (!aiMode || !AiAvailable || (aiQuestion == null && !mesh && !newTool && KnownBasic(text)))
             { Handle(session.Hear(result)); return; }
@@ -193,7 +202,8 @@ namespace SpatialModeling
             if (sequence != aiSequence) yield break;
             aiBusy = false;
             if (answer?.Draft == null || answer.Error != null)
-            { Note("AI could not prepare this edit. Nothing was run; retry or use a complete basic command."); yield break; }
+            { Debug.Log("VOICE AI preparation refused: " + (answer?.Error ?? "No response") + " after " + (answer?.Ms ?? 0) + " ms");
+                Note((answer?.Error ?? "AI returned no complete plan") + ". Nothing was run."); yield break; }
             string decision = (string)answer.Draft["decision"];
             if (decision != "propose" || (answer.Draft["missing"] as JArray)?.Count > 0)
             {
@@ -207,6 +217,7 @@ namespace SpatialModeling
         bool AcceptAiCandidates(string request, JObject payload)
         {
             if (request != aiRecipeRequest || aiRecipeRequest == null) return false;
+            Debug.Log("VOICE AI native review " + (string)payload["decision"] + ": " + (string)payload["reason"]);
             aiRecipeRequest = null;
             if ((string)payload["decision"] == "clarify")
             { session.Cancel(); aiQuestion = (string)payload["reason"] ?? "Which editing detail?"; aiQuestionUntil = DateTime.UtcNow.AddSeconds(30); return true; }
@@ -230,8 +241,9 @@ namespace SpatialModeling
                         exact=new SceneObject(target.Key,target.Value);
                     }
                     var command=VoiceCommand.ReviewedRecipeCandidate(answer.Resolution,candidate,exact);
-                    session.Cancel();aiReview=(JArray)steps.DeepClone();aiReviewPage=aiReviewedThrough=0;aiRunResolution=answer.Resolution;
+                    session.Cancel();aiReview=(JArray)steps.DeepClone();aiRunResolution=answer.Resolution;
                     deleteWaiting=command;deleteExpiresAt=DateTime.UtcNow.AddSeconds(120);Enqueue(Prompt.ConfirmSequence,command.Say);
+                    ShowAiReview(); // Establish this plan's page gate before a controller can confirm.
                     return true;
                 }
                 catch(Exception error) when(error is ArgumentException||error is FormatException)
@@ -244,9 +256,8 @@ namespace SpatialModeling
         bool ShowAiReview()
         {
             if (aiReview == null) return false;
-            int pages = Math.Max(1,(aiReview.Count+2)/3);
-            var lines = new List<string> { "Review AI edit · page " + (aiReviewPage+1) + " / " + pages };
-            for(int i=aiReviewPage*3;i<Math.Min(aiReview.Count,aiReviewPage*3+3);i++)
+            var lines = new List<string> { "Review AI edit · nothing has run" };
+            for(int i=0;i<aiReview.Count;i++)
             {
                 var step=aiReview[i]; string target = (string)(step["target"] as JValue);
                 if (step["target"] is JObject reference) target = "output of " + (string)reference["step"];
@@ -260,8 +271,7 @@ namespace SpatialModeling
                 foreach (var property in (step["params"] as JObject ?? new JObject()).Properties())
                     lines.Add(property.Name.Replace('_',' ') + ": " + FriendlyAiValue(property.Name,property.Value));
             }
-            lines.Add("Nothing has run. Say next page / previous page. After reviewing all pages, left stick click confirms; cancel discards.");
-            panel.ShowComposition(string.Join("\n",lines),deleteExpiresAt); return true;
+            panel.ShowComposition(string.Join("\n",lines),deleteExpiresAt,true); return true;
         }
         static string FriendlyAiValue(string name,JToken value)
         {
@@ -278,7 +288,7 @@ namespace SpatialModeling
         {
             if(aiReview!=null&&!AiContextCurrent())
             {InvalidateAi();Note("Blender context changed. Nothing was run; say the complete edit again.");return false;}
-            if (aiReview != null && aiReviewedThrough < (aiReview.Count-1)/3)
+            if (aiReview != null && !panel.AllPagesReviewed)
             { Note("Review every page of the AI plan first. Say next page."); return false; }
             aiReview = null; return true;
         }
