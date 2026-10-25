@@ -11,7 +11,13 @@ namespace SpatialModeling
     public sealed class DirectModelEditing : MonoBehaviour
     {
         public bool Active { get; private set; }
-        public bool Gesturing => held;
+        public bool Gesturing => held || (live != null && live.Gesturing);
+        public bool LiveBusy => live != null && live.Busy;
+        public JObject SelectionSnapshot => live != null ? live.Selection.Snapshot() : new JObject();
+        public long ContextEpoch => live != null ? live.Selection.Epoch : 0;
+        public bool AdditiveSelection => live != null && live.Selection.Additive;
+        public void ToggleAdditiveSelection() { if(live!=null)live.Selection.SetAdditive(!live.Selection.Additive); }
+        public void SetAdditiveSelection(bool value) { if(live!=null)live.Selection.SetAdditive(value); }
         public event Action<string> SelectionCommitted;
         public string Notice { get; private set; } = "Choose Edit model, then a tool in Blender";
         public string ContextLabel
@@ -29,6 +35,7 @@ namespace SpatialModeling
         HostScene scene;
         PreviewInteraction preview;
         PreviewSpatialDrawing drawing;
+        DirectLiveController live;
         WorkspaceObjectView target;
         JObject frozenModel;
         string frozenContext, frozenIdentity, objectId, ownRequestId;
@@ -53,24 +60,28 @@ namespace SpatialModeling
         {
             if (drawing != null) drawing.BeforeNativeSessionMessage -= BeforeMessage;
             scene = host; preview = owner; drawing = native;
+            if(live==null&&native!=null)live=new DirectLiveController(host,owner,native,PublishLiveSelection);
             if (drawing != null) drawing.BeforeNativeSessionMessage += BeforeMessage;
         }
         public void SetActive(bool enabled)
         {
             if (!enabled) Cancel("Arrange space · grip arranges the display; native preview editing remains available");
             Active = enabled;
+            live?.SetEnabled(enabled);
             if (drawing != null) drawing.DirectModelToolsActive = enabled;
             if (enabled) Notice = "Choose Move / Rotate / Scale in Blender, then trigger and aim at the floating model";
         }
         void OnDisable() => Cancel("Direct edit cancelled because input is unavailable");
         void OnDestroy()
         {
+            live?.Dispose();
             if (drawing != null) drawing.BeforeNativeSessionMessage -= BeforeMessage;
             ClearGhost();
             if (ghostMaterial != null) ReleaseObject(ghostMaterial);
         }
         void Update()
         {
+            live?.Tick();
             if ((held && moved) || submitted)
             {
                 if (submitted && drawing.Session.NativeCommandExecuting)
@@ -103,6 +114,7 @@ namespace SpatialModeling
         }
         void BeforeMessage(JObject message)
         {
+            live?.Receive(message);
             if (!held && !submitted) return;
             string type = (string)message["type"];
             var payload = message["payload"] as JObject;
@@ -145,6 +157,11 @@ namespace SpatialModeling
             Vector2 axis, float nearest, out float distance)
         {
             distance = 0;
+            if(live!=null&&(live.Available||live.Busy))
+            {
+                bool routed=live.Route(inputHand,ray,trigger,pressed,grip,axis,nearest,out distance);
+                Notice=live.Notice;return routed;
+            }
             if (!Active || scene == null || drawing == null) return false;
             if (held)
             {
@@ -285,6 +302,7 @@ namespace SpatialModeling
         {
             distance = depth;
             if (!Active) return false;
+            if(live!=null&&live.Available)return live.TryVisualAim(ray,out distance);
             return scene != null && scene.PickObject(ray, out distance) != null;
         }
         // Rendering uses the current existing stabilized ray for this hand. A
@@ -292,6 +310,7 @@ namespace SpatialModeling
         public bool TryGestureVisual(XRNode inputHand, Ray ray, out Vector3 endpoint)
         {
             endpoint = default;
+            if(live!=null&&live.TryVisual(inputHand,ray,out endpoint))return true;
             if (!Active || !held || inputHand != hand) return false;
             endpoint = ray.GetPoint(depth);
             if (moved && !waiting && !submitted && ContextCurrent())
@@ -304,12 +323,18 @@ namespace SpatialModeling
         }
         public void Cancel(string reason = "Local direct edit cancelled; native geometry unchanged")
         {
+            live?.Cancel(reason);
             gesture++; held = waiting = moved = released = false;
             bool executing = submitted && drawing != null && drawing.Session.NativeCommandExecuting;
             if (submitted && drawing != null && drawing.Session.Busy) drawing.Session.Cancel();
             submitted = executing; if (!executing) ownRequestId = null;
             ClearGhost(); target = null; delta = null;
             Notice = executing ? drawing.Session.Notice : reason;
+        }
+        void PublishLiveSelection(string finalId)
+        {
+            if(!string.IsNullOrEmpty(finalId))
+            {drawing.Session.Select(finalId);FindFirstObjectByType<VoiceUiAdapter>()?.SelectObject(finalId);SelectionCommitted?.Invoke(finalId);}
         }
         static void ReleaseObject(UnityEngine.Object value)
         { if (Application.isPlaying) Destroy(value); else DestroyImmediate(value); }

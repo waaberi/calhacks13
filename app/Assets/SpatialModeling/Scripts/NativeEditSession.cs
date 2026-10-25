@@ -31,7 +31,10 @@ namespace SpatialModeling
         }
         public bool CanEdit { get; private set; }
         public bool SketchAvailable { get; private set; }
-        public bool Busy => acquireId != null || commandId != null;
+        // Owned only by the live-edit transport; ordinary commands and native
+        // preview admission must not acquire a second writer during a gesture.
+        public bool ExternalEditBusy { get; set; }
+        public bool Busy => acquireId != null || commandId != null || ExternalEditBusy;
         public bool AwaitingPermission => acquireId != null;
         public bool NativeCommandExecuting => commandId != null;
         public bool OutcomeUnknown { get; private set; }

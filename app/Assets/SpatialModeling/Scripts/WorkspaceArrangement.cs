@@ -13,6 +13,8 @@ namespace SpatialModeling
             public Vector3 Scale, PositionOffset;
             public Quaternion RotationOffset;
             public WorkspaceObjectView Part;
+            public WorkspaceObjectView.ArrangementState PartState;
+            public Dictionary<WorkspaceObjectView,WorkspaceObjectView.ArrangementState> InspectorStates;
             public Dictionary<WorkspaceObjectView,(Vector3 position,Quaternion rotation)> Parts;
         }
         readonly List<Entry> history = new List<Entry>();
@@ -51,9 +53,11 @@ namespace SpatialModeling
             if(target==null) return;
             var part=target.GetComponent<WorkspaceObjectView>();
             var parts=new Dictionary<WorkspaceObjectView,(Vector3,Quaternion)>();
+            var inspectorStates=new Dictionary<WorkspaceObjectView,WorkspaceObjectView.ArrangementState>();
             foreach(var view in target.GetComponentsInChildren<WorkspaceObjectView>(true))
-                parts[view]=(view.PositionOffset,view.RotationOffset);
+            { parts[view]=(view.PositionOffset,view.RotationOffset);inspectorStates[view]=view.CaptureArrangementState(); }
             history.Add(new Entry { Target=target,Pose=new Pose(target.position,target.rotation),Scale=target.localScale,Parts=parts,
+                InspectorStates=inspectorStates,PartState=part!=null?part.CaptureArrangementState():null,
                 Part=part,PositionOffset=part!=null?part.PositionOffset:Vector3.zero,
                 RotationOffset=part!=null?part.RotationOffset:Quaternion.identity });
             if(history.Count>20) history.RemoveAt(0);
@@ -65,12 +69,12 @@ namespace SpatialModeling
             {
                 var entry=history[history.Count-1]; history.RemoveAt(history.Count-1);
                 if(entry.Target==null) continue;
-                if(entry.Part!=null) entry.Part.RestoreArrangement(entry.PositionOffset,entry.RotationOffset);
+                if(entry.Part!=null) entry.Part.RestoreArrangementState(entry.PartState);
                 else
                 {
                     entry.Target.SetPositionAndRotation(entry.Pose.position,entry.Pose.rotation); entry.Target.localScale=entry.Scale;
                     if(scene!=null && entry.Target==scene.Placement) scene.Table.RememberDisplayScale();
-                    foreach(var item in entry.Parts) if(item.Key!=null) item.Key.RestoreArrangement(item.Value.position,item.Value.rotation);
+                    foreach(var item in entry.InspectorStates) if(item.Key!=null) item.Key.RestoreArrangementState(item.Value);
                 }
                 break;
             }

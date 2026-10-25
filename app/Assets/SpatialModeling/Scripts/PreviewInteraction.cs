@@ -420,7 +420,8 @@ namespace SpatialModeling
                 {
                     case "Keyboard": selected = keyboardShown && !fullKeyboard; break;
                     case "Full keyboard": selected = keyboardShown && fullKeyboard; break;
-                    case "CTRL": case "SHIFT": case "ALT": selected = modifiers.Contains(b.name); break;
+                    case "CTRL": case "ALT": selected = modifiers.Contains(b.name); break;
+                    case "SHIFT": selected = modifiers.Contains(b.name) || (DirectEditing != null && DirectEditing.Active && DirectEditing.AdditiveSelection); break;
                     case "Caps": selected = shiftText; break;
                     case "Lock screen position": selected = screen != null && screen.PositionLocked; break;
                     case "Controller controls": selected = questControls; break;
@@ -482,8 +483,9 @@ namespace SpatialModeling
         void DisableNativeInput()
         {
             bool keepDirectMode = DirectEditing != null && DirectEditing.Active;
+            bool keepAdditive=keepDirectMode&&DirectEditing.AdditiveSelection;
             Suspend();
-            if (keepDirectMode) DirectEditing.SetActive(true);
+            if (keepDirectMode) {DirectEditing.SetActive(true);DirectEditing.SetAdditiveSelection(keepAdditive);}
             Notice = keepDirectMode ? "Native window input OFF · direct model editing remains ON after input cleanup"
                 : "Input disabled; releasing held keys and buttons";
         }
@@ -554,6 +556,8 @@ namespace SpatialModeling
         }
         void FocusNativeUi()
         {
+            if(DirectEditing!=null&&DirectEditing.LiveBusy)
+            {Notice="Wait for live geometry or selection cleanup before enabling native Blender input";return;}
             if (pendingNativeCommand != null) { Notice = "Wait for the 3D edit handoff to finish"; return; }
             if (endAfterRelease) { Notice = "Waiting for native input cleanup before focusing again"; return; }
             lastInputFailure = "";
@@ -727,8 +731,15 @@ namespace SpatialModeling
         }
         void Modifier(string key)
         {
+            if(key=="SHIFT"&&DirectEditing!=null&&DirectEditing.Active)
+            {
+                DirectEditing.SetAdditiveSelection(!(modifiers.Contains(key)||DirectEditing.AdditiveSelection));
+                if(!inputEnabled||!Ready())
+                {Notice=DirectEditing.AdditiveSelection?"SHIFT: add/remove native spatial selection":"SHIFT: replace/toggle native spatial selection";return;}
+            }
             if (!inputEnabled || !Ready()) { Notice = "Enable Blender input before using modifiers"; return; }
-            bool down = !modifiers.Contains(key);
+            bool down = key=="SHIFT"&&DirectEditing!=null&&DirectEditing.Active
+                ? DirectEditing.AdditiveSelection : !modifiers.Contains(key);
             if (down) modifiers.Add(key); else modifiers.Remove(key);
             Enqueue(new JObject { ["type"] = "key", ["key"] = key, ["action"] = down ? "down" : "up" });
             Notice = "Held modifiers: " + string.Join(" + ", modifiers);
@@ -1007,8 +1018,8 @@ namespace SpatialModeling
         {
             if (guideText == null) return;
             string[] pages = {
-                "1 / 3 · EDIT THE FLOATING MODEL\n\nClose this guide. In Blender's left toolbar choose Move, Rotate or Scale. Point at the floating object, hold the front trigger and aim to edit. Orange is an uncommitted preview. Release commits to Blender with one Undo. A click without dragging only selects / deselects.\n\nThe first drag safely releases native-window input. Keep holding until orange appears. Releasing early sends no edit. Escape or grip cancels a draft. Grip keeps arranging the VR display.\n\nInput ON still edits the native 2D Blender window with controllers. Enable it again to choose another native tool.",
-                "2 / 3 · DIRECT MESH EDITING\n\nIn Blender select a mesh, choose Edit Mode, then one vertex / edge / face selection mode. Choose Move, Rotate or Scale in Blender's toolbar. Aim at a visible floating component, hold the front trigger, aim, then release. Face mode also supports Extrude Region.\n\nOne gesture edits one picked component. Scale is uniform; rotation follows aim. Modifiers, multi-object Edit Mode, mixed component modes and other tools stay available in the native 2D preview.\n\nUse Blender Undo / Redo or voice Undo / Redo. Keyboard and Full keyboard still type into the intended Blender editor.",
+                "1 / 3 · EDIT THE FLOATING MODEL LIVE\n\nBlender remains the modeling menu. Enable Input ON, then choose its native tool and settings. Point at the floating model: trigger tap selects / deselects; hold the trigger and aim to edit. The actual Blender geometry updates while held. Release commits one Undo step.\n\nThe first edit releases native-window input safely. Keep holding until a real native preview is acknowledged. Escape or grip cancels and restores the starting geometry; wait for rollback before re-gripping to arrange.\n\nKeyboard SHIFT adds/removes objects or components. Input OFF preserves Edit model and sticky spatial SHIFT. Input ON still edits Blender's 2D window with controllers.",
+                "2 / 3 · NATIVE TOOLS AND COMPONENTS\n\nChoose Edit Mode and vertex / edge / face selection in Blender. Pick components directly on the floating mesh; SHIFT adds/removes. A drag on a selected member edits the complete selection. Native axis / plane handles and Blender's orientation, pivot, snapping and proportional settings apply.\n\nChoose Extrude, Inset, Bevel, Loop Cut or Knife in Blender. Hold and aim for depth / width; Loop Cut follows its picked native quad ring and configured cut count; Knife follows the surface stroke. Release commits one Undo.\n\nFor Merge, Dissolve or Delete, first select in 3D, wait for native selection acknowledgement, then use Blender's existing Mesh menu or keyboard. Undo / Redo remain native.",
                 "3 / 3 · NATIVE PREVIEW, DRAWING AND VOICE\n\nInput ON: front trigger clicks / drags Blender menus and viewport. Locked screen: side grip right-clicks, stick scrolls / zooms, hold stick + tilt pans. The real laptop keyboard remains visible through its passthrough window.\n\nDraw in VR follows Blender's CAD Line, Circle or Corner Rectangle tool. Voice and direct edits wait for acknowledged input release; a running native modal must finish / cancel first. Input stays OFF afterward.\n\nGripping arranges the VR display; it does not change Blender geometry. Native tool, target or document changes cancel local direct drafts."
             };
             guideText.text = pages[guidePage];

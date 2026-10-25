@@ -155,7 +155,7 @@ namespace SpatialModeling
             if (objectRequestPending && !ObjectContextCurrent()) Session.Cancel();
             ValidateSpatialContext();
             if (ObjectToolsEnabled && !ObjectContextCurrent()) numeric?.Invalidate();
-            if (Session.Busy && Time.unscaledTime - pendingAt > 10f) Session.Timeout();
+            if ((Session.AwaitingPermission || Session.NativeCommandExecuting) && Time.unscaledTime - pendingAt > 10f) Session.Timeout();
             if ((beginId != null || endId != null) && Time.unscaledTime - pendingAt > 5f)
             {
                 beginId = endId = null; wantNativeUi = false;
@@ -172,6 +172,7 @@ namespace SpatialModeling
             Session.SceneCurrent = scene != null && scene.IsCurrent;
             if (e.Kind == HostEventKind.Closed || e.Kind == HostEventKind.InvalidScene)
             {
+                BeforeNativeSessionMessage?.Invoke(new JObject { ["type"]="connection.closed",["payload"]=new JObject { ["reason"]=e.Text??"Native scene unavailable" } });
                 Session.Disconnect(e.Text ?? "Native scene unavailable");
                 objectTools?.Reset(); ObjectToolsEnabled = objectRequestPending = false;
                 numeric?.Invalidate();

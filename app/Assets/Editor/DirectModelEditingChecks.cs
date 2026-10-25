@@ -21,6 +21,7 @@ public static class DirectModelEditingChecks
     public static void Run()
     {
         Mapping(); Picking(); ThinSolidPicking(); Routing(); Handoff(); Invalidation(); ReceiptsAndVisuals(); ExplicitCancel();
+        LiveControllerChecks.Run();
         Debug.Log("DIRECT_MODEL_EDIT_CHECK PASS actual preview-route/native-tool/base-topology/concave-triangles/component/occlusion/arrangement+negative-scale/meter-mm/click-only/ACK-release/no-replay/frozen-context/lease-single-submit; physical acceptance pending");
     }
     static void Mapping()
@@ -246,7 +247,7 @@ public static class DirectModelEditingChecks
                 "executing transaction cancellation feedback preserves the native wait-for-receipt notice");
         }
     }
-    sealed class Fixture:IDisposable
+    public sealed class Fixture:IDisposable
     {
         readonly GameObject owner,display,obj;
         readonly Mesh mesh;
