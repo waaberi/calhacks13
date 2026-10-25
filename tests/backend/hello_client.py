@@ -5,7 +5,7 @@
   python tests/backend/hello_client.py --host 192.168.1.20 --token - --no-tls
 
 Blender must be running with the add-on enabled in Host role (and for the LAN,
-with "Let a Client-role Blender join over the LAN" on). Prints welcome,
+with "Let a Client-role Blender join" on). Prints welcome,
 scene.snapshot and session.update. With --stay it keeps the connection, pings
 every 2 s like a real client and prints every message until Ctrl-C, so you can
 watch others join and leave. --token works as in ping_client.py and is never

@@ -41,8 +41,9 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
         update=_sync_roles,
     )
     lan_enabled: bpy.props.BoolProperty(
-        name="Let a Client-role Blender join over the LAN",
-        description=f"Listen on port {lan.PORT} for a second Blender with the session token",
+        name="Let a Client-role Blender join",
+        description=(f"Listen on port {lan.PORT} for a second Blender with the session token, "
+                     "directly on the LAN or through the Maincloud bridge"),
         default=False,
         update=_restart,
     )
@@ -103,7 +104,7 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
         name="SpacetimeDB",
         items=(
             ("LOCAL", "This PC", ("A SpacetimeDB server on this PC decides leases. Remote "
-             "Blenders join over the LAN")),
+             "Blenders join directly on the LAN")),
             ("CLOUD", "Maincloud", ("SpacetimeDB on Maincloud decides leases and carries "
              "remote Blenders' connections through the bridge, from any network "
              "(spacetime/README.md)")),
