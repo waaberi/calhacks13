@@ -2,12 +2,13 @@
   "name": "spatial-modeling-session",
   "version": "0.1.0",
   "private": true,
-  "description": "SpacetimeDB module for shared session state: participants, leases and the receipt log. See README.md.",
+  "description": "SpacetimeDB module for shared session state (participants, leases, the receipt log) and the internet relay. See README.md.",
   "license": "GPL-3.0-or-later",
   "scripts": {
     "build": "spacetime build",
     "typecheck": "tsc --noEmit",
-    "board": "tsc -p board && node board/dist/server.js"
+    "board": "tsc -p board && node board/dist/server.js",
+    "bridge": "tsc -p bridge && node bridge/dist/bridge.js"
   },
   "dependencies": {
     "spacetimedb": "2.13.0"

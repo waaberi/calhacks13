@@ -39,8 +39,9 @@ def checks():
     bc.install()
     addon_utils.enable(bc.MODULE, default_set=True)
     host, sync = bc.mod("host"), bc.mod("sync")
-    host.SPACETIME_DATABASE = DATABASE
-    bpy.context.preferences.addons[bc.MODULE].preferences.spacetime_url = URL  # restarts
+    prefs = bpy.context.preferences.addons[bc.MODULE].preferences
+    prefs.spacetime_database = DATABASE
+    prefs.spacetime_url = URL  # restarts
     store = host._session.store
     yield from bc.wait(lambda: store.deciding, "SpacetimeDB to take over the leases", 20)
     bc.log(store.status)
@@ -66,6 +67,7 @@ def checks():
     assert reply["type"] == "error" and reply["payload"]["code"] == "lease_conflict", reply
     bc.log(f"Jihyeon's lease on the Cube: lease_conflict, {reply['payload']['message']!r}; "
            f"both answers in {took:.0f} ms")
+    yield from bc.wait(lambda: store.wait_idle(0), "the copy to catch up")
     refusals = yield from table(store, "refusal")
     assert (refusals[-1]["actor_id"], refusals[-1]["blocking_lease_id"]) == (
         jw["actor_id"], lease["lease_id"]), refusals

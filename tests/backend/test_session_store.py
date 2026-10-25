@@ -16,6 +16,7 @@ import os
 import shutil
 import socket
 import subprocess
+import threading
 import time
 import urllib.request
 import uuid
@@ -504,6 +505,44 @@ def test_mirror_clears_an_earlier_host_then_copies_in_order():
         assert names.count("acquire") == 1 and "leave" in names, names
         assert min(names.index(r) for r in ("release", "leave") if r in names) < names.index(
             "acquire"), names
+    finally:
+        store.close()
+
+
+def test_mirror_copies_a_join_that_arrived_during_a_push_before_deciding():
+    # On Maincloud each call takes ~300 ms, so a client can join and ask while a push runs.
+    class SlowJoin(FakeRemote):
+        def __init__(self):
+            super().__init__()
+            self.joined, self.blocking, self.unblock = set(), threading.Event(), threading.Event()
+            self.out_of_step = []
+
+        def call(self, reducer, args=None):
+            if reducer == "join" and not self.blocking.is_set():
+                self.blocking.set()
+                self.unblock.wait(5)
+            if reducer == "join":
+                self.joined.add(args["actor_id"])
+            if reducer == "acquire" and args["owner_id"] not in self.joined:
+                self.out_of_step.append(args["owner_id"])
+                raise SessionError("not_found", f"no participant {args['owner_id']}")
+            super().call(reducer, args)
+
+    remote = SlowJoin()
+    store = mirrored(remote)
+    try:
+        a, b = actor("Talia"), actor("Lee", "blender-client")
+        store.join(a)
+        assert remote.blocking.wait(5)  # the thread is copying Talia's join
+        store.join(b)
+        decided = []
+        store.acquire_async(b["actor_id"], "shared", [uuid.uuid4().hex],
+                            lambda lease, error: decided.append((lease, error)))
+        remote.unblock.set()
+        assert store.wait_idle(5)
+        store.poll()
+        assert len(decided) == 1 and decided[0][1] is None, decided
+        assert remote.out_of_step == []  # SpacetimeDB decided it; memory didn't have to
     finally:
         store.close()
 

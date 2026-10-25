@@ -719,11 +719,16 @@ class MirroredStore(SessionStore):
                     self._pushed = None
                 if self._pushed is None:
                     self._clear()
-                self._push()
-                while self._requests and not self._stop.is_set():
+                while not self._stop.is_set():
+                    # Look before pushing: a request's join reached memory before the request
+                    # did, so this push copies it even if the client joined during the last one.
+                    with self._lock:
+                        waiting = bool(self._requests)
+                    self._push()  # the last grant, and anything that changed meanwhile
+                    if not waiting:
+                        break
                     self._decide(self._requests[0])
                     self._requests.popleft()
-                    self._push()  # the grant, and anything that changed meanwhile
                 if time.monotonic() - renewed >= self._renew_s:
                     for actor_id in list(self._pushed[0]):
                         self._write("renew", {"actor_id": actor_id, "ttl_ms": LEASE_TTL_MS})

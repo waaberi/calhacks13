@@ -2,13 +2,14 @@
 
 The SpacetimeDB spike (issue #16, [PHASE_PLAN.md › SpacetimeDB session state](../PHASE_PLAN.md#spacetimedb-session-state)). Owner: Waaberi.
 
-The module holds the session state the host shares: **participants**, **object leases**, the **receipt log**, object **labels** and lease **refusals**. Its `acquire` reducer decides who may edit what. It never holds geometry, scene snapshots or native commands; those stay on the direct host connection. The wire format in [contracts/README.md](../contracts/README.md) doesn't change: the host builds `session.update`, `lease.granted` and `receipts` from these tables, or from memory if SpacetimeDB isn't used.
+The module holds the session state the host shares: **participants**, **object leases**, the **receipt log**, object **labels** and lease **refusals**. Its `acquire` reducer decides who may edit what. It also relays the host connection between PCs on different networks ([below](#across-the-internet)), as TLS ciphertext it can't read; it never stores geometry, snapshots or commands as such. The wire format in [contracts/README.md](../contracts/README.md) doesn't change: the host builds `session.update`, `lease.granted` and `receipts` from these tables, or from memory if SpacetimeDB isn't used.
 
 | File | What it is |
 | --- | --- |
 | [`src/index.ts`](src/index.ts) | The module: tables `participant`, `lease`, `receipt` (public) and `authority` (private), and the reducers. |
 | [`../blender_addon/spatial_modeling/session_store.py`](../blender_addon/spatial_modeling/session_store.py) | The host's side: one `SessionStore` interface, `MemoryStore`, `SpacetimeStore` (stdlib HTTP) and `MirroredStore`, which the host uses: SpacetimeDB's `acquire` reducer decides leases on a background thread. |
 | [`board/`](board/) | The session board: a live page subscribed to the module with the TypeScript SDK. |
+| [`bridge/`](bridge/) | The internet bridge: carries a remote Blender's connection to the host through the module (#166). |
 | [`LatencyProbe/`](LatencyProbe/) | C# console app on the official C# SDK; stands in for the Unity app. |
 | [`measure.py`](measure.py) | Measures HTTP round trips and subscription latency (stdlib only). |
 | [`../tests/backend/test_session_store.py`](../tests/backend/test_session_store.py) | Runs every store test against both stores; the SpacetimeDB half is skipped when no server is running. |
@@ -120,7 +121,7 @@ The host add-on uses SpacetimeDB through `MirroredStore` in `session_store.py`, 
 - **Token.** It's kept in Blender's config folder as `spatial_modeling/spacetime-host-token`. If the preferences say "another identity is already the host", run `spacetime call spatial-modeling reset_host` and re-enter the SpacetimeDB preference.
 - **Not stored there yet:** the receipt log (still in `commands.py`).
 
-The remote Blender client still joins through the host's TLS LAN port (8767). SpacetimeDB stays on localhost.
+The remote Blender client joins through the host's TLS LAN port (8767): directly on a LAN, or through the bridges [across the internet](#across-the-internet).
 
 ## The session board
 
@@ -134,6 +135,49 @@ npm run board -- --url http://127.0.0.1:3000 --database spatial-modeling --port 
 ```
 
 [`board/server.ts`](board/server.ts) subscribes with the official TypeScript SDK (Node 22 or later), and pushes each change to [`board/index.html`](board/index.html) over Server-Sent Events. It listens on 127.0.0.1 only. `board/module_bindings/` is generated. After changing `src/`, regenerate it with `spacetime generate --lang typescript --out-dir board/module_bindings --module-path . -y`.
+
+## Across the internet
+
+For two PCs with no shared network, so no LAN address, port forwarding or VPN is needed. Both PCs connect out to the same database on Maincloud, and a small Node bridge on each PC carries the host connection through it. Neither add-on changes how it connects.
+
+```
+remote Blender --TLS-PSK--> join bridge --wss--> Maincloud <--wss-- host bridge --> host Blender :8767
+  (127.0.0.1:8767)                         room / pipe / frame                       (LAN port on)
+```
+
+The module is published on Maincloud as `calhacks13-spatial-modeling`. The add-on and both bridges use that name by default.
+
+### Run it
+
+Every PC needs Node 22 or later and `npm ci` in `spacetime/`.
+
+1. **Host PC:** in the add-on, turn on the LAN port with TLS and switch **SpacetimeDB** to **Maincloud**. Then run `npm run bridge -- host` and paste the session token when asked.
+2. **Remote PC:** run `npm run bridge -- join` with the same token. In the Client-role add-on, connect to `127.0.0.1` port `8767` with that token and turn on **Use TLS with the token**.
+
+Both bridges take `--url` (default `https://maincloud.spacetimedb.com`) and `--database` (default `calhacks13-spatial-modeling`). The host bridge also takes `--blender HOST:PORT`, and the join bridge takes `--listen HOST:PORT`. Both default to `127.0.0.1:8767`. Set `SPATIAL_MODELING_TOKEN` to skip the token prompt.
+
+### Changing the module
+
+After changing `src/`, regenerate the bridge's bindings and republish (this needs the publisher's `spacetime login`):
+
+```
+spacetime generate --lang typescript --out-dir bridge/module_bindings --module-path . -y
+spacetime publish -s maincloud -y calhacks13-spatial-modeling
+```
+
+The first add-on to connect in Maincloud mode becomes the host. If the wrong identity claims it, or the host's token is lost, the publisher frees the slot with `spacetime call -s maincloud calhacks13-spatial-modeling reset_host`.
+
+### How it works
+
+- **Relay.** Each TCP connection is a `pipe`, and its bytes travel as numbered `frame` rows. `send` checks that the caller owns the pipe and that frames arrive in order, and the receiver deletes them with `ack`. At most 64 frames of 64 KiB are in flight in each direction. When a bridge disconnects, `on_disconnect` closes its room or pipes, and Blender reconnects as it does after any lost connection.
+- **Encryption.** The bridges pass the TLS-PSK bytes through unchanged, so Maincloud only stores ciphertext. The join bridge refuses any connection that doesn't start with a TLS handshake, so the add-on's no-TLS fallback can't send the token through the relay.
+- **Access.** `room`, `pipe` and `frame` are private. Each bridge sees only its own rows, through the `my_pipe` and `my_frame` views. The session token never leaves either PC. A bridge sends a room id and a proof, both derived from the token, so only someone with the token can open the room or connect to it.
+- **Local or cloud.** The host's **SpacetimeDB** preference switches between **This PC** (the default) and **Maincloud**. Either way, the same `acquire` reducer decides leases. Each server has its own host token (`spacetime-host-token` and `spacetime-host-token-maincloud`), so the host keeps its claim on both when you switch between them. Calls to Maincloud take a few hundred milliseconds, but they run on the mirror thread, so Blender never waits for them.
+
+### Limits
+
+- The VR headset still has to be at the host's PC. Unity talks to its own PC's host on `127.0.0.1:8765`.
+- The lease tables are public. Anyone who knows the database name can read participant names, lease targets and receipt summaries.
 
 ## Security notes
 

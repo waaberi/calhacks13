@@ -2,8 +2,12 @@
 //
 // The host add-on is the only writer: it calls these reducers over HTTP, from a background
 // thread, after it has checked a request against contracts/README.md. `acquire` decides who
-// may edit what: the host grants a client's lease.acquire only if this reducer accepts it. The Unity app only subscribes. Geometry, scene snapshots
-// and native commands never come here; they stay on the direct host connection.
+// may edit what: the host grants a client's lease.acquire only if this reducer accepts it. The
+// Unity app only subscribes.
+//
+// Rooms, pipes and frames (the end of this file) carry the host connection itself between two
+// bridges (bridge/) when the host and a remote Blender are on different networks (#166). They
+// carry TLS-PSK bytes this module can't read; geometry and commands are never stored as such.
 //
 // Rows mirror the contract: a `participant` row is an `actor`, a `lease` row is a `lease`
 // (its owner's name and role come from `participant`), and a `receipt` row stores one receipt.
@@ -85,7 +89,54 @@ const authority = table(
   }
 );
 
-const spacetimedb = schema({ participant, lease, receipt, label, refusal, authority });
+// The relay (#166). All three are private: a bridge sees only its own pipes and frames, through
+// the my_pipe and my_frame views.
+//
+// A room is one host bridge. Its id and proof both come from the session token, so only someone
+// with the token can open the room or a pipe into it; the module never sees the token itself.
+const room = table(
+  { name: 'room' },
+  {
+    room_id: t.string().primaryKey(),
+    proof: t.string(),
+    host: t.identity(),
+    host_connection: t.connectionId(),
+    opened_at: t.u64(),
+  }
+);
+
+// A pipe is one TCP connection from a remote Blender to the host's LAN port. The two sides
+// number their frames 1, 2, 3... *_sent is the last frame each side sent and *_acked the last
+// frame each side wrote to its Blender, so a sender knows how much is still in flight.
+const pipe = table(
+  { name: 'pipe' },
+  {
+    pipe_id: t.string().primaryKey(),
+    room_id: t.string().index('btree'),
+    host: t.identity().index('btree'),
+    client: t.identity().index('btree'),
+    client_connection: t.connectionId(),
+    opened_at: t.u64(),
+    host_sent: t.u64(),
+    client_sent: t.u64(),
+    host_acked: t.u64(), // the host's last frame from the client
+    client_acked: t.u64(), // the client's last frame from the host
+  }
+);
+
+// Bytes on their way. The receiving bridge deletes them with `ack` once it has written them.
+const frame = table(
+  { name: 'frame' },
+  {
+    frame_id: t.u64().primaryKey().autoInc(),
+    pipe_id: t.string().index('btree'),
+    to: t.identity().index('btree'),
+    seq: t.u64(),
+    data: t.byteArray(),
+  }
+);
+
+const spacetimedb = schema({ participant, lease, receipt, label, refusal, authority, room, pipe, frame });
 export default spacetimedb;
 
 type Ctx = ReducerCtx<InferSchema<typeof spacetimedb>>;
@@ -326,3 +377,119 @@ export const note_refusal = spacetimedb.reducer(
     }
   }
 );
+
+// The relay (#166) ------------------------------------------------------------------------------
+
+const HEX64 = /^[0-9a-f]{64}$/;
+const MAX_FRAME_BYTES = 65_536;
+const MAX_IN_FLIGHT = 64n; // frames per direction not yet acked: 4 MiB
+const MAX_PIPES_PER_ROOM = 8;
+
+function closePipe(ctx: Ctx, pipeId: string): void {
+  for (const row of [...ctx.db.frame.pipe_id.filter(pipeId)]) ctx.db.frame.frame_id.delete(row.frame_id);
+  ctx.db.pipe.pipe_id.delete(pipeId);
+}
+
+function closeRoom(ctx: Ctx, roomId: string): void {
+  for (const row of [...ctx.db.pipe.room_id.filter(roomId)]) closePipe(ctx, row.pipe_id);
+  ctx.db.room.room_id.delete(roomId);
+}
+
+function myPipe(ctx: Ctx, pipeId: string) {
+  const row = ctx.db.pipe.pipe_id.find(pipeId);
+  if (row === null) reject('not_found', `no pipe ${pipeId}`);
+  const asHost = row.host.equals(ctx.sender);
+  if (!asHost && !row.client.equals(ctx.sender)) reject('permission_denied', 'not your pipe');
+  return { row, asHost };
+}
+
+// A host bridge opens its room. A second bridge with the same token takes the room over and
+// closes the first one's pipes, so a restarted bridge never waits for the old connection to time out.
+export const open_room = spacetimedb.reducer(
+  { room_id: t.string(), proof: t.string() },
+  (ctx, { room_id, proof }) => {
+    requireUuid('room_id', room_id);
+    if (!HEX64.test(proof)) reject('invalid_message', 'proof must be 64 lowercase hex digits');
+    if (ctx.connectionId === null) reject('invalid_message', 'open a room over a live connection');
+    const old = ctx.db.room.room_id.find(room_id);
+    if (old !== null) {
+      if (old.proof !== proof) reject('permission_denied', 'wrong proof for this room');
+      closeRoom(ctx, room_id);
+    }
+    ctx.db.room.insert({ room_id, proof, host: ctx.sender, host_connection: ctx.connectionId, opened_at: nowMs(ctx) });
+  }
+);
+
+// A remote bridge opens a pipe into a room for one TCP connection; the host bridge sees it in
+// my_pipe and connects to its Blender.
+export const open_pipe = spacetimedb.reducer(
+  { pipe_id: t.string(), room_id: t.string(), proof: t.string() },
+  (ctx, { pipe_id, room_id, proof }) => {
+    requireUuid('pipe_id', pipe_id);
+    if (ctx.connectionId === null) reject('invalid_message', 'open a pipe over a live connection');
+    const r = ctx.db.room.room_id.find(room_id);
+    if (r === null || r.proof !== proof) reject('not_found', 'no host is open for this session token');
+    if (r.host.equals(ctx.sender)) reject('invalid_message', 'the host bridge cannot join its own room');
+    if (ctx.db.pipe.pipe_id.find(pipe_id) !== null) reject('duplicate_request', `pipe ${pipe_id} exists`);
+    if ([...ctx.db.pipe.room_id.filter(room_id)].length >= MAX_PIPES_PER_ROOM) {
+      reject('busy', `at most ${MAX_PIPES_PER_ROOM} connections per room`);
+    }
+    ctx.db.pipe.insert({
+      pipe_id, room_id, host: r.host, client: ctx.sender, client_connection: ctx.connectionId,
+      opened_at: nowMs(ctx), host_sent: 0n, client_sent: 0n, host_acked: 0n, client_acked: 0n,
+    });
+  }
+);
+
+// Frames must arrive numbered 1, 2, 3...; a gap or a full window closes nothing but fails the
+// call, and the bridge then closes the pipe (Blender reconnects).
+export const send = spacetimedb.reducer(
+  { pipe_id: t.string(), seq: t.u64(), data: t.byteArray() },
+  (ctx, { pipe_id, seq, data }) => {
+    const { row, asHost } = myPipe(ctx, pipe_id);
+    if (data.length < 1 || data.length > MAX_FRAME_BYTES) reject('invalid_message', `1 to ${MAX_FRAME_BYTES} bytes per frame`);
+    const last = asHost ? row.host_sent : row.client_sent;
+    const acked = asHost ? row.client_acked : row.host_acked;
+    if (seq !== last + 1n) reject('invalid_message', `expected frame ${last + 1n}, got ${seq}`);
+    if (seq - acked > MAX_IN_FLIGHT) reject('busy', 'too many frames in flight');
+    ctx.db.frame.insert({ frame_id: 0n, pipe_id, to: asHost ? row.client : row.host, seq, data });
+    ctx.db.pipe.pipe_id.update(asHost ? { ...row, host_sent: seq } : { ...row, client_sent: seq });
+  }
+);
+
+// The caller has written every frame up to `upto` to its Blender: delete them.
+export const ack = spacetimedb.reducer({ pipe_id: t.string(), upto: t.u64() }, (ctx, { pipe_id, upto }) => {
+  const { row, asHost } = myPipe(ctx, pipe_id);
+  const sent = asHost ? row.client_sent : row.host_sent;
+  const acked = asHost ? row.host_acked : row.client_acked;
+  if (upto > sent) reject('invalid_message', `frame ${upto} was never sent`);
+  if (upto <= acked) return;
+  for (const f of [...ctx.db.frame.pipe_id.filter(pipe_id)]) {
+    if (f.to.equals(ctx.sender) && f.seq <= upto) ctx.db.frame.frame_id.delete(f.frame_id);
+  }
+  ctx.db.pipe.pipe_id.update(asHost ? { ...row, host_acked: upto } : { ...row, client_acked: upto });
+});
+
+export const close_pipe = spacetimedb.reducer({ pipe_id: t.string() }, (ctx, { pipe_id }) => {
+  if (ctx.db.pipe.pipe_id.find(pipe_id) === null) return; // the other side closed it first
+  myPipe(ctx, pipe_id);
+  closePipe(ctx, pipe_id);
+});
+
+// A bridge's connection dropped: close its room or its pipes. Matched by connection, not identity,
+// because a bridge may share its identity with other connections.
+export const on_disconnect = spacetimedb.clientDisconnected(ctx => {
+  const gone = ctx.connectionId;
+  if (gone === null) return;
+  for (const r of [...ctx.db.room.iter()]) if (r.host_connection.isEqual(gone)) closeRoom(ctx, r.room_id);
+  for (const p of [...ctx.db.pipe.iter()]) if (p.client_connection.isEqual(gone)) closePipe(ctx, p.pipe_id);
+});
+
+export const my_pipe = spacetimedb.view({ name: 'my_pipe', public: true }, t.array(pipe.rowType), ctx => [
+  ...ctx.db.pipe.host.filter(ctx.sender),
+  ...ctx.db.pipe.client.filter(ctx.sender),
+]);
+
+export const my_frame = spacetimedb.view({ name: 'my_frame', public: true }, t.array(frame.rowType), ctx => [
+  ...ctx.db.frame.to.filter(ctx.sender),
+]);

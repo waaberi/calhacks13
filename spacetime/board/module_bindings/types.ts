@@ -16,6 +16,15 @@ export const Authority = __t.object("Authority", {
 });
 export type Authority = __Infer<typeof Authority>;
 
+export const Frame = __t.object("Frame", {
+  frameId: __t.u64(),
+  pipeId: __t.string(),
+  to: __t.identity(),
+  seq: __t.u64(),
+  data: __t.byteArray(),
+});
+export type Frame = __Infer<typeof Frame>;
+
 export const Label = __t.object("Label", {
   objectId: __t.string(),
   name: __t.string(),
@@ -32,6 +41,12 @@ export const Lease = __t.object("Lease", {
 });
 export type Lease = __Infer<typeof Lease>;
 
+export const MyFrame = __t.object("MyFrame", {});
+export type MyFrame = __Infer<typeof MyFrame>;
+
+export const MyPipe = __t.object("MyPipe", {});
+export type MyPipe = __Infer<typeof MyPipe>;
+
 export const Participant = __t.object("Participant", {
   actorId: __t.string(),
   name: __t.string(),
@@ -40,6 +55,20 @@ export const Participant = __t.object("Participant", {
   lastSeen: __t.u64(),
 });
 export type Participant = __Infer<typeof Participant>;
+
+export const Pipe = __t.object("Pipe", {
+  pipeId: __t.string(),
+  roomId: __t.string(),
+  host: __t.identity(),
+  client: __t.identity(),
+  clientConnection: __t.connectionId(),
+  openedAt: __t.u64(),
+  hostSent: __t.u64(),
+  clientSent: __t.u64(),
+  hostAcked: __t.u64(),
+  clientAcked: __t.u64(),
+});
+export type Pipe = __Infer<typeof Pipe>;
 
 export const Receipt = __t.object("Receipt", {
   requestId: __t.string(),
@@ -60,4 +89,13 @@ export const Refusal = __t.object("Refusal", {
   targets: __t.array(__t.string()),
 });
 export type Refusal = __Infer<typeof Refusal>;
+
+export const Room = __t.object("Room", {
+  roomId: __t.string(),
+  proof: __t.string(),
+  host: __t.identity(),
+  hostConnection: __t.connectionId(),
+  openedAt: __t.u64(),
+});
+export type Room = __Infer<typeof Room>;
 
