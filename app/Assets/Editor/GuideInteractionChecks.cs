@@ -17,7 +17,15 @@ public static class GuideInteractionChecks
 {
     const BindingFlags Private=BindingFlags.Instance|BindingFlags.NonPublic;
     static object Get(object target,string name)=>target.GetType().GetField(name,Private).GetValue(target);
-    static void Set(object target,string name,object value)=>target.GetType().GetField(name,Private).SetValue(target,value);
+    static void Set(object target,string name,object value)=>Assign(target.GetType().GetField(name,Private),target,value);
+    static void Assign(FieldInfo field,object target,object value)
+    {
+        Check(field!=null,"fixture reflected field exists");
+        Type nullable=Nullable.GetUnderlyingType(field.FieldType),expected=nullable??field.FieldType;
+        Check(value==null?(!field.FieldType.IsValueType||nullable!=null):expected.IsInstanceOfType(value),
+            "fixture field "+field.DeclaringType.Name+"."+field.Name+" expects "+field.FieldType+", received "+(value?.GetType().ToString()??"null"));
+        field.SetValue(target,value);
+    }
     static object Invoke(object target,string name,params object[] args)=>target.GetType().GetMethod(name,Private).Invoke(target,args);
     static void Property(object target,string name,object value)=>target.GetType().GetProperty(name).GetSetMethod(true).Invoke(target,new[]{value});
     static void Check(bool value,string why){if(!value)throw new Exception("GUIDE_INTERACTION: "+why);}
@@ -135,7 +143,7 @@ public static class GuideInteractionChecks
                 f.Route(XRNode.RightHand,f.Native.Ray(),true);f.Route(XRNode.RightHand,f.Native.Ray(.05f),true);
                 Check(f.Native.Direct.Gesturing&&Get(f.Native.Direct,"ghost")!=null,"busy admission fixture owns a real visible direct draft before requesting Guide");
             }
-            if(blocked=="drawing-draft")Set(f.Native.Drawing,"first",(Vector3?)Vector3.zero);
+            if(blocked=="drawing-draft")Set(f.Native.Drawing,"first",(Vector2?)Vector2.zero);
             if(blocked=="placement")f.HandField(XRNode.RightHand,"target",f.Native.Host.Placement);
             bool directHeld=f.Native.Direct.Gesturing;
             f.Table.OpenGuide();
@@ -265,7 +273,7 @@ public static class GuideInteractionChecks
                 "actual visible native mesh is the nearest target before the foreign Blender image");
         }
         object Hand(XRNode node)=>node==XRNode.LeftHand?left:right;
-        public void HandField(XRNode node,string name,object value)=>handType.GetField(name).SetValue(Hand(node),value);
+        public void HandField(XRNode node,string name,object value)=>Assign(handType.GetField(name),Hand(node),value);
         public object HandValue(XRNode node,string name)=>handType.GetField(name).GetValue(Hand(node));
         public void Route(XRNode node,Ray ray,bool trigger,bool grip=false)
         {
