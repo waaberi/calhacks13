@@ -373,6 +373,11 @@ namespace SpatialModeling
                 ("Auto surfaces on/off",arrangement.Surfaces.ToggleAutomatic),
                 ("Environment setup",()=>SetupMenu(true)), ("Manage planes",()=>ChangeMenu(MenuPage.Planes)),
                 ("Surface help on/off",arrangement.ToggleAssist), ("Actual size",RestoreActualSize),
+                ("Pointer left / right",()=>{
+                    var preview=PreviewInteraction.Current;
+                    if(preview!=null) preview.SetPointerHand(preview.PrimaryHand==UnityEngine.XR.XRNode.RightHand?UnityEngine.XR.XRNode.LeftHand:UnityEngine.XR.XRNode.RightHand);
+                    RefreshMenu();
+                }),
                 ("Back to arrange",()=>ChangeMenu(MenuPage.Arrange))
             };
             if(compact && menuPage==MenuPage.Environment) actions=new (string,Action)[] {

@@ -168,9 +168,10 @@ public static class P25WindowUiChecks
         Check(!f.Drawing.NativeStateCurrent && (bool)Invoke(f.Preview, "Ready"), "confirmed raw UI reservation survives only tool telemetry age on same verified root");
         f.Click("Enter"); Check(f.Events.Count == 1 && (string)f.Events.Peek()["key"] == "ENTER", "actual Enter can finish same-window file browser while tool telemetry is stale");
         f.Events.Clear();
+        f.Click("Keyboard"); f.Tick();
         foreach (string key in new[] { "C", "V" })
         {
-            f.Click(key == "C" ? "Copy Ctrl+C" : "Paste Ctrl+V"); var chord = f.Events.ToArray();
+            f.Click("CTRL"); f.Click(key.ToLowerInvariant()); f.Click("CTRL"); var chord = f.Events.ToArray();
             Check(chord.Length == 3 && (string)chord[0]["key"] == "CTRL" && (string)chord[0]["action"] == "down"
                 && (string)chord[1]["key"] == key && (string)chord[1]["action"] == "press"
                 && (string)chord[2]["key"] == "CTRL" && (string)chord[2]["action"] == "up",
@@ -206,7 +207,7 @@ public static class P25WindowUiChecks
             f.Stale(); f.SetHost(false); Check(f.Session.SceneCurrent && !(bool)Invoke(f.Preview, "Ready"), "raw latch checks accepted host scene directly before Drawing.Update can catch up");
             f.Tick(); f.SetHost(true); Check(f.Authority.ProcessId == 0 && !(bool)Invoke(f.Preview, "Ready"), "disconnect/suspend cannot revive authority merely when host status returns");
         }
-        foreach (string button in new[] { "Model tools", "Draw in VR" })
+        foreach (string button in new[] { "Draw in VR" })
         {
             using var f = new Fixture(); f.Stale(); Invoke(f.Preview, "AwaitWindowState", "fixture handoff"); f.Click(button);
             Check((bool)Get(f.Preview, "endAfterRelease") && !(bool)Get(f.Preview, "windowResuming") && f.Authority.ProcessId == 0,

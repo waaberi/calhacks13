@@ -35,8 +35,9 @@ public static class P25Checks
         RunTargets(message => Debug.Log(message));
         RunSpatial(message => Debug.Log(message));
         RunPreviewOcclusion();
-        P25ObjectUiChecks.Run();
-        P25CommonUiChecks.Run();
+        // Old alternate editing menus are retired. Their historical fixtures
+        // remain preserved; test the delivered native-only surface instead.
+        P25CommonUiChecks.RunNativeOnly();
         P25WindowUiChecks.Run();
     }
 

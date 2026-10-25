@@ -304,3 +304,29 @@ def test_unsupported_sketch_is_isolated_without_dropping_other_native_sketches(m
     monkeypatch.setattr(adapter, "_record", record)
     assert adapter.snapshot() == [{"id": "good"}]
     assert adapter.snapshot_problems == [{"id": "bad", "name": "Sketch", "reason": "Unsupported scale/reflection"}]
+
+
+def test_native_drawing_mode_is_explicit_and_defaults_exclusive():
+    assert native.editing_mode(NS(scene=NS())) == "exclusive"
+    assert native.editing_mode(NS(scene=NS(spatial_editing_mode="SHARED"))) == "shared"
+    assert native.editing_mode(NS(scene=NS(spatial_editing_mode="invalid"))) == "exclusive"
+
+
+def test_native_preview_labels_real_writer_without_changing_admission_owner(setup):
+    s = setup
+    s.ui.begin(s.request(), s.a)
+    actual = s.session.store.leases()[0]
+    assert actual["owner"] == s.session.host
+    assert s.ui.display_leases()[0]["owner"] == s.session.participants[s.a]
+    assert s.ui.display_leases()[0]["lease_id"] == actual["lease_id"]
+    assert s.leases.may_write([], whole=True) is None
+    s.window.modal_operators = [NS(bl_idname="TRANSFORM_OT_translate")]
+    writer = s.session.participants.pop(s.a)
+    s.ui.disconnected(s.a)
+    assert s.ui.state(s.b)["ui_owner"] == writer
+    assert s.ui.state(s.b)["ui_ending"]
+    assert s.ui.display_leases()[0]["owner"] == writer
+    assert s.session.store.leases()[0]["owner"] == s.session.host
+    s.window.modal_operators = []
+    s.ui.poll()
+    assert not s.ui.display_leases()

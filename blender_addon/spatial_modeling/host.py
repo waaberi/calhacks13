@@ -89,6 +89,12 @@ def current_leases():
     return _session.store.leases() if _session is not None else []
 
 
+def displayed_leases():
+    """Ownership labels identify the preview writer; admission keeps native ownership."""
+    ui = getattr(_server, "preview_ui", None)
+    return ui.display_leases() if ui is not None else current_leases()
+
+
 def may_write(objects=(), whole=False):
     """May the host desktop change these Blender objects now? The blocking lease, or None.
 

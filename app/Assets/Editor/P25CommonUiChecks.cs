@@ -27,6 +27,84 @@ public static class P25CommonUiChecks
         Debug.Log("P25_COMMON_UI_CHECK PASS actual numeric-keypad/8-mode-apply/frozen-draft/31-shortcuts/29-full-keys/pages/editor-anchor/modifier-restoration/atomic-overflow/overlay/desktop-ownership; no native/VR acceptance");
     }
 
+    public static void RunNativeOnly()
+    {
+        using (var f = new Fixture())
+        {
+            var names = ((List<Button>)Get(f.Preview, "buttons")).Select(b => b.name).ToArray();
+            foreach (string retired in new[] { "Model tools", "Preview tools", "Line", "Circle", "Rectangle", "New XY sketch", "New XZ sketch", "New YZ sketch", "Undo", "Redo", "Save", "Other hand" })
+                Check(!names.Contains(retired), "retired editing control is not constructed: " + retired);
+            Check(f.Panel("modelToolsPanel") == null && f.Panel("numberPanel") == null && f.Panel("shortcutPanel") == null,
+                "no hidden-but-reachable alternate editing canvas");
+            f.NativeReady(); f.Anchor();
+            f.Click("Full keyboard"); f.Tick();
+            foreach (string key in PreviewShortcutCatalog.FullKeyboardKeys)
+            {
+                f.Events.Clear(); f.Click("Full " + key);
+                Check(f.Events.Count == 1 && JToken.DeepEquals(f.Events.Peek(), Key(key, "press")), "generic keyboard still routes " + key);
+            }
+            f.Preview.TrackingLost(f.Preview.PrimaryHand);
+            Check(!(bool)Get(f.Preview, "inputEnabled") && (bool)Get(f.Preview, "endAfterRelease"), "held input ends through existing release barrier");
+        }
+        foreach (string changed in new[] { "native_tool", "sketch_id", "mode", "unsupported_options", "editing_mode", "units", "generation", "modal_active", "removed" })
+        {
+            using var f = new Fixture();
+            Set(f.Host, "root", f.Host.transform);
+            f.Session.Sketches[A] = new JObject { ["id"] = A, ["generation"] = 3,
+                ["plane"] = new JObject { ["location"] = new JArray(0,0,0), ["rotation"] = new JArray(1,0,0,0) },
+                ["entities"] = new JArray(), ["constraints"] = new JArray() };
+            var state = f.Native(); state["available"] = true; state["sketch_id"] = A;
+            state["native_tool"] = "sketcher.slvs_add_line2d"; state["tool"] = "line";
+            state["editing_mode"] = "shared"; state["unsupported_options"] = new JArray();
+            f.Drawing.SetNativeState(state); f.Drawing.SetEnabled(true);
+            Check(f.Drawing.Session.Mode == "shared", "mode comes from Blender");
+            var ray = new Ray(new Vector3(0, 1, 0), Vector3.down);
+            Check(f.Drawing.Press(ray) && f.Drawing.HasDraft, "native line tool starts a direct gesture");
+            switch (changed)
+            {
+                case "native_tool": state["native_tool"] = "unsupported"; break;
+                case "sketch_id": state["sketch_id"] = ""; break;
+                case "mode": state["mode"] = "EDIT_MESH"; break;
+                case "unsupported_options": state["unsupported_options"] = new JArray("Continuous Draw"); break;
+                case "editing_mode": state["editing_mode"] = "exclusive"; break;
+                case "units": f.Session.Document["units"] = new JObject { ["scale_length"] = .001 }; break;
+                case "generation": f.Session.Sketches[A]["generation"] = 4; break;
+                case "modal_active": state["modal_active"] = true; break;
+                case "removed": f.Session.Sketches.Remove(A); break;
+            }
+            f.Drawing.SetNativeState(state);
+            Check(!f.Drawing.HasDraft && f.Sent.Count == 0, "context change cancels without command: " + changed);
+            if (changed == "sketch_id" || changed == "removed")
+                Check(!f.Drawing.Press(ray), "native target loss cannot fall back to the old local selection");
+        }
+        foreach (string tool in new[] { "line", "circle", "rectangle" })
+        foreach (bool invalidate in new[] { false, true })
+        {
+            using var f = new Fixture(); Set(f.Host, "root", f.Host.transform); Property(f.Session, "SketchAvailable", true);
+            f.Session.Sketches[A] = new JObject { ["id"] = A, ["generation"] = 3,
+                ["plane"] = new JObject { ["location"] = new JArray(0,0,0), ["rotation"] = new JArray(1,0,0,0) },
+                ["entities"] = new JArray(), ["constraints"] = new JArray() };
+            var state = f.Native(); state["available"] = true; state["sketch_id"] = A;
+            state["native_tool"] = "sketcher.native_" + tool; state["tool"] = tool; state["editing_mode"] = "shared";
+            f.Drawing.SetNativeState(state); f.Drawing.SetEnabled(true);
+            Check(f.Drawing.Press(new Ray(new Vector3(0,1,0), Vector3.down)), "first native-context point " + tool);
+            Check(f.Drawing.Press(new Ray(new Vector3(.1f,1,.06f), Vector3.down)), "second native-context point " + tool);
+            var acquire = f.Sent.Single(m => (string)m["type"] == "lease.acquire");
+            Check((string)acquire["payload"]["mode"] == "shared" && (string)acquire["payload"]["targets"][0] == A,
+                "native Shared choice reserves exactly the whole sketch " + tool);
+            if (invalidate) { state["native_tool"] = "another native tool"; f.Drawing.SetNativeState(state); }
+            f.Receive("lease.granted", new JObject { ["lease"] = new JObject { ["lease_id"] = "lease", ["mode"] = "shared", ["targets"] = new JArray(A) } }, (string)acquire["id"]);
+            if (invalidate)
+                Check(!f.Sent.Any(m => (string)m["type"] == "command") && f.Sent.Any(m => (string)m["type"] == "lease.release"),
+                    "late grant after native context change releases without mutation " + tool);
+            else
+                Check(f.Sent.Any(m => (string)m["type"] == "command" && (string)m["payload"]["op"] == "sketch.add_" + tool
+                    && (string)m["payload"]["target"]["id"] == A && (long)m["payload"]["target"]["generation"] == 3),
+                    "actual direct gesture uses native UUID/generation and typed command " + tool);
+        }
+        Debug.Log("P3_BLENDER_ONLY_CHECK PASS no alternate editing menus; generic keyboard/release barrier; native tool/mode/sketch/options/units/generation/modal/removal invalidation; no GUI/headset acceptance");
+    }
+
     sealed class Fixture : IDisposable
     {
         readonly GameObject owner, display;

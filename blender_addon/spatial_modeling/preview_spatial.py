@@ -50,6 +50,7 @@ class NativePreviewSessions:
     def __init__(self, session, leases, context):
         self.session, self.leases, self.context = session, leases, context
         self.owner = self.lease = self.token = None
+        self.writer = None
         self.ending = False
         self.seen = set()
 
@@ -63,6 +64,7 @@ class NativePreviewSessions:
         if self.owner is not None:
             self.owner.preview_ui_active = False
         self.owner = self.lease = self.token = None
+        self.writer = None
         self.ending = False
 
     def _identity(self, msg, conn, end=False):
@@ -86,12 +88,23 @@ class NativePreviewSessions:
 
     def state(self, conn):
         self.poll()
-        actor = self.session.participants.get(self.owner)
+        actor = self.writer
         modals = self._modals()
         return {"process_id": os.getpid(), "input_allowed": conn is self.owner and not self.ending
                 and self.lease is not None and UNKNOWN_MODAL_STATE not in modals,
                 "ui_session_id": self.token if conn is self.owner else "", "ui_owner": dict(actor) if actor else None,
                 "ui_ending": self.ending, "modal_operators": modals, "modal_active": bool(modals)}
+
+    def display_leases(self):
+        """Presentation only: identify the VR writer behind the desktop lease.
+
+        Admission still uses the host actor so injected native input does not
+        deadlock its own gate. Keep the writer name across modal cleanup after
+        disconnect, without rewriting the actual lease owner or permissions.
+        """
+        return [{**lease, "owner": dict(self.writer)}
+                if self.writer and self.lease and lease["lease_id"] == self.lease["lease_id"] else lease
+                for lease in self.session.store.leases()]
 
     def begin(self, msg, conn):
         try:
@@ -120,6 +133,7 @@ class NativePreviewSessions:
             # it does not invoke/confirm/cancel it or change native Undo history.
             self.lease = self.leases.grant(self.session.host["actor_id"], "exclusive")
             self.owner, self.token = conn, uuid.uuid4().hex
+            self.writer = dict(self.session.participants[conn])
             # Only server.py's scene-free built-in ping may use this marker.
             # It is not edit permission and survives a retained modal cleanup.
             conn.preview_ui_active = True
@@ -155,6 +169,11 @@ class NativePreviewSessions:
             self._clear()
 
 
+def editing_mode(context):
+    return "shared" if getattr(getattr(context, "scene", None),
+                               "spatial_editing_mode", "EXCLUSIVE") == "SHARED" else "exclusive"
+
+
 def read_state(context):
     """Read the pinned CAD API's actual workspace tool and active sketch object.
 
@@ -164,6 +183,7 @@ def read_state(context):
     dependency = sketch.dependency_status()
     state = {"available": dependency["available"], "reason": dependency.get("reason", ""),
              "tool": "", "native_tool": "", "sketch_id": "", "mode": context.mode,
+             "editing_mode": editing_mode(context),
              "selected_entities": [], "unsupported_options": [],
              "unsupported_sketches": sketch.snapshot_problems()}
     if not dependency["available"]:

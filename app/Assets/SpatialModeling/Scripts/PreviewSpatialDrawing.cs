@@ -22,7 +22,7 @@ namespace SpatialModeling
             && (string)NativeState["ui_session_id"] != null && !string.IsNullOrEmpty((string)NativeState["ui_session_id"]);
         public int NativeProcessId => NativeStateCurrent ? (int?)NativeState["process_id"] ?? 0 : 0;
         public bool NativeModalActive => (bool?)NativeState["modal_active"] ?? false;
-        public string Tool => manualTool.Length > 0 ? manualTool : (string)NativeState["tool"] ?? "";
+        public string Tool => (string)NativeState["tool"] ?? "";
         public string StatusText => (ObjectToolsEnabled ? ObjectTools.TargetLabel + "\n" : TargetStatus) + status + "\n" + Session.Notice;
         public bool HasDraft => first.HasValue;
         public bool NativeStateCurrent => scene != null && scene.IsCurrent && Session.Ready && Session.SceneCurrent
@@ -33,7 +33,9 @@ namespace SpatialModeling
         readonly List<GameObject> solved = new List<GameObject>();
         GameObject draft;
         float nextQuery, stateAt = float.NegativeInfinity, pendingAt;
-        string manualTool = "", status = "P2.5 spatial drawing disabled", draftSketch = "", beginId, endId;
+        string pendingSpatialContext = "", draftContext = "";
+        bool spatialRequestPending;
+        string status = "P2.5 spatial drawing disabled", draftSketch = "", beginId, endId;
         long draftGeneration;
         Vector2? first;
         Ray lastRay;
@@ -137,6 +139,7 @@ namespace SpatialModeling
                 && Session.Ready && Time.unscaledTime >= nextQuery)
             { scene.Link?.Send("preview.state.query", new JObject()); nextQuery = Time.unscaledTime + 0.4f; }
             if (objectRequestPending && !ObjectContextCurrent()) Session.Cancel();
+            ValidateSpatialContext();
             if (ObjectToolsEnabled && !ObjectContextCurrent()) numeric?.Invalidate();
             if (Session.Busy && Time.unscaledTime - pendingAt > 10f) Session.Timeout();
             if ((beginId != null || endId != null) && Time.unscaledTime - pendingAt > 5f)
@@ -167,8 +170,10 @@ namespace SpatialModeling
             // A grant may arrive after native mode/focus/context changed. Cancel
             // while acquisition is still pending, before Receive can emit it.
             if (objectRequestPending && !ObjectContextCurrent()) Session.Cancel();
+            ValidateSpatialContext();
             bool hadObjectRequest = objectRequestPending;
             Session.Receive(msg);
+            if (spatialRequestPending && !Session.Busy) spatialRequestPending = false;
             ObjectTools.Observe(msg);
             if (hadObjectRequest && !Session.Busy)
             { objectRequestPending = false; status = Session.Notice; }
@@ -209,18 +214,21 @@ namespace SpatialModeling
             foreach (string name in new[] { "session_id", "host_epoch", "document_id", "open_epoch" })
                 if ((string)p[name] != (string)identity[name])
                 {
-                    if (objectRequestPending) Session.Cancel();
+                    if (objectRequestPending || spatialRequestPending) Session.Cancel();
                     numeric?.Invalidate();
                     NativeState = new JObject(); stateAt = float.NegativeInfinity;
                     target.Reset();
                     CancelLocal(); status = "Native tool state belongs to another session/document; preview input disabled"; return;
                 }
-            string before = (string)NativeState["sketch_id"] + "/" + (string)NativeState["native_tool"];
+            string before = NativeContext(NativeState);
             NativeState = (JObject)p.DeepClone(); stateAt = Time.unscaledTime;
             target.ObserveContext(NativeState);
-            string after = (string)p["sketch_id"] + "/" + (string)p["native_tool"];
-            if (before != after) { CancelLocal(); manualTool = ""; }
+            string after = NativeContext(p);
+            Session.Mode = (string)p["editing_mode"] == "shared" ? "shared" : "exclusive";
+            if (before != after) { CancelLocal(); if (spatialRequestPending) Session.Cancel(); }
+            ValidateSpatialContext();
             if (objectRequestPending && !ObjectContextCurrent()) Session.Cancel();
+            ValidateSpatialContext();
             if (!ObjectContextCurrent()) numeric?.Invalidate();
         }
 
@@ -271,16 +279,40 @@ namespace SpatialModeling
         {
             get
             {
-                return target.Resolve((string)NativeState["sketch_id"], Session.SelectedId, Session.Sketches);
+                return target.Resolve((string)NativeState["sketch_id"], "", Session.Sketches);
             }
         }
+        static string NativeContext(JObject state)
+        {
+            var value = new JObject();
+            foreach (string key in new[] { "sketch_id", "native_tool", "tool", "mode", "available", "reason", "unsupported_options", "editing_mode" })
+                value[key] = state[key]?.DeepClone();
+            return value.ToString(Newtonsoft.Json.Formatting.None);
+        }
+        string SpatialContext()
+        {
+            var sketch = ActiveSketch;
+            return NativeContext(NativeState) + "/" + (string)sketch?["id"] + "/" + (long?)sketch?["generation"]
+                + "/" + sketch?["plane"]?.ToString(Newtonsoft.Json.Formatting.None)
+                + "/" + Session.Document["units"]?.ToString(Newtonsoft.Json.Formatting.None);
+        }
+        void ValidateSpatialContext()
+        {
+            bool current = NativeStateCurrent && EnabledForInput && scene != null && scene.DisplayPlacementReady
+                && !NativeModalActive && !(NativeState["ui_owner"] is JObject) && (bool?)NativeState["ui_ending"] != true;
+            if (first.HasValue && (!current || draftContext != SpatialContext()))
+            { CancelLocal(); status = "Native drawing context changed; draft cancelled"; }
+            if (spatialRequestPending && (!current || pendingSpatialContext != SpatialContext()))
+            { Session.Cancel(); status = "Native drawing context changed; pending permission cancelled"; }
+        }
+
         bool CanDraw()
         {
             if (!EnabledForInput || scene == null || !scene.IsCurrent || !scene.DisplayPlacementReady || !Session.Ready || !Session.CanEdit || Session.Busy || Session.OutcomeUnknown)
                 return false;
             if (!NativeStateCurrent || (bool?)NativeState["available"] != true || (string)NativeState["mode"] != "OBJECT")
             { status = "Wait for fresh native CAD tool state in Object Mode"; return false; }
-            if ((bool?)NativeState["ui_ending"] == true || NativeState["ui_owner"] is JObject)
+            if (NativeModalActive || (bool?)NativeState["ui_ending"] == true || NativeState["ui_owner"] is JObject)
             { status = "End native preview input and confirm/cancel its active tool first"; return false; }
             if (!string.IsNullOrEmpty((string)NativeState["reason"])) { status = (string)NativeState["reason"]; return false; }
             if (NativeState["unsupported_options"] is JArray options && options.Count > 0)
@@ -326,11 +358,11 @@ namespace SpatialModeling
             if (Tool == "select") { SelectNearest(point, sketch); return true; }
             if (!first.HasValue)
             {
-                first = point; draftSketch = id; draftGeneration = (long)sketch["generation"];
+                first = point; draftSketch = id; draftGeneration = (long)sketch["generation"]; draftContext = SpatialContext();
                 Session.Select(id); status = Tool == "circle" ? "Pick the radius point; orange geometry is a local draft" : "Pick the second point; orange geometry is a local draft";
                 return true;
             }
-            if (draftSketch != id || draftGeneration != (long)sketch["generation"]) { Cancel(); return true; }
+            if (draftContext != SpatialContext() || draftSketch != id || draftGeneration != (long)sketch["generation"]) { Cancel(); return true; }
             var a = first.Value;
             float distance = Vector2.Distance(a, point);
             if (distance < 0.000001f || (Tool == "rectangle" && Mathf.Min(Mathf.Abs(a.x - point.x), Mathf.Abs(a.y - point.y)) < 0.000001f))
@@ -339,18 +371,17 @@ namespace SpatialModeling
                 : Tool == "rectangle" ? new JObject { ["corner"] = XY(a), ["opposite"] = XY(point) }
                 : new JObject { ["center"] = XY(a), ["radius"] = distance };
             string op = "sketch.add_" + Tool;
+            string context = SpatialContext();
             CancelLocal(); Session.Select(id);
             if (Session.BeginDraft(op, args, true) && Session.Apply())
-            { pendingAt = Time.unscaledTime; status = "Waiting for native CAD Sketcher solver and receipt"; }
+            { spatialRequestPending = true; pendingSpatialContext = context; pendingAt = Time.unscaledTime; status = "Waiting for native CAD Sketcher solver and receipt"; }
             return true;
         }
         static JArray XY(Vector2 p) => new JArray(p.x, p.y);
+        // Legacy backend entry kept for compatibility, with no tool override.
+        // The delivered app always follows the actual native Blender tool.
         public void SelectTool(string tool)
-        {
-            CancelLocal();
-            manualTool = tool == "line" || tool == "rectangle" || tool == "circle" || tool == "select" ? tool : "";
-            status = manualTool.Length == 0 ? "Choose a supported spatial tool" : "Spatial " + manualTool + ": native snaps/continuous drawing require separate support";
-        }
+        { Cancel(); status = "Choose the drawing tool in Blender's CAD Sketcher interface"; }
         public void CreateSketch(string plane)
         {
             if (!EnabledForInput) { status = "Choose Draw in VR before creating a spatial sketch"; return; }

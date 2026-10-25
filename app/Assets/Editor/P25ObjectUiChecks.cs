@@ -314,18 +314,18 @@ public static class P25ObjectUiChecks
         while (routines.Count != 0) (routines.Pop() as IDisposable)?.Dispose();
         Environment.SetEnvironmentVariable("CALHACKS_CAPTURE_PORT", previousPort);
         File.WriteAllText(output, new JObject { ["passed"] = error == null, ["cases"] = httpCases,
-            ["transport"] = "actual Model tools onClick + SendEvents UnityWebRequest + correlated native UI end fixture",
+            ["transport"] = "actual Draw in VR onClick + SendEvents UnityWebRequest + correlated native UI end fixture",
             ["native_or_player_launched"] = false, ["desktop_input_injected"] = false, ["physical_acceptance"] = false,
             ["error"] = error?.ToString() }.ToString());
         if (error != null) Debug.LogError(error);
-        else Debug.Log("P25_OBJECT_HTTP_CHECK PASS cases=2 actual release ACK -> native UI end -> tools; native/VR acceptance=False");
+        else Debug.Log("P25_OBJECT_HTTP_CHECK PASS cases=2 actual release ACK -> native UI end -> direct drawing; native/VR acceptance=False");
         EditorApplication.Exit(error == null ? 0 : 1);
     }
     static IEnumerator HttpTransition(bool good)
     {
         using var server = new ReleaseServer(good);
         Environment.SetEnvironmentVariable("CALHACKS_CAPTURE_PORT", server.Port.ToString());
-        using var f = new Fixture(); SeedHeld(f); f.Click("Model tools"); f.Tick();
+        using var f = new Fixture(); SeedHeld(f); f.Click("Draw in VR"); f.Tick();
         var sender = (IEnumerator)Invoke(f.Preview, "SendEvents");
         double until = EditorApplication.timeSinceStartup + 10;
         try
@@ -338,20 +338,20 @@ public static class P25ObjectUiChecks
         }
         finally { (sender as IDisposable)?.Dispose(); }
         Check(server.Error == null && server.Posts == 1 && server.Kind == "release", "only the real idempotent cleanup POST reaches fake loopback");
-        Check(!f.Drawing.ObjectToolsEnabled, "tools remain disabled at helper response boundary");
+        Check(!f.Drawing.EnabledForInput, "tools remain disabled at helper response boundary");
         if (!good)
         {
             Check((bool)Get(f.Preview, "endAfterRelease") && f.Sent.Count == 0, "HTTP200 without exact ACK cannot end native UI reservation");
-            f.Fresh(); f.Tick(); Check(!f.Drawing.ObjectToolsEnabled, "fresh ended telemetry cannot override missing helper ACK");
+            f.Fresh(); f.Tick(); Check(!f.Drawing.EnabledForInput, "fresh ended telemetry cannot override missing helper ACK");
         }
         else
         {
             var end = f.Sent.Single(message => (string)message["type"] == "preview.ui.end");
             Check(!(bool)Get(f.Preview, "endAfterRelease") && f.Drawing.NativeUiTransitionPending, "real valid release ACK emits native UI end and waits for its correlated acknowledgement");
-            f.Tick(); Check(!f.Drawing.ObjectToolsEnabled, "native end request alone cannot enable tools");
+            f.Tick(); Check(!f.Drawing.EnabledForInput, "native end request alone cannot enable direct drawing");
             f.Receive("preview.ui.ended", f.State(), (string)end["id"]); f.Tick(); f.Tick();
-            Check(f.Drawing.ObjectToolsEnabled && f.Panel.gameObject.activeInHierarchy && !f.Drawing.NativeUiTransitionPending,
-                "only helper ACK plus actual matching native UI ended response opens tools");
+            Check(f.Drawing.EnabledForInput && !f.Drawing.NativeUiTransitionPending,
+                "only helper ACK plus actual matching native UI ended response enables direct drawing");
         }
         httpCases.Add(new JObject { ["name"] = good ? "valid_release_waits_native_end" : "invalid_release_keeps_tools_blocked", ["passed"] = true });
     }

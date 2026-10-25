@@ -21,7 +21,14 @@ namespace SpatialModeling
         public static bool Requested => Environment.GetEnvironmentVariable("CALHACKS_P25") == "1"
             || Array.IndexOf(Environment.GetCommandLineArgs(), "--p25") >= 0;
         public bool CapturesScroll { get; private set; }
+        const string PointerHandPreference = "SpatialModeling.PreviewPointerLeft";
         public XRNode PrimaryHand { get; private set; } = XRNode.RightHand;
+        public void SetPointerHand(XRNode hand)
+        {
+            if (hand != XRNode.LeftHand && hand != XRNode.RightHand) return;
+            Suspend(); PrimaryHand = hand; triggerWasDown = true;
+            PlayerPrefs.SetInt(PointerHandPreference, hand == XRNode.LeftHand ? 1 : 0); PlayerPrefs.Save();
+        }
         public string Notice { get; private set; } = "Focus Blender to enable native preview input";
         public PreviewSpatialDrawing Drawing { get; private set; }
         BlenderScreen screen;
@@ -72,6 +79,7 @@ namespace SpatialModeling
         void OnEnable()
         {
             if (!Requested) { enabled = false; return; }
+            PrimaryHand = PlayerPrefs.GetInt(PointerHandPreference, 0) == 1 ? XRNode.LeftHand : XRNode.RightHand;
             Current = this;
             scene = FindFirstObjectByType<HostScene>();
             Drawing = GetComponent<PreviewSpatialDrawing>() ?? gameObject.AddComponent<PreviewSpatialDrawing>();
@@ -609,38 +617,22 @@ namespace SpatialModeling
 
         void BuildControls()
         {
-            panel = MakePanel("P2.5 controls", new Vector2(0, -1120), new Vector2(1840, 540));
+            panel = MakePanel("P2.5 controls", new Vector2(0, -1020), new Vector2(1840, 350));
             AddButton(panel, "Focus Blender", 0, 0, FocusNativeUi);
             AddButton(panel, "Disable input", 1, 0, Suspend);
             AddButton(panel, "Keyboard", 2, 0, () => { if (keyboardShown) keyboardShown = false; else OpenKeyboard(false); });
             AddButton(panel, "Mouse left", 3, 0, () => { ReleaseNative(); mouseButton = "left"; });
             AddButton(panel, "Mouse right", 4, 0, () => { ReleaseNative(); mouseButton = "right"; });
             AddButton(panel, "Mouse middle", 5, 0, () => { ReleaseNative(); mouseButton = "middle"; });
-            AddButton(panel, "Other hand", 6, 0, () => { Suspend(); PrimaryHand = PrimaryHand == XRNode.RightHand ? XRNode.LeftHand : XRNode.RightHand; triggerWasDown = true; });
+            AddButton(panel, "Windows / dialogs", 6, 0, OpenWindows);
             AddButton(panel, "Escape / cancel", 0, 1, () => { Drawing.Cancel(); Key("ESC"); });
             AddButton(panel, "Enter", 1, 1, () => Key("ENTER"));
-            AddButton(panel, "Undo", 2, 1, () => { if (Drawing.EnabledForInput || Drawing.ObjectToolsEnabled) Drawing.Undo(); else Shortcut("Z"); });
-            AddButton(panel, "Redo", 3, 1, () => { if (Drawing.EnabledForInput || Drawing.ObjectToolsEnabled) Drawing.Redo(); else Shortcut("Z", true); });
-            AddButton(panel, "Save", 4, 1, () => { if (Drawing.EnabledForInput || Drawing.ObjectToolsEnabled) Drawing.Save(); else Shortcut("S"); });
-            AddButton(panel, "Search F3", 5, 1, () => Key("F3"));
-            AddButton(panel, "Next window", 6, 1, NextWindow);
-            AddButton(panel, "Draw in VR", 0, 2, BeginSpatial);
-            AddButton(panel, "Line", 1, 2, () => Drawing.SelectTool("line"));
-            AddButton(panel, "Rectangle", 2, 2, () => Drawing.SelectTool("rectangle"));
-            AddButton(panel, "Circle", 3, 2, () => Drawing.SelectTool("circle"));
-            AddButton(panel, "New XY sketch", 4, 2, () => Drawing.CreateSketch("XY"));
-            AddButton(panel, "New XZ sketch", 5, 2, () => Drawing.CreateSketch("XZ"));
-            AddButton(panel, "New YZ sketch", 6, 2, () => Drawing.CreateSketch("YZ"));
-            AddButton(panel, "Model tools", 0, 3, BeginObjects);
-            AddButton(panel, "Preview tools", 1, 3, () => {
-                if (!inputEnabled || !Ready()) { Notice = "Focus Blender, then click the intended native editor first"; return; }
-                numbersShown = modelToolsShown = keyboardShown = windowsShown = false; shortcutsShown = true;
-            });
-            AddButton(panel, "Full keyboard", 2, 3, () => OpenKeyboard(true));
-            AddButton(panel, "Windows / dialogs", 3, 3, OpenWindows);
-            AddButton(panel, "Copy Ctrl+C", 4, 3, () => Shortcut("C"));
-            AddButton(panel, "Paste Ctrl+V", 5, 3, () => Shortcut("V"));
-            feedback = MakeText(panel, new Vector2(0, -155), new Vector2(1780, 160), "", 25);
+            // Input destinations only. Tools, sketches, dimensions, constraints,
+            // history and file actions are chosen in Blender's native interface.
+            AddButton(panel, "Draw in VR", 2, 1, BeginSpatial);
+            AddButton(panel, "Full keyboard", 3, 1, () => OpenKeyboard(true));
+            AddButton(panel, "Next window", 4, 1, NextWindow);
+            feedback = MakeText(panel, new Vector2(0, -90), new Vector2(1780, 110), "", 25);
             // A temporary keyboard overlays the lower preview while typing. It
             // must not be placed metres below the screen (possibly below floor).
             keyboard = MakePanel("P2.5 keyboard", new Vector2(0, -200), new Vector2(1840, 640));
@@ -680,8 +672,8 @@ namespace SpatialModeling
             fullKeys.Add(AddButton(keyboard, "Letters", 0, 5, () => SetKeyboardPage(false)));
             fullKeys.Add(AddButton(keyboard, "Close full keyboard", 1, 5, () => keyboardShown = false));
             SetKeyboardPage(false); keyboard.gameObject.SetActive(false);
-            BuildModelTools();
-            BuildCommonControls();
+            // Historical palette builders remain for backend regression evidence,
+            // but have no production entry point or constructed controls.
             BuildWindowControls();
         }
 
