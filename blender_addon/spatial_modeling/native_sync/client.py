@@ -35,6 +35,7 @@ class NativeClient:
         self.receiver = wire.ChunkReceiver()
         self.enabled = self.connected = self.can_edit = False
         self.has_native_document = self.applying = False
+        self._capturing = False
         self.initial_local_work = False
         self._initial_baseline_hash = None
         self._incoming_conflict = False
@@ -112,7 +113,7 @@ class NativeClient:
                 self.error = "Local work appeared before initial sharing; it will not be replaced"
             else:
                 try:
-                    self._initial_baseline_hash = self.document.capture(self.capture_path).sha256
+                    self._initial_baseline_hash = self._capture().sha256
                 except (OSError, RuntimeError, ValueError):
                     self._initial_baseline_hash = None
                     self.error = "Initial local checkpoint could not be verified; incoming data will wait"
@@ -136,7 +137,8 @@ class NativeClient:
         return {key: value[key] for key in (*_IDENTITY, "revision", "checkpoint_hash")}
 
     def mark_dirty(self, now=None):
-        if (self.has_native_document or self.initial_local_work) and not self.applying:
+        if ((self.has_native_document or self.initial_local_work)
+                and not self.applying and not self._capturing):
             self.watcher.mark_dirty(self.clock() if now is None else now)
 
     def take_edit_turn(self):
@@ -217,7 +219,7 @@ class NativeClient:
         # A retained upload may predate edits made while its ACK was pending.
         # Save the actual current native document; the immutable older draft is
         # separately retained in draft-<request_id>.blend after refusal/drop.
-        snapshot = self.document.capture(self.capture_path)
+        snapshot = self._capture()
         Path(path).write_bytes(snapshot.data)
 
     def receive(self, kind, payload):
@@ -303,8 +305,21 @@ class NativeClient:
             self.status = "Save a copy before resolving the conflict; no edit is replayed"
 
     def _export(self):
-        snapshot = self.document.capture(self.capture_path)
+        snapshot = self._capture()
         return snapshot.sha256, snapshot
+
+    def _capture(self):
+        # Capture flushes this main thread's BMesh and updates its view layer.
+        # Those own synchronous callbacks are not new user edits. Suppress only
+        # this bounded adapter operation; keep the pure tracker's generation
+        # fence intact for genuine changes outside our own capture.
+        if self._capturing:
+            raise RuntimeError("A native checkpoint capture is already running")
+        self._capturing = True
+        try:
+            return self.document.capture(self.capture_path)
+        finally:
+            self._capturing = False
 
     def _can_capture(self):
         # Authors may finish a native Edit Mode operation without leaving Edit
@@ -359,7 +374,7 @@ class NativeClient:
                 self.error = "Local checkpoint baseline is unverified; incoming native data waits"
                 return
             try:
-                current = self.document.capture(self.capture_path)
+                current = self._capture()
                 if current.sha256 != baseline:
                     (self.directory / ("before-incoming-" + complete["request_id"] + ".blend")).write_bytes(current.data)
                     self.initial_local_work = not self.has_native_document
@@ -375,7 +390,7 @@ class NativeClient:
             # its latest settled state as well as any earlier in-flight draft.
             # A failed backup must leave the current graph untouched.
             try:
-                backup = self.document.capture(self.capture_path)
+                backup = self._capture()
                 (self.directory / ("before-reload-" + complete["request_id"] + ".blend")).write_bytes(backup.data)
             except (OSError, RuntimeError, ValueError):
                 self.error = "Current local work could not be backed up; reload was not applied"
@@ -390,7 +405,7 @@ class NativeClient:
         def done(_report=None):
             try:
                 self.has_native_document = True
-                local = self.document.capture(self.capture_path)
+                local = self._capture()
                 if epoch != self._epoch or not self.connected:
                     # The native transaction must finish safely, but an older
                     # connection cannot authorize editing or replace a newer

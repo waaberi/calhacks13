@@ -482,3 +482,45 @@ def test_author_can_publish_and_finish_settled_edit_mode_but_foreign_apply_waits
     doc.safe = True
     client.tick()
     assert doc.applies == before + 1
+
+
+def test_own_capture_depsgraph_callbacks_do_not_create_endless_dirty_or_upload_echo(tmp_path, monkeypatch):
+    client, doc, sent, now = setup(tmp_path)
+    edit_turn(client)
+    original_capture = doc.capture
+
+    def capture_with_own_callback(path):
+        assert client._capturing
+        client.mark_dirty()  # NativeDocument's own BMesh/view-layer flush signal
+        return original_capture(path)
+
+    monkeypatch.setattr(doc, "capture", capture_with_own_callback)
+    pending = edited(client, doc, now)
+    assert pending is not None and not client.watcher.dirty
+    client.receive("native.receipt", {"request_id": pending.request_id, "outcome": "applied",
+                                      "revision": 1, "checkpoint_hash": digest(b"accepted on host")})
+    # A subsequent no-op signal audits the baseline once and actually settles.
+    client.mark_dirty()
+    now[0] += .3
+    client.tick()
+    assert not client.watcher.has_local_changes and not client._capturing
+    assert [msg["type"] for msg in sent].count("native.begin") == 1
+    client.save_copy(tmp_path / "latest-native.blend")
+    assert not client.watcher.has_local_changes
+
+
+def test_own_capture_guard_is_released_after_local_file_error(tmp_path, monkeypatch):
+    client, doc, _, _ = setup(tmp_path)
+
+    def failed_capture(_path):
+        assert client._capturing
+        client.mark_dirty()
+        raise OSError("checkpoint file is unwritable")
+
+    monkeypatch.setattr(doc, "capture", failed_capture)
+    with pytest.raises(OSError):
+        client.save_copy(tmp_path / "cannot-save.blend")
+    assert not client._capturing
+    assert not client.watcher.dirty
+    client.mark_dirty(1)
+    assert client.watcher.dirty  # actual later native events are still observed
