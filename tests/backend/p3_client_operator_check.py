@@ -92,9 +92,20 @@ try:
         assert remote_client.state.current and remote_client.state.document["revision"] == revision
         assert list(mirror.color) == before_color
         assert [(m.name, list(m.diffuse_color)) for m in mirror.data.materials] == before_materials
+        # The pink overlay's own data path in the Client role: the mirror object
+        # carrying the host ID is marked with the owner's name (#78).
+        from spatial_modeling import ownership, ownership_state
+        marks = ownership._marks()
+        assert [(obj, names) for obj, names in marks] == [(mirror, ("Native Client Owner",))], marks
+        assert ownership_state.object_label(marks[0][1]) == \
+            "Native Client Owner is editing this object"
+        assert ownership_state.activity_text(held, actor) == \
+            "Native Client Owner is editing the pink objects"
         action("ownership_off")
         wait_for(lambda: not remote_client.ownership_state()[0])
-        checks.append("actual full session names/leases and release; scene/materials unchanged")
+        assert not ownership.marked_objects()
+        checks.append("actual full session names/leases and release; scene/materials unchanged; "
+                      "Client overlay marks the mirror object with the owner's name, then clears")
     # Actual current target list, not a generated ID or a fake cached object.
     assert cube_id in {entry[0] for entry in remote_test_ui._targets(None, bpy.context)}
     wm.spatial_remote_test_target = cube_id
