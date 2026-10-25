@@ -23,7 +23,7 @@ public static class DirectToolUsabilityChecks
     static bool Route(DirectModelEditingChecks.Fixture f,Ray ray,bool held,float fence=4)=>f.Preview.RouteControllerHand(XRNode.RightHand,ray,held,false,Vector2.zero,fence,out _,false);
     public static void Run()
     {
-        Refusals();ScaleCubeRoutes();ScaleOwnMeshFence();NormalRoutes();MetricGuides();KnifeOverflow();RenderHandles();
+        Refusals();ScaleCubeRoutes();ScaleOwnMeshFence();NormalRoutes();RegionMultipleNormals();MetricGuides();SnapGuideReset();KnifeOverflow();RenderHandles();
         Debug.Log("DIRECT_TOOL_USABILITY_CHECK PASS actual-trigger/native-XYZ-cube-outward+inward/reflected-affine/own-mesh+nearer-UI-fences/frozen-face-normal/native-mm/ACK-only-guides/unsupported-drag-not-tap/no-missing-tool-sends/knife-whole-gesture-rollback; physical acceptance pending");
     }
     static void Refusals()
@@ -81,6 +81,40 @@ public static class DirectToolUsabilityChecks
         Check(Route(f,ray,true,meshDepth)&&((bool[])Get(live,"gizmoConstraint"))[0],"exact own-mesh fence exception grabs the visible Scale cube instead of a body drag");
         f.Preview.CancelDirectModelDraft("cleanup");Route(f,ray,false);
         Check(!Route(f,ray,true,meshDepth-.02f),"nearer unrelated UI fence never inherits Scale own-mesh exception");
+        Route(f,ray,false);
+        var blocker=new GameObject("Foreign collider inside selected bounds",typeof(MeshFilter),typeof(MeshCollider),typeof(WorkspaceObjectView));blocker.transform.SetParent(f.View.transform.parent,false);
+        var blockerMesh=new Mesh();var centre=ray.GetPoint((meshDepth+tip.magnitude)*.5f);
+        blockerMesh.vertices=new[]{centre+new Vector3(-.05f,-.05f,0),centre+new Vector3(.05f,-.05f,0),centre+new Vector3(.05f,.05f,0),centre+new Vector3(-.05f,.05f,0)};blockerMesh.triangles=new[]{0,2,1,0,3,2};blockerMesh.RecalculateBounds();
+        blocker.GetComponent<MeshFilter>().sharedMesh=blockerMesh;blocker.GetComponent<MeshCollider>().sharedMesh=blockerMesh;
+        var other=blocker.GetComponent<WorkspaceObjectView>();other.ObjectId=new string('b',32);other.Generation=4;other.SetNativePose(Vector3.zero,Quaternion.identity,Vector3.one);
+        ((Dictionary<string,GameObject>)Get(f.Host,"objects"))[other.ObjectId]=blocker;f.Drawing.Session.Objects[other.ObjectId]=new JObject{["id"]=other.ObjectId,["generation"]=4};Physics.SyncTransforms();
+        try
+        {
+            Check(f.Host.PickObject(ray,out float firstDepth)==f.View&&other.GetComponent<MeshCollider>().Raycast(ray,out var foreign,4)&&foreign.distance>firstDepth&&foreign.distance<tip.magnitude-.02f,"real foreign collider lies after own front but before rendered cube");
+            Route(f,ray,true,firstDepth);Check(Get(live,"gizmoConstraint")==null,"own-mesh exception cannot pick an axis through a nearer foreign object inside its bounds");
+        }
+        finally{UnityEngine.Object.DestroyImmediate(blockerMesh);}
+    }
+    static void RegionMultipleNormals()
+    {
+        foreach(int face in new[]{20,21})
+        {
+            using var f=new DirectModelEditingChecks.Fixture("builtin.extrude_region","EDIT_MESH");Native(f,"mesh.extrude");var model=Model(f);
+            var extra=new[]{new Vector3(0,-.2f,2),new Vector3(0,.2f,2),new Vector3(0,.2f,2.4f),new Vector3(0,-.2f,2.4f)};
+            for(int i=0;i<4;i++)((JArray)model["vertices"]).Add(new JObject{["index"]=5+i,["position"]=DirectModelEditMath.ToWire(extra[i])});
+            ((JArray)model["faces"]).Add(new JObject{["index"]=21,["vertices"]=new JArray(5,6,7,8)});model["selection"]["indices"]=new JArray(20,21);
+            ((JArray)model["triangles"]).Add(new JObject{["face"]=21,["vertices"]=new JArray(5,6,7)});((JArray)model["triangles"]).Add(new JObject{["face"]=21,["vertices"]=new JArray(5,7,8)});
+            var mesh=f.View.GetComponent<MeshFilter>().sharedMesh;mesh.vertices=((JArray)model["vertices"]).OfType<JObject>().Select(p=>DirectModelEditMath.ToUnity((JArray)p["position"])).ToArray();mesh.triangles=new[]{0,2,1,0,3,2,5,6,7,5,7,8};mesh.RecalculateBounds();f.View.GetComponent<MeshCollider>().sharedMesh=null;f.View.GetComponent<MeshCollider>().sharedMesh=mesh;
+            Call(f.Direct,"Update");Physics.SyncTransforms();var live=Live(f);var normal=face==20?Vector3.back:Vector3.left;var centre=face==20?new Vector3(0,0,2):new Vector3(0,0,2.2f);
+            var tip=centre+normal*.085f;var side=Vector3.Cross(normal,Vector3.up).normalized;var eye=tip+side*.6f;var first=new Ray(eye,-side);
+            float fence=f.Host.PickObject(first,out float front)!=null?front:4;
+            Check(Route(f,first,true,fence)&&(bool)Get(live,"gestureNormalConstrained"),"each actually drawn noncoplanar selected face normal is a real trigger handle");
+            Route(f,new Ray(eye,(tip+normal*.03f-eye).normalized),true);Grant(f);var begin=f.Sent.Last(m=>(string)m["type"]=="live.edit.begin");
+            Check(((JArray)begin["payload"]["operation"]["selection"]["indices"]).Count==2,"region normal gesture preserves the complete selected multi-face region");
+            var update=f.Sent.Last(m=>(string)m["type"]=="live.edit.update");var delta=DirectModelEditMath.ToUnity((JArray)update["payload"]["parameters"]["translation_m"]);
+            Check(Vector3.Dot(delta.normalized,normal)>.9999f,"entire region follows the actually grabbed face's frozen native normal");
+            Call(f.Direct,"Update");Check(((DirectToolGuides.Frame)Get(live,"guideFrame")).IntentLabel.Contains("grabbed face normal"),"region label names the actual chosen normal constraint");
+        }
     }
     static void NormalRoutes()
     {
@@ -106,10 +140,13 @@ public static class DirectToolUsabilityChecks
         foreach(string tool in new[]{"mesh.inset","mesh.bevel"})
         {
             using var f=new DirectModelEditingChecks.Fixture(tool=="mesh.inset"?"builtin.inset_faces":"builtin.bevel","EDIT_MESH");Native(f,tool);
-            f.View.transform.parent.localScale=new Vector3(-2,.5f,3);f.View.transform.parent.rotation=Quaternion.Euler(11,43,17);Call(f.Direct,"Update");
+            f.View.transform.parent.localScale=new Vector3(-2,.5f,3);f.View.transform.parent.rotation=Quaternion.Euler(11,43,17);Call(f.Direct,"Update");Physics.SyncTransforms();
             var map=f.View.NativeToDisplayMatrix;var start=map.MultiplyPoint3x4(new Vector3(0,0,2));var eye=start-map.MultiplyVector(Vector3.forward).normalized;
-            var first=new Ray(eye,(start-eye).normalized);Route(f,first,true);
-            var target=start+map.MultiplyVector(new Vector3(.03f,-.03f,0));var next=new Ray(eye,(target-eye).normalized);Route(f,next,true);Grant(f);
+            var first=new Ray(eye,(start-eye).normalized);
+            Check(f.Host.PickObject(first,out _)==f.View&&DirectModelEditMath.TryPick(Model(f),map,first,.012f,out int face,out _,out _)&&face==20,"transformed metric fixture synchronizes real collider and exact visible native face before route");
+            Check(Route(f,first,true)&&f.Direct.Gesturing,"transformed metric native face is admitted by actual controller route");
+            var target=start+map.MultiplyVector(new Vector3(.03f,-.03f,0));var next=new Ray(eye,(target-eye).normalized);Route(f,next,true);
+            Check(f.Sent.Any(m=>(string)m["type"]=="lease.acquire"),"native distance gesture requests ownership after real movement: "+f.Direct.Notice);Grant(f);
             var update=f.Sent.Last(m=>(string)m["type"]=="live.edit.update");var p=(JObject)update["payload"]["parameters"];var live=Live(f);
             var delta=(Vector3)Get(live,"currentPoint")-(Vector3)Get(live,"startPoint");float expected=map.inverse.MultiplyVector(delta).magnitude;
             Check(Mathf.Abs((float)p[tool=="mesh.inset"?"thickness_m":"width_m"]-expected)<1e-6f&&expected>0,"diagonal movement produces one unsigned native distance instead of cancelling view diagonals");
@@ -138,6 +175,27 @@ public static class DirectToolUsabilityChecks
         Check(f.Sent.Count(m=>(string)m["type"]=="live.edit.update")==1&&!f.Sent.Any(m=>(string)m["type"]=="live.edit.commit")&&f.Sent.Count(m=>(string)m["type"]=="live.edit.cancel")==1,"late ACK cannot send a queued prefix or commit after overflow");
         var cancel=f.Sent.Last(m=>(string)m["type"]=="live.edit.cancel");State(f,"cancelled",1,(string)cancel["id"]);Route(f,At(.15f,.15f),false);
         Check(!f.Drawing.Session.ExternalEditBusy&&!f.Sent.Any(m=>(string)m["type"]=="live.edit.commit"),"native rollback receipt releases ownership with no delayed replay");
+    }
+    static void SnapGuideReset()
+    {
+        using var f=new DirectModelEditingChecks.Fixture("builtin.move");Native(f,"object.translate");var model=Model(f);var settings=(JObject)model["settings"];
+        settings["use_snap"]=true;settings["snap_elements"]=new JArray("VERTEX");
+        var target=new Vector3(.055f,0,2);string id=new string('b',32);
+        var other=new GameObject("Actual native snap vertex",typeof(MeshFilter),typeof(MeshCollider),typeof(WorkspaceObjectView));other.transform.SetParent(f.View.transform.parent,false);
+        var mesh=new Mesh();mesh.vertices=new[]{target,target+new Vector3(-.015f,-.03f,0),target+new Vector3(.015f,-.03f,0),target+new Vector3(.015f,.03f,0),target+new Vector3(-.015f,.03f,0)};mesh.triangles=new[]{0,2,1,0,3,2,0,4,3,0,1,4};mesh.RecalculateBounds();
+        other.GetComponent<MeshFilter>().sharedMesh=mesh;other.GetComponent<MeshCollider>().sharedMesh=mesh;var view=other.GetComponent<WorkspaceObjectView>();view.ObjectId=id;view.Generation=4;view.SetNativePose(Vector3.zero,Quaternion.identity,Vector3.one);
+        ((Dictionary<string,GameObject>)Get(f.Host,"objects"))[id]=other;f.Drawing.Session.Objects[id]=new JObject{["id"]=id,["generation"]=4};
+        model["snap_geometry"]=new JArray(new JObject{["id"]=id,["vertices"]=new JArray(new JObject{["index"]=77,["position"]=DirectModelEditMath.ToWire(target)})});Call(f.Direct,"Update");Physics.SyncTransforms();
+        try
+        {
+            f.Route(true);f.Route(true,.05f);Grant(f);var first=f.Sent.Last(m=>(string)m["type"]=="live.edit.update");var live=Live(f);
+            Check(first["payload"]["parameters"]["snap_point_m"]!=null,"actual native candidate enters the routed snap parameters");Call(f.Direct,"Update");
+            Check(((DirectToolGuides.Frame)Get(live,"guideFrame")).SnapPoint.HasValue,"guide shows actual successful target geometry");
+            Set(live,"nextUpdate",float.NegativeInfinity);f.Route(true,.15f);State(f,"updated",1,(string)first["id"]);Call(f.Direct,"Update");
+            var latest=f.Sent.Last(m=>(string)m["type"]=="live.edit.update");var frame=(DirectToolGuides.Frame)Get(live,"guideFrame");
+            Check(latest["payload"]["parameters"]["snap_point_m"]==null&&!frame.SnapPoint.HasValue&&frame.Waiting,"moving outside actual snap range clears target dot and next update, while prior ACK remains labelled pending");
+        }
+        finally{UnityEngine.Object.DestroyImmediate(mesh);}
     }
     static void RenderHandles()
     {
