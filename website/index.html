@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Coplanar: 3D modeling is better with friends</title>
+  <meta name="description" content="Coplanar turns Blender into a multiplayer VR workspace where you can build together, from a headset or a desktop.">
+  <meta name="theme-color" content="#0d0e10">
+  <link rel="canonical" href="https://coplanar.design/">
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Coplanar">
+  <meta property="og:url" content="https://coplanar.design/">
+  <meta property="og:title" content="Coplanar: 3D modeling is better with friends">
+  <meta property="og:description" content="Coplanar turns Blender into a multiplayer VR workspace where you can build together, from a headset or a desktop.">
+  <meta property="og:image" content="https://coplanar.design/assets/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Coplanar wordmark beside a shared 3D model on a grid, edited from a headset and a desktop.">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <link rel="preload" href="/assets/fonts/bricolage-grotesque-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script type="module" src="/assets/main.js"></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="nav" id="top">
+    <div class="wrap nav__inner">
+      <a class="brand" href="#top" aria-label="Coplanar home">
+        <svg class="brand__mark" viewBox="0 0 32 32" aria-hidden="true">
+          <path d="M3 20 L15 14 L29 20 L17 26 Z" fill="#ffa24a"/>
+          <path d="M3 14 L15 8 L29 14 L17 20 Z" fill="#6ff2c1" opacity=".92"/>
+        </svg>
+        <span>Coplanar</span>
+      </a>
+      <nav aria-label="Primary">
+        <ul class="nav__links">
+          <li><a href="#why">Why</a></li>
+          <li><a href="#tools">Tools</a></li>
+          <li><a href="#voice">Voice</a></li>
+          <li><a href="#together">Sessions</a></li>
+          <li><a href="#start">Get started</a></li>
+        </ul>
+      </nav>
+      <a class="btn btn--ghost btn--sm" href="https://github.com/waaberi/calhacks13" rel="noopener">
+        <svg viewBox="0 0 16 16" aria-hidden="true" class="ico"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        <span>GitHub</span>
+      </a>
+    </div>
+  </header>
+
+  <main id="main">
+    <!-- Hero -->
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="wrap hero__grid">
+        <div class="hero__copy">
+          <p class="eyebrow"><span>Multiplayer</span><span>VR</span><span>Blender</span></p>
+          <h1 id="hero-title" class="hero__title">3D modeling is better with&nbsp;friends.</h1>
+          <p class="hero__lede">Coplanar turns Blender into a multiplayer VR workspace where you can build together, from a headset or a desktop.</p>
+          <div class="hero__cta">
+            <a class="btn btn--primary" href="https://github.com/waaberi/calhacks13" rel="noopener">Get Coplanar on GitHub</a>
+            <a class="btn btn--ghost" href="https://devpost.com/software/coplanar" rel="noopener">Read the Devpost story</a>
+          </div>
+          <p class="hero__note">Open source. Built at Cal Hacks 13.</p>
+        </div>
+
+        <figure class="viewport" aria-labelledby="viewport-caption">
+          <div class="viewport__bar">
+            <span class="viewport__title">shared_scene.blend</span>
+            <span class="presence" aria-label="Two people in this scene">
+              <span class="chip chip--headset">Headset</span>
+              <span class="chip chip--desktop">Desktop</span>
+            </span>
+          </div>
+          <div class="viewport__stage">
+            <canvas id="hero-canvas" tabindex="0" role="img"
+              aria-label="Illustration: a shared 3D model on a grid, edited by a headset user and a desktop user. Drag or use arrow keys to orbit. Click an edge loop or press Page Up and Page Down to change the selection."></canvas>
+            <ol class="log" id="hero-log" aria-label="Edit history" aria-live="polite"></ol>
+          </div>
+          <div class="viewport__tools" role="toolbar" aria-label="Modeling tools for the illustration">
+            <div class="seat" role="radiogroup" aria-label="Edit as">
+              <button type="button" role="radio" aria-checked="true" data-seat="headset" class="seat__btn seat__btn--headset">Headset</button>
+              <button type="button" role="radio" aria-checked="false" data-seat="desktop" class="seat__btn seat__btn--desktop">Desktop</button>
+            </div>
+            <div class="tools" id="hero-tools">
+              <button type="button" data-op="extrude"><kbd>E</kbd>Extrude</button>
+              <button type="button" data-op="inset"><kbd>I</kbd>Inset</button>
+              <button type="button" data-op="bevel"><kbd>⌃B</kbd>Bevel</button>
+              <button type="button" data-op="loopcut"><kbd>⌃R</kbd>Loop cut</button>
+              <button type="button" data-op="move"><kbd>G</kbd>Move</button>
+              <button type="button" data-op="rotate"><kbd>R</kbd>Rotate</button>
+              <button type="button" data-op="scale"><kbd>S</kbd>Scale</button>
+            </div>
+            <div class="tools tools--history">
+              <button type="button" data-hist="undo" aria-label="Undo"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8 5 3 9.5 8 14M3.5 9.5H12a5 5 0 0 1 0 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              <button type="button" data-hist="redo" aria-label="Redo"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12 5 5 4.5-5 4.5m4.5-4.5H8a5 5 0 0 0 0 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              <button type="button" data-hist="reset">Reset</button>
+            </div>
+          </div>
+          <figcaption id="viewport-caption" class="viewport__caption">Interactive illustration drawn in your browser, not a capture of the app. Pick a seat, then a tool. Drag to orbit.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- Pillars -->
+    <section class="section pillars" id="why" aria-labelledby="why-title">
+      <div class="wrap">
+        <p class="kicker">Why Coplanar</p>
+        <h2 id="why-title" class="h2">Three ideas, one workspace.</h2>
+        <div class="pillars__grid">
+          <article class="pillar">
+            <span class="pillar__num">01</span>
+            <h3>Multiplayer</h3>
+            <p>Build in the same scene at the same time. You see who is here and what they are working on, and their name appears on anything they are editing, so nobody overwrites anybody.</p>
+          </article>
+          <article class="pillar">
+            <span class="pillar__num">02</span>
+            <h3>VR</h3>
+            <p>Put on a Quest and your model sits on a table in your room at true size. Walk around it, grab it and shape it with the controllers.</p>
+          </article>
+          <article class="pillar">
+            <span class="pillar__num">03</span>
+            <h3>Blender</h3>
+            <p>Every edit happens in Blender itself. It is your real project file with native Undo, Redo and Save, not a copy and not a viewer.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Two seats -->
+    <section class="section seats" aria-labelledby="seats-title">
+      <div class="wrap">
+        <p class="kicker">Two seats, one model</p>
+        <h2 id="seats-title" class="h2">One of you in the headset. One of you at the desk.</h2>
+        <div class="seats__grid">
+          <article class="seatcard seatcard--headset">
+            <header><span class="dot" aria-hidden="true"></span><h3>In the headset</h3></header>
+            <ul>
+              <li>Model directly with your controllers, from blocking out to fine detail.</li>
+              <li>Move, rotate and scale with handles, or type exact numbers.</li>
+              <li>Keep the live Blender window on a panel beside you and work in it without taking the headset off.</li>
+              <li>Ask for changes out loud.</li>
+            </ul>
+          </article>
+          <div class="seats__join" aria-hidden="true">
+            <svg viewBox="0 0 120 120">
+              <path d="M10 70 L55 48 L110 70 L65 92 Z" fill="none" stroke="#ffa24a" stroke-width="2"/>
+              <path d="M10 50 L55 28 L110 50 L65 72 Z" fill="none" stroke="#6ff2c1" stroke-width="2"/>
+            </svg>
+            <span>same scene,<br>same file</span>
+          </div>
+          <article class="seatcard seatcard--desktop">
+            <header><span class="dot" aria-hidden="true"></span><h3>At the desk</h3></header>
+            <ul>
+              <li>Use Blender exactly the way you already do.</li>
+              <li>Watch your teammate's edits land in your viewport as they happen.</li>
+              <li>Shortcuts, gizmos and fields stay in sync with the headset.</li>
+              <li>Undo, Redo and Save from either seat.</li>
+            </ul>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tools -->
+    <section class="section tools-sec" id="tools" aria-labelledby="tools-title">
+      <div class="wrap">
+        <div class="split-head">
+          <div>
+            <p class="kicker">Modeling, for real</p>
+            <h2 id="tools-title" class="h2">The tools you reach for in Blender, in your hands.</h2>
+          </div>
+          <p class="split-head__lede">Coplanar edits actual meshes. Select, push and cut geometry from the headset with the same operations a desktop modeler uses, and with the same precision.</p>
+        </div>
+        <ul class="toolgrid">
+          <li><span class="toolgrid__key">G</span><h3>Move</h3><p>Grab and place anything, or slide along an axis.</p></li>
+          <li><span class="toolgrid__key">R</span><h3>Rotate</h3><p>Turn by hand or by exact degrees.</p></li>
+          <li><span class="toolgrid__key">S</span><h3>Scale</h3><p>Resize uniformly or per axis.</p></li>
+          <li><span class="toolgrid__key">E</span><h3>Extrude</h3><p>Pull new geometry out of a face.</p></li>
+          <li><span class="toolgrid__key">I</span><h3>Inset</h3><p>Shrink a face inward to add detail.</p></li>
+          <li><span class="toolgrid__key">⌃B</span><h3>Bevel</h3><p>Soften hard edges into chamfers.</p></li>
+          <li><span class="toolgrid__key">⌃R</span><h3>Loop cut</h3><p>Add an edge loop exactly where you need it.</p></li>
+          <li><span class="toolgrid__key">K</span><h3>Knife</h3><p>Cut your own lines across faces.</p></li>
+          <li><span class="toolgrid__key">123</span><h3>Exact values</h3><p>Type numbers when eyeballing is not enough.</p></li>
+          <li><span class="toolgrid__key">▣</span><h3>Blender panel</h3><p>The live Blender window, clickable, right in VR.</p></li>
+          <li><span class="toolgrid__key">⌃Z</span><h3>Undo and Redo</h3><p>Blender's own history, shared by everyone.</p></li>
+          <li><span class="toolgrid__key">⌃S</span><h3>Save</h3><p>Write the real .blend from any seat.</p></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Voice -->
+    <section class="section voice" id="voice" aria-labelledby="voice-title">
+      <div class="wrap voice__grid">
+        <div class="voice__copy">
+          <p class="kicker">Voice</p>
+          <h2 id="voice-title" class="h2">Say what you want. Check the plan. Watch it build.</h2>
+          <p>Coplanar knows what is in your scene and what you have selected, so you can talk the way you would to a teammate. Quick requests like “make this twice as tall” just happen. Bigger ideas come back as a step by step modeling plan that you review before anything changes.</p>
+          <ol class="pipeline" aria-label="How a voice request becomes an edit">
+            <li><span class="pipeline__name">Whisper</span><span class="pipeline__does">hears you</span></li>
+            <li><span class="pipeline__name">Gemini</span><span class="pipeline__does">plans the edit</span></li>
+            <li><span class="pipeline__name">Blender</span><span class="pipeline__does">builds it</span></li>
+          </ol>
+        </div>
+
+        <figure class="planner" aria-labelledby="planner-caption">
+          <div class="planner__said">
+            <span class="planner__wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+            <p><span class="sr-only">Example request: </span>“Turn this cube into a lantern. Taper the top, add a cap and a couple of bands around the middle.”</p>
+          </div>
+          <div class="planner__body">
+            <div class="planner__plan">
+              <p class="planner__label">Plan <span id="plan-count">6 steps</span></p>
+              <ol id="plan-steps">
+                <li data-op="scale" data-arg="0.78">Scale the top face to 78%</li>
+                <li data-op="loopcut">Loop cut around the middle</li>
+                <li data-op="scale" data-arg="1.12">Widen that loop to 112%</li>
+                <li data-op="inset" data-arg="0.7">Inset the top face</li>
+                <li data-op="extrude" data-arg="0.45">Extrude the cap 0.45 m</li>
+                <li data-op="bevel" data-arg="0.1">Bevel the cap edge 0.10 m</li>
+              </ol>
+              <div class="planner__actions">
+                <button type="button" class="btn btn--primary btn--sm" id="plan-apply">Apply plan</button>
+                <button type="button" class="btn btn--ghost btn--sm" id="plan-reset" hidden>Start over</button>
+              </div>
+            </div>
+            <div class="planner__stage">
+              <canvas id="voice-canvas" role="img" aria-label="Illustration: the cube from the example request, which changes as the plan is applied."></canvas>
+            </div>
+          </div>
+          <figcaption id="planner-caption" class="viewport__caption">Example request, illustrated. Press Apply plan to watch each step run.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- Native file -->
+    <section class="section native" aria-labelledby="native-title">
+      <div class="wrap">
+        <p class="kicker kicker--dark">Not a viewer</p>
+        <h2 id="native-title" class="h2">When the session ends, you have a real Blender file.</h2>
+        <div class="native__grid">
+          <article>
+            <h3>Native history</h3>
+            <p>Every change is a step in Blender's own Undo history, no matter who made it or which seat it came from.</p>
+          </article>
+          <article>
+            <h3>Nothing to export</h3>
+            <p>Save from the headset, then open the same .blend at your desk tomorrow. Every edit is right where you left it.</p>
+          </article>
+          <article>
+            <h3>Blender stays in charge</h3>
+            <p>The headset and every teammate send their edits into one Blender scene, so there is a single source of truth and no copies to reconcile.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Sessions -->
+    <section class="section together" id="together" aria-labelledby="together-title">
+      <div class="wrap together__grid">
+        <div>
+          <p class="kicker">Sessions</p>
+          <h2 id="together-title" class="h2">Same room, or across town.</h2>
+          <p>Sessions run on SpacetimeDB, which keeps everyone's presence, selections and edits in step. It also connects teammates on different networks, so your collaborator's Blender can join from home while you model in the headset.</p>
+          <ul class="ticks">
+            <li>See who is in the session and what each person is working on.</li>
+            <li>Anything someone is editing shows their name, and conflicting edits are held back.</li>
+            <li>Host a session from your own machine, or from the cloud when your team is spread out.</li>
+          </ul>
+        </div>
+        <div class="netmap" aria-hidden="true">
+          <svg viewBox="0 0 420 300">
+            <defs>
+              <pattern id="dots" width="14" height="14" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="rgba(255,255,255,.08)"/></pattern>
+            </defs>
+            <rect width="420" height="300" fill="url(#dots)"/>
+            <path class="netmap__link" d="M92 86 C 170 86, 170 150, 210 150"/>
+            <path class="netmap__link" d="M92 220 C 170 220, 170 150, 210 150"/>
+            <path class="netmap__link netmap__link--far" d="M328 150 L 210 150"/>
+            <g transform="translate(210 150)">
+              <circle r="34" fill="#16181c" stroke="rgba(255,255,255,.25)"/>
+              <path d="M-14 4 L0 -4 L14 4 L0 12 Z" fill="#ffa24a"/>
+              <path d="M-14 -4 L0 -12 L14 -4 L0 4 Z" fill="#6ff2c1" opacity=".92"/>
+            </g>
+            <text x="210" y="205" text-anchor="middle">shared session</text>
+            <g transform="translate(60 86)"><rect x="-34" y="-20" width="68" height="40" rx="10" fill="#16181c" stroke="#6ff2c1"/><rect x="-24" y="-9" width="48" height="18" rx="7" fill="#6ff2c1" opacity=".85"/></g>
+            <text x="60" y="130" text-anchor="middle">headset</text>
+            <g transform="translate(60 220)"><rect x="-34" y="-24" width="68" height="44" rx="5" fill="#16181c" stroke="#ffa24a"/><rect x="-10" y="20" width="20" height="8" fill="#ffa24a" opacity=".6"/></g>
+            <text x="60" y="270" text-anchor="middle">desktop, same room</text>
+            <g transform="translate(360 150)"><rect x="-34" y="-24" width="68" height="44" rx="5" fill="#16181c" stroke="#ffa24a"/><rect x="-10" y="20" width="20" height="8" fill="#ffa24a" opacity=".6"/></g>
+            <text x="360" y="200" text-anchor="middle">desktop, elsewhere</text>
+          </svg>
+        </div>
+      </div>
+    </section>
+
+    <!-- Who -->
+    <section class="section who" aria-labelledby="who-title">
+      <div class="wrap">
+        <p class="kicker">Made for small teams that make things</p>
+        <h2 id="who-title" class="h2">Less screen sharing. More building.</h2>
+        <div class="who__grid">
+          <article>
+            <h3>Block out a prop together</h3>
+            <p>One person roughs out the shape in VR while another refines edges and numbers in Blender, in the same pass.</p>
+          </article>
+          <article>
+            <h3>Review at real size</h3>
+            <p>Check proportions where they matter, standing next to the model, and fix what you see on the spot.</p>
+          </article>
+          <article>
+            <h3>Pair across networks</h3>
+            <p>Your teammate does not need to be in the room. They join the session from their own Blender, wherever they are.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Get started -->
+    <section class="section start" id="start" aria-labelledby="start-title">
+      <div class="wrap start__grid">
+        <div>
+          <p class="kicker">Get started</p>
+          <h2 id="start-title" class="h2">Build something together.</h2>
+          <p>Coplanar is open source. The Blender add-on, the Quest app and setup instructions all live in the GitHub repository.</p>
+          <div class="hero__cta">
+            <a class="btn btn--primary" href="https://github.com/waaberi/calhacks13#readme" rel="noopener">Read the setup guide</a>
+            <a class="btn btn--ghost" href="https://devpost.com/software/coplanar" rel="noopener">See it on Devpost</a>
+          </div>
+        </div>
+        <ol class="steps">
+          <li><h3>Bring Blender</h3><p>Blender 5.2 on a Windows PC, with the Coplanar add-on enabled.</p></li>
+          <li><h3>Bring a headset</h3><p>A Meta Quest 3S connected with Link runs the Coplanar VR app.</p></li>
+          <li><h3>Bring a friend</h3><p>A teammate joins the session from Blender on their own computer.</p></li>
+        </ol>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap footer__inner">
+      <div>
+        <a class="brand" href="#top" aria-label="Back to top">
+          <svg class="brand__mark" viewBox="0 0 32 32" aria-hidden="true">
+            <path d="M3 20 L15 14 L29 20 L17 26 Z" fill="#ffa24a"/>
+            <path d="M3 14 L15 8 L29 14 L17 20 Z" fill="#6ff2c1" opacity=".92"/>
+          </svg>
+          <span>Coplanar</span>
+        </a>
+        <p class="footer__credit">Made at Cal Hacks 13 by Waaberi Ibrahim, Jaeyeon, Jihyeon and Talia.</p>
+      </div>
+      <ul class="footer__links">
+        <li><a href="https://github.com/waaberi/calhacks13" rel="noopener">GitHub</a></li>
+        <li><a href="https://devpost.com/software/coplanar" rel="noopener">Devpost</a></li>
+      </ul>
+      <p class="footer__legal">Blender is a trademark of the Blender Foundation. Meta Quest is a trademark of Meta Platforms, Inc. Coplanar is an independent project and is not affiliated with either. Typefaces: Bricolage Grotesque and JetBrains Mono, under the SIL Open Font License.</p>
+    </div>
+  </footer>
+</body>
+</html>
