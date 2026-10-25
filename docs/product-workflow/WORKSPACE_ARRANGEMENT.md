@@ -194,6 +194,17 @@ world coordinates. New-document/epoch changes clear placement undo history.
 
 ## Verification and limits
 
+The current saved-room recovery uses an explicit five-second localization timeout
+on every SDK path. The installed OpenXR shim converts the SDK's default zero to
+zero nanoseconds, so a default value cannot be relied on to wait for localization.
+Recovery keeps fetched handles for up to twelve seconds in parallel, allowing at
+most two complete five-second attempts and fresh tracking frames. An empty or
+unlocalized reply cannot replace the existing valid room. Valid imported UUID
+references are written privately and atomically before localization, so ordinary
+app restarts retain the recovery index. Saved world poses and geometry are never
+used as a substitute for current SDK tracking. Exact final live readback remains
+separate from software timeout/retention/retry checks and physical room fit.
+
 ArrangementChecks covers no-attraction/no-forced-rotation contact, non-centred
 geometry, finite surfaces, fast wall crossing, escape from an existing penetration,
 explicit alignment, tracking-origin conversion, two-hand rotation, native-safe
