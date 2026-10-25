@@ -228,7 +228,7 @@ namespace SpatialModeling
                 $" · {(MenuDocked ? "left hand" : "in space")}\nGrip menu, move, release to place" +
                 $"\nHeight {Height:F2} m · size {Size:F2}× · {connection.ConnectionText}";
             var keyboard = Keyboard.current;
-            if (keyboard != null)
+            if (keyboard != null && !PreviewInteraction.BlocksDesktopShortcuts)
             {
                 if (keyboard.enterKey.wasPressedThisFrame) Place();
                 if (keyboard.mKey.wasPressedThisFrame) BeginMove();

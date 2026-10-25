@@ -38,7 +38,8 @@ import bmesh
 import bpy
 from mathutils import Matrix, Quaternion, Vector
 
-from .commands import Applied, Refused
+from . import sketch
+from .commands import SKETCH_OPS, Applied, Refused
 
 STEP_PROPERTY = "spatial_modeling_step"  # on the scene: the last command's Undo step
 PRIMITIVES = {"cube": "Cube", "sphere": "Sphere", "cylinder": "Cylinder"}
@@ -65,6 +66,7 @@ class Editor:
     def __init__(self, sync, undoable, document=None):
         self.sync = sync
         self.document = document
+        self.supports_sketches = callable(getattr(sketch, "apply", None))
         commit = undoable(lambda done: done.summary)  # the Undo step is named after the edit
         self._ops = {
             op: commit(self._published(fn))
@@ -76,6 +78,11 @@ class Editor:
                 ("object.delete", self._delete),
             )
         }
+        if self.supports_sketches:
+            for op in SKETCH_OPS:
+                def apply_sketch(target_id, args, operation=op):
+                    return sketch.apply(operation, target_id, args)
+                self._ops[op] = commit(self._published(apply_sketch))
 
     def flush(self):
         return self.sync.flush()
@@ -94,8 +101,6 @@ class Editor:
         aren't objects, such as sketches, add nothing: a sketch is leased by its ID.
         """
         start = [o for o in (self.sync.find_object(i) for i in ids) if o is not None]
-        if not start:
-            return []
         users, children, dependents = {}, {}, {}
         for obj in bpy.context.view_layer.objects:
             if obj.data is not None:
@@ -115,7 +120,11 @@ class Editor:
                 if other.session_uid not in found:
                     found[other.session_uid] = other
                     queue.append(other)
-        return [self.sync.object_id(o) for o in found.values()]
+        result = [self.sync.object_id(o) for o in found.values()]
+        linked_sketches = getattr(sketch, "linked", None)
+        if linked_sketches is not None:
+            result.extend(i for i in linked_sketches([*ids, *result]) if i not in result)
+        return result
 
     def apply(self, op, target_id, args):
         mode = bpy.context.mode
@@ -127,6 +136,16 @@ class Editor:
         try:
             if op in ("history.undo", "history.redo"):
                 return self._history(undo=op == "history.undo")
+            if op in SKETCH_OPS:
+                if not self.supports_sketches:
+                    raise Refused("failed", "Sketches aren't available on this host yet.")
+                try:
+                    return self._ops[op](target_id, args)
+                except Refused:
+                    raise
+                except Exception:
+                    self._incomplete(op)
+                    raise
             return self._object_op(op, target_id, args)
         except Refused:
             raise  # nothing changed
@@ -140,6 +159,9 @@ class Editor:
             obj = self.sync.find_object(target_id)
             if obj is None:
                 raise Refused("not_found", "That object doesn't exist (any more).")
+            is_sketch = getattr(sketch, "is_sketch", None)
+            if is_sketch is not None and is_sketch(obj):
+                raise Refused("failed", "Use the sketch tools to edit this native sketch.")
             if obj.library is not None:
                 raise Refused("failed", f"{obj.name} is linked from another file, so it can't "
                               "be changed here.")

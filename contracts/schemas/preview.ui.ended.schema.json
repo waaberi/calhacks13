@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "preview.ui.ended.schema.json",
+  "title": "preview.ui.ended",
+  "$ref": "envelope.schema.json",
+  "properties": {
+    "type": {
+      "const": "preview.ui.ended"
+    },
+    "payload": {
+      "type": "object",
+      "required": [
+        "process_id",
+        "input_allowed",
+        "ui_session_id",
+        "ui_owner",
+        "ui_ending",
+        "modal_operators",
+        "modal_active"
+      ],
+      "properties": {
+        "process_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "input_allowed": {
+          "type": "boolean"
+        },
+        "ui_session_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ui_owner": {
+          "anyOf": [
+            {
+              "$ref": "envelope.schema.json#/$defs/actor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ui_ending": {
+          "type": "boolean"
+        },
+        "modal_operators": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "modal_active": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "re"
+  ]
+}

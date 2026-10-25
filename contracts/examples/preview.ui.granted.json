@@ -1,0 +1,19 @@
+{
+  "v": 1,
+  "type": "preview.ui.granted",
+  "id": "00000000000000000000000000000005",
+  "payload": {
+    "process_id": 1234,
+    "input_allowed": true,
+    "ui_session_id": "8a54d6b0b6d94e1b9c8f6c1f3c2d1e0f",
+    "ui_owner": {
+      "actor_id": "be10cd89a4e841e7b708ae9cdbefeb77",
+      "name": "VR user",
+      "role": "vr"
+    },
+    "ui_ending": false,
+    "modal_operators": [],
+    "modal_active": false
+  },
+  "re": "10000000000000000000000000000000"
+}

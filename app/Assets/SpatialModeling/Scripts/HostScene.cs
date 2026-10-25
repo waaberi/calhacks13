@@ -43,6 +43,7 @@ namespace SpatialModeling
         public string OpenEpoch => openEpoch;
         public long Revision => revision;
         public TablePlacement Table => table;
+        public Material ObjectDisplayMaterial => ObjectMaterial;
         public IEnumerable<WorkspaceObjectView> ObjectViews
         {
             get { foreach (var go in objects.Values) if (go != null) yield return go.GetComponent<WorkspaceObjectView>(); }
@@ -111,7 +112,10 @@ namespace SpatialModeling
             recenterAction.AddBinding("<XRController>{RightHand}/secondaryButton"); // B on Quest
             recenterAction.AddBinding("<XRController>{LeftHand}/secondaryButton");  // Y on Quest
             recenterAction.AddBinding("<Keyboard>/r");
-            recenterAction.performed += _ => RequestRecenter();
+            recenterAction.performed += context =>
+            {
+                if (!(context.control?.device is Keyboard && PreviewInteraction.BlocksDesktopShortcuts)) RequestRecenter();
+            };
             recenterAction.Enable();
             var name = string.IsNullOrWhiteSpace(userName) ? "VR user" : userName.Trim();
             link = new HostLink(host, connectionPort, new JObject

@@ -166,6 +166,7 @@ namespace SpatialModeling
             var device = InputDevices.GetDeviceAtXRNode(h.node);
             if (!TryReadHand(h, out var hand, out var aim))
             {
+                PreviewInteraction.Current?.TrackingLost(h.node);
                 Release(h);
                 h.visual.SetActive(false);
                 h.armed = false;
@@ -207,6 +208,21 @@ namespace SpatialModeling
             var level=arrangement!=null?arrangement.Surfaces.RaycastLevel(ray,out levelDistance):null;
             bool levelFirst=level!=null && levelDistance<distance;
             if(levelFirst) distance=levelDistance;
+
+            // Optional P2.5 consumes only UI/drawing gestures. Existing held aim
+            // mapping and P2 placement controls keep their original writers.
+            var preview = PreviewInteraction.Current;
+            float previewDistance = 0;
+            bool previewRouted = preview != null && preview.RouteHand(h.node, ray, h.armed && triggerNow,
+                gripNow || h.target != null || (table != null && table.IsPointing), axis,
+                Mathf.Min(Mathf.Min(hitPart != null ? partDistance : 4f, tableHit ? tableDistance : 4f),
+                    level != null ? levelDistance : 4f), out previewDistance);
+            if (previewRouted)
+            {
+                distance = previewDistance;
+                if (!tableHit || previewDistance < tableDistance) tableFirst = false;
+                if (level != null && previewDistance < levelDistance) levelFirst = false;
+            }
 
             if (h.target != null)
             {
@@ -256,6 +272,10 @@ namespace SpatialModeling
                 if (triggerNow) table.PointAt(ray);
                 Instruction = "Hold trigger and aim at the table position · Place Table to confirm";
             }
+            else if (previewRouted)
+            {
+                Instruction = preview.Notice;
+            }
             else if (screenFirst)
             {
                 bool button = screen.HoverController(ray, triggerPressed);
@@ -268,7 +288,7 @@ namespace SpatialModeling
                 Instruction = MoveIndividualParts ? "Grip: arrange " + hitPart.name + " in your view" : "Grip: move the whole build";
                 if (gripPressed && (other?.target==target || !Conflicts(other?.target, target))) Begin(h, target, MoveIndividualParts ? hitPart : null, aim, ray.GetPoint(distance));
             }
-            h.hasHit = levelFirst || tableFirst || hitScreen || hitPart != null;
+            h.hasHit = previewRouted || levelFirst || tableFirst || hitScreen || hitPart != null;
             h.pointerDistance = distance;
             return true;
         }
