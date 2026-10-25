@@ -1,0 +1,247 @@
+{
+  "schema": 1,
+  "state": "SOFTWARE_VERIFIED_CANDIDATE_UNLAUNCHED_PHYSICAL_PENDING",
+  "at": "2026-10-25T08:26:48.184681+00:00",
+  "branch": "codex/talia-live-modeling-ai",
+  "application_source": "ed1a180b4fa498204d4743133827e7e9e6a2dcfd",
+  "base": "2551bd525f8b83811b08b1aa2e2dbb455b0bc777",
+  "voice_feature": "182033e0871b6d003e93f2e7e57a1b3a0139d19c",
+  "gemini_source": "46632ebb21071abce3a4896dbf7bb6a2d75d06de",
+  "assembly_sha256": "25e6d27d2b20d8108d6b344a5e6c8ba3fd9db817f89355acdfd1a6f9c696b309",
+  "workflow": "Existing Blender view chooses native tools; front-trigger edits floating geometry with actual held native updates; release one native Undo/Redo; Cancel restores baseline. Existing 2D native editing and UI/control choices preserved.",
+  "typed_catalog_operations": 106,
+  "mandatory_markers": [
+    "P25_MAPPING_CHECK PASS",
+    "P25_TRANSPORT_CHECK PASS",
+    "P25_INPUT_PROTOCOL_CHECK PASS",
+    "P25_WINDOW_CHECK PASS",
+    "P25_OBJECT_TOOLS_CHECK PASS",
+    "P25_SHORTCUT_CATALOG_CHECK PASS",
+    "P25_NUMERIC_CHECK PASS",
+    "P25_SPATIAL_TARGET_CHECK PASS",
+    "P25_SPATIAL_MAPPING_CHECK PASS",
+    "P25_PREVIEW_OCCLUSION_CHECK PASS",
+    "P25_WINDOW_UI_CHECK PASS",
+    "P2_PLACEMENT_LIFECYCLE_CHECK PASS",
+    "P2_LEFT_HAND_MENU_CHECK PASS",
+    "P2_CHECKS PASS",
+    "ARRANGEMENT_CHECKS PASS",
+    "CAPTURE_FRESHNESS_CHECK PASS",
+    "STARTUP_FACING_CHECK PASS",
+    "HEADSET_PLACEMENT_READINESS_CHECK PASS",
+    "CONTROLLER_POSE_FORMAT_CHECK PASS format=Current",
+    "CONTROLLER_POSE_FORMAT_CHECK PASS format=Legacy",
+    "WORKSPACE_CHECKS PASS",
+    "P1_VISUAL_BASELINE PASS",
+    "P1_BUILD_RESULT Succeeded errors=0",
+    "P2_BUILD_RESULT Succeeded errors=0",
+    "P25_KEYBOARD_ISOLATION_CHECK PASS",
+    "P25_BUILD_RESULT Succeeded errors=0",
+    "PHYSICAL_SCALE_CHECKS PASS",
+    "INDEPENDENT_PLANE_CHECK PASS",
+    "VERTICAL_PLANE_FRONT_CHECK PASS",
+    "SETTINGS_MENU_CHECKS PASS",
+    "ROOM_SPACE_REPLAY_CHECKS PASS",
+    "P225_CONTROLLER_OWNERSHIP_CHECK PASS",
+    "P225_XR_BASELINE_CHECK PASS exact_accepted_P2_standalone_flags=34",
+    "P225_CONTROLLER_UI_CHECK PASS",
+    "P225_CAPTURE_CLARITY_CHECK PASS",
+    "P225_P3_ROUTING_CHECK PASS",
+    "P3_BLENDER_ONLY_CHECK PASS",
+    "VOICE_OBJECT_SELECTION_CHECKS PASS",
+    "CONTROLLER_PAIR_CHECKS PASS",
+    "ROOM_LOCALIZATION_CHECKS PASS",
+    "P3_GLASS_ACCESSIBILITY_CHECK PASS",
+    "P3_GLASS_GEOMETRY_CHECK PASS",
+    "P3_GLASS_CONTROLLER_CHECK PASS",
+    "P3_GLASS_CURVE_CHECK PASS",
+    "P3_GLASS_OPTICS_CHECK PASS",
+    "P3_GLASS_CHECK PASS",
+    "P3_GLASS_RENDER_AIM_CHECK PASS",
+    "COMBINED_GLASS_CHECK PASS",
+    "P3_GLASS_BUILD_RESULT Succeeded",
+    "GLASS_EVENT_RAYCAST_CHECK PASS",
+    "GLASS_IDLE_GEOMETRY_CHECK PASS",
+    "GLASS_GRID_CHECK PASS",
+    "GLASS_STEREO_GPU_CHECK PASS",
+    "ROOM_RECOVERY_CHECKS PASS",
+    "P25_QUICK_ACTION_CHECK PASS",
+    "P25_DRAWING_MODE_CHECK PASS",
+    "LEFT_HAND_MENU_COMPACT_CHECK PASS",
+    "GLASS_HELD_POINT_JITTER_CHECK PASS",
+    "HANDHELD_MENU_CHECK PASS",
+    "BLENDER_VIEW_APPEARANCE_CHECK PASS",
+    "KEYBOARD_PASSTHROUGH_CHECK PASS",
+    "P25_EDIT_WORKFLOW_CHECK PASS",
+    "VOICE_COMPOSITION_CHECK PASS",
+    "VOICE_RESOLVE_HANDOFF_CHECK PASS",
+    "VOICE_DIRECT_CANCEL_CHECK PASS",
+    "DIRECT_MODEL_EDIT_CHECK PASS",
+    "DIRECT_EDIT_VOICE_INTEGRATION_BUILD PASS",
+    "LIVE_MODEL_SESSION_CHECK PASS",
+    "LIVE_CONTROLLER_CHECK PASS",
+    "AI_NATIVE_CONTEXT_CHECK PASS",
+    "AI_CANCELLATION_CHECK PASS"
+  ],
+  "compiler_inputs_verified": 434,
+  "frozen_xr_flags": 34,
+  "backend_p25": {
+    "passed": 1508,
+    "skipped": 37
+  },
+  "voice": {
+    "passed": 499,
+    "skipped": 11
+  },
+  "ai_fake_transport": {
+    "passed": 16,
+    "real_api": false
+  },
+  "native_checks": {
+    "native_live_history_gate-exact": {
+      "checks": 9,
+      "affine_cases": 0,
+      "sha256": "c1e64d4a500e48d8dcf571605a71c0c7fa01d9253450c9c910da1459896c4e0e"
+    },
+    "native_live_modeling_gate-exact": {
+      "checks": 16,
+      "affine_cases": 0,
+      "sha256": "0e0e374081d040ed7d0d7a1b96bf72a9d625a4c5ba08505f179a3e620a958429"
+    },
+    "native_modeling_tools_gate-exact": {
+      "checks": 64,
+      "affine_cases": 0,
+      "sha256": "7a4ff3f974dd89c56fecbc51f8a605524718f90ec242aeb080cad416cdaff8a9"
+    },
+    "native_modeling_recipe_gate-exact": {
+      "checks": 17,
+      "affine_cases": 0,
+      "sha256": "f4dfe4e66790cfd743f445815359800db7d6f496009a0cc5adcfd7f1ccd6a695"
+    },
+    "native_knife_tools_gate-exact": {
+      "checks": 6,
+      "affine_cases": 12,
+      "sha256": "bd078dd4f822395a77113e10b754dbf8c35a1da97505fafdf9dd48363029a3ee"
+    },
+    "native_toolbar_tools_gate-exact": {
+      "checks": 8,
+      "affine_cases": 0,
+      "sha256": "4c7424a7415f9a1544eec2a6af292668ee0226b2530f92ee2d27eba22621cd32"
+    },
+    "native_direct_model_gate-exact": {
+      "checks": 18,
+      "affine_cases": 0,
+      "sha256": "f1040d80f59175305b0656693bcc4739d78b6f392592971991e9a3698ddff78d"
+    },
+    "native_modeling_extras_gate-exact2": {
+      "checks": 145,
+      "affine_cases": 0,
+      "sha256": "a5fb8697b01b64c347fc90d4892804d7dd14ab65439486fc9b8891d2ef3d9f29"
+    },
+    "native_modeling_extended_gate-exact2": {
+      "checks": 241,
+      "affine_cases": 0,
+      "sha256": "085c1138a9439a7db74c01a2f42b49558aad63abc463543fad39e464280fd082"
+    },
+    "native_modeling_preservation_gate-exact2": {
+      "checks": 177,
+      "affine_cases": 0,
+      "sha256": "19b181a95fe2aef2809411e9f0553a95889c4b61b4452153a1180058ea65c689"
+    },
+    "pose-recipe-exact": {
+      "checks": 18,
+      "affine_cases": 0,
+      "sha256": "3bf6f8af50588365c6e59854ea1c37795616e320cf1426408b79725500c198e8"
+    }
+  },
+  "capture_helper_passes": 159,
+  "fresh_http_cases": [
+    8,
+    2,
+    9
+  ],
+  "packaged_checks": {
+    "passed": true,
+    "package_unchanged": true,
+    "candidate_player_launched": false,
+    "physical_acceptance": false,
+    "results": {
+      "native_live_modeling_gate": {
+        "passed": true,
+        "checks": 16,
+        "affine_cases": 0
+      },
+      "native_modeling_recipe_gate": {
+        "passed": true,
+        "checks": 17,
+        "affine_cases": 0
+      },
+      "native_knife_tools_gate": {
+        "passed": true,
+        "checks": 6,
+        "affine_cases": 12
+      },
+      "native_toolbar_tools_gate": {
+        "passed": true,
+        "checks": 8,
+        "affine_cases": 0
+      },
+      "native_direct_model_gate": {
+        "passed": true,
+        "checks": 18,
+        "affine_cases": 0
+      },
+      "voice": {
+        "passed": true
+      },
+      "bootstrap": {
+        "passed": true,
+        "cad_available": true,
+        "private_ui_scale": 1.5,
+        "glass_properties": 96
+      }
+    }
+  },
+  "independent_byte_audit": "modeling-extras-v1/final-package-d-byte-audit.json",
+  "independent_byte_audit_sha256": "fb506b76a74bd148fc480e03deb4b92d9d2d79ca5f76fcdb50b1f84bd0a98add",
+  "preserved_process_ids": [
+    50136,
+    88192,
+    3048,
+    21596,
+    84668,
+    44560,
+    93524,
+    6820,
+    74716,
+    43252,
+    48980
+  ],
+  "runtime_launched": false,
+  "candidate_launch_authorized": false,
+  "physical_acceptance": false,
+  "real_gemini_api_verified": false,
+  "limits": [
+    "Candidate Player has never launched. Headset controller/voice usability, latest controller appearance, physical keyboard visibility and new room scan fit require wearer confirmation.",
+    "Gemini client, strict complete plans and fake-transport orchestration pass; no API key was configured for a real service request. No live Gemini or microphone acceptance claimed.",
+    "Direct mesh bounds: 8192 vertices, 16384 edges, 8192 faces; 16384 selected components; 256 object targets; Knife paths 128 samples. One active mesh and one component domain in Edit Mode.",
+    "Modifiers, shape keys, shared/linked data, ambiguous native workspaces, locks and unsupported tool options can require preserved 2D Blender editing. The catalog has 106 typed operations, not every Blender feature as a direct gesture.",
+    "Typed recipes are at most 24 steps. Native-dependent previews are explicitly deferred; execution remains atomic with rollback. Complete context capture above eight MiB refuses instead of using incomplete freshness.",
+    "Individual-normal extrusion combined with snapping/constraints/proportional transform needs a separate Move. Merge First/Last requires actual ordered native vertex picks.",
+    "37 Python and 11 voice environment/platform/GPU skips remain. Separate actual Blender fixtures cover native geometry/history; Whisper/GPU and headset speech acceptance remain pending."
+  ],
+  "failures_and_corrections": [
+    "Initial private GUI test wrote the default global quit.blend recovery slot; acknowledged during work. Later tests set private TEMP/TMP before launch and all open Blender sessions were preserved. Do not use the early GUI harness.",
+    "Initial controller cancellation fixture expected Cancel before its outstanding update ACK. Corrected to verify ordered cancellation and no late commit.",
+    "Default Light mathutils.Color required sequence conversion for complete native context fingerprinting; real Light freshness regression added.",
+    "Native Undo may reorder edge/face storage. Tests compare oriented topology and associated UV corners while retaining vertex coordinates, rather than requiring native storage order.",
+    "Unsupported inactive WorkSpaceTool RNA.setup attempts crashed only disposable factory test processes; removed. Standard unregister_tool plus safe active-tool reset passes; inactive caches remain Blender-owned.",
+    "Final audit fixed ordered Edit selection/active-face rollback, cleared deleted final recipe target, and made actual app AI context/review/confirmation support visible native rigs/cameras/lights without changing basic voice grammar.",
+    "Packaged bootstrap first refused a test-harness resource path before touching the session. Corrected private session/resources environment; production guard retained."
+  ],
+  "evidence_directory": "evidence/live-modeling-v1",
+  "pr_changes": false,
+  "main_changes": false,
+  "feature_push": false,
+  "fps_work": false
+}
