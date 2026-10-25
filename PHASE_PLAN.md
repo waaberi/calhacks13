@@ -990,7 +990,7 @@ Waaberi owns the module and the host's SpacetimeDB adapter. Jihyeon owns the Uni
 
 **What it holds:** participants and presence, object leases, and the activity and receipt log. **What it doesn't hold:** geometry, scene snapshots and native commands. Those stay on the direct host connection, because Blender can only reach SpacetimeDB over HTTP polling.
 
-**How the host uses it (#165):** SpacetimeDB's `acquire` reducer decides every client's lease. A background thread asks it, so Blender never waits, and Blender keeps what was granted in memory, so every read is local. Without a server, Blender decides in memory. The [session board](spacetime/README.md#the-session-board) shows every decision live. See [spacetime/README.md › For the host](spacetime/README.md#for-the-host-p3b-165-spacetimedb-decides-who-may-edit-what).
+**How the host uses it (#165):** SpacetimeDB's `acquire` reducer decides every client's lease. A background thread asks it, so Blender never waits, and Blender keeps what was granted in memory, so every read is local. Without a server, Blender decides in memory. The [session board](spacetime/README.md#the-session-board) shows every decision live. See [spacetime/README.md › How the host uses it](spacetime/README.md#how-the-host-uses-it).
 
 **Where it runs:** the self-hosted server runs on Talia's PC and listens on localhost only, because self-hosted SpacetimeDB has no TLS. The Unity app and the host add-on reach it locally. The Client-role add-on on Lee Jae-yeon's PC gets presence and leases relayed by the host over the TLS LAN link, so the LAN has a single entry point.
 
