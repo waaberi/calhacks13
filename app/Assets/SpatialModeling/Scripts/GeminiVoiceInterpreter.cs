@@ -74,9 +74,20 @@ namespace SpatialModeling
                         catch (Exception e) when (e is FormatException || e is JsonException || e is InvalidOperationException)
                         { answer.Draft = null; answer.Error = "AI response did not contain a complete typed plan"; }
                     }
-                    else answer.Error = "AI request failed (HTTP " + web.responseCode + ")";
+                    else answer.Error = RequestFailure(web.responseCode);
             }
             answer.Ms = clock.ElapsedMilliseconds; if (current()) done(answer);
+        }
+
+        public static string RequestFailure(long status)
+        {
+            // Describe the next useful action without displaying a provider body,
+            // credential, or an invented claim that an edit reached Blender.
+            if (status == 0) return "Could not reach AI, or the request timed out. Check the connection and try again";
+            if (status == 401 || status == 403) return "AI key or project access was rejected. Check the Gemini configuration";
+            if (status == 429) return "AI usage limit reached. Wait before trying again";
+            if (status >= 500 && status <= 599) return "AI service is temporarily unavailable. Try again shortly";
+            return "AI could not accept this request (HTTP " + status + "). Try a shorter complete command";
         }
 
         public static string ComposeRequest(string original, string question, string answer)

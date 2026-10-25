@@ -32,7 +32,7 @@ namespace SpatialModeling
         public static string BasicCreation(string utterance)
         {
             var match = System.Text.RegularExpressions.Regex.Match(utterance ?? "",
-                @"^\s*(?:please\s+)?(?:add|create)\s+(?:(?:a|an)\s+)?(cube|sphere|cylinder)(?:\s+(?:to|in)\s+the\s+scene)?\s*[.!?]*\s*$",
+                @"^\s*(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:add|create|make)\s+(?:(?:a|an|another)\s+)?(cube|sphere|cylinder)(?:\s+(?:to|in)\s+(?:the|my|this)\s+scene)?(?:\s+(?:for\s+me|please))?\s*[.!?]*\s*$",
                 System.Text.RegularExpressions.RegexOptions.IgnoreCase);
             return match.Success ? "add a " + match.Groups[1].Value.ToLowerInvariant() : null;
         }

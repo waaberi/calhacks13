@@ -23,6 +23,17 @@ namespace SpatialModeling
         public bool CapturesScroll { get; private set; }
         const string PointerHandPreference = "SpatialModeling.PreviewPointerLeft";
         public bool OwnsControllerButtons => inputEnabled || focusRequested || windowResuming || endAfterRelease || NativeInputOwned;
+        public bool NativeGestureOwned => mouseHeld || panShift || modifiers.Count!=0;
+        public bool NativeTransitionPending => focusRequested || windowResuming || endAfterRelease || pendingNativeCommand!=null
+            || (Drawing!=null&&Drawing.NativeUiTransitionPending);
+        public void ObserveLocalUiTriggerRelease(XRNode hand)
+        {
+            if(hand!=PrimaryHand||NativeGestureOwned||NativeTransitionPending||DirectEditing?.Gesturing==true||DirectEditing?.LiveBusy==true
+                ||Drawing?.HasDraft==true||Drawing?.NativeModalActive==true||Drawing?.Session.Busy==true||Drawing?.Session.ExternalEditBusy==true)return;
+            // A local help control consumed this release. Rearm only the edge;
+            // never emit/replay native input, alter ownership or resume a draft.
+            triggerWasDown=false;
+        }
         public bool ModelEditingActive => modelEditingRequested || OwnsControllerButtons || guideShown || spatialRequested || pendingNativeCommand!=null || (DirectEditing != null && DirectEditing.Active)
             || (Drawing!=null&&Drawing.EnabledForInput);
         public XRNode PrimaryHand { get; private set; } = XRNode.RightHand;

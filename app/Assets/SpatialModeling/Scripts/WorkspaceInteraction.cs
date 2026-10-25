@@ -23,6 +23,9 @@ namespace SpatialModeling
         BlenderScreen screen;
         WorkspaceArrangement arrangement;
         VoiceUiAdapter voice;
+        PendingCommandPanel[] guideVoicePanels=Array.Empty<PendingCommandPanel>();
+        VoiceUiAdapter guideVoiceOwner;
+        bool guideHadVoiceOwner;
         public string PointedObjectId => right?.pointed?.ObjectId ?? left?.pointed?.ObjectId;
         Transform pairTarget;
         Vector3 pairVector, pairMidpoint, pairScale, pairOffset;
@@ -46,6 +49,7 @@ namespace SpatialModeling
             public bool hasHit;
             public float pointerDistance;
             public bool gripDown, triggerDown, armed;
+            public bool guideTriggerOwned;
             public Transform target;
             public WorkspaceObjectView part;
             public WorkspaceObjectView pointed;
@@ -176,6 +180,7 @@ namespace SpatialModeling
                 h.armed = false;
                 h.gripDown = h.triggerDown = false;
                 h.aimInitialized = false;
+                h.guideTriggerOwned = false;
                 h.pointed = null;
                 return false;
             }
@@ -207,6 +212,21 @@ namespace SpatialModeling
             bool gripPressed, bool triggerPressed, Vector2 axis, bool stickPressed)
         {
             h.pointed = null;
+            var guide=scene.Table?.Guide;
+            if(guide?.Visible==true&&(!GuideVoiceLifetimeCurrent()||VoiceReviewVisible()))
+            {
+                guide.Close();
+                if(left!=null)left.guideTriggerOwned|=left.triggerDown;
+                if(right!=null)right.guideTriggerOwned|=right.triggerDown;
+            }
+            if(h.guideTriggerOwned)
+            {
+                // A search/rebuild/close press owns its entire trigger cycle.
+                // Never feed its held or release edge into an underlying editor.
+                if(!triggerNow){h.guideTriggerOwned=false;PreviewInteraction.Current?.ObserveLocalUiTriggerRelease(h.node);}
+                h.hasHit=guide?.Raycast(ray,out _)==true;h.pointerDistance=4f;
+                Instruction="Guide · release trigger before another action";return true;
+            }
             float distance = 4f;
             var hitPart = scene.PickObject(ray, out float partDistance);
             bool hitScreen = screen.RaycastSurface(ray, out float screenDistance);
@@ -224,9 +244,22 @@ namespace SpatialModeling
             bool levelFirst=level!=null && levelDistance<distance;
             if(levelFirst) distance=levelDistance;
 
+            var preview = PreviewInteraction.Current;
+            bool editingHandOwned=h.node==(preview?.PrimaryHand??XRNode.RightHand)
+                &&(preview?.NativeGestureOwned==true||preview?.NativeTransitionPending==true||preview?.DirectEditing?.Gesturing==true||preview?.DirectEditing?.LiveBusy==true
+                    ||preview?.Drawing?.HasDraft==true||preview?.Drawing?.NativeModalActive==true||preview?.Drawing?.Session.Busy==true||preview?.Drawing?.Session.ExternalEditBusy==true);
+            if(h.target==null&&!editingHandOwned&&guide!=null&&guide.Raycast(ray,out float guideDistance)&&guideDistance<distance-.0005f
+                &&(preview==null||!preview.RaycastVisual(ray,out float foreignDistance)||guideDistance<foreignDistance-.0005f))
+            {
+                bool helpReady=!GuideEditingBusy();
+                guide.Hover(ray,triggerPressed&&!gripNow&&helpReady);
+                h.guideTriggerOwned=triggerNow;h.hasHit=true;h.pointerDistance=guideDistance;
+                if(helpReady)Instruction="Guide · local search keys only · trigger: read · no edits run";
+                return true;
+            }
+
             // Optional P2.5 consumes only UI/drawing gestures. Existing held aim
             // mapping and P2 placement controls keep their original writers.
-            var preview = PreviewInteraction.Current;
             float previewDistance = 0;
             bool previewRouted = preview != null && h.target == null && !(table != null && table.IsPointing)
                 && preview.RouteControllerHand(h.node, ray, h.armed && triggerNow,
@@ -323,6 +356,44 @@ namespace SpatialModeling
                 if (h != null) { h.pointed = null; h.armed = false; }
         }
 
+        void CacheGuideVoiceState()
+        {
+            // Explicit Open is the discovery boundary. Routing only reads these
+            // existing objects; a changed lifetime closes help for rediscovery.
+            guideVoicePanels=UnityEngine.Object.FindObjectsByType<PendingCommandPanel>(FindObjectsInactive.Include,FindObjectsSortMode.None);
+            guideVoiceOwner=voice!=null?voice:UnityEngine.Object.FindFirstObjectByType<VoiceUiAdapter>();
+            guideHadVoiceOwner=guideVoiceOwner!=null;
+        }
+        bool GuideVoiceLifetimeCurrent()
+        {
+            if(guideHadVoiceOwner&&guideVoiceOwner==null)return false;
+            if(voice!=null&&voice!=guideVoiceOwner)return false;
+            foreach(var panel in guideVoicePanels)if(panel==null)return false;
+            return true;
+        }
+        bool VoiceReviewVisible()
+        {
+            foreach(var panel in guideVoicePanels)
+                if(panel!=null&&panel.Visible)return true;
+            return false;
+        }
+        bool GuideEditingBusy()
+        {
+            var preview=PreviewInteraction.Current;var drawing=preview?.Drawing;
+            return IsHolding||preview?.NativeGestureOwned==true||preview?.NativeTransitionPending==true
+                ||preview?.DirectEditing?.Gesturing==true||preview?.DirectEditing?.LiveBusy==true
+                ||drawing?.HasDraft==true||drawing?.NativeModalActive==true||drawing?.Session.Busy==true||drawing?.Session.ExternalEditBusy==true;
+        }
+        public bool CanOpenGuide(out string reason)
+        {
+            reason="Guide: finish or cancel the current edit before opening help.";
+            if(GuideEditingBusy())return false;
+            CacheGuideVoiceState();
+            if(VoiceReviewVisible()){reason="Guide: finish the current voice question or confirmation first.";return false;}
+            if(Camera.main==null){reason="Guide: wait for the headset view.";return false;}
+            reason="";return true;
+        }
+
         // Read position, orientation and validity from one Input System pose state.
         // Do not fall back to stale legacy tracking when a bound pose loses tracking.
         bool TryReadHand(Hand h, out Pose hand, out Pose aim)
@@ -342,6 +413,7 @@ namespace SpatialModeling
                 PreviewInteraction.Current?.TrackingLost(h.node);
                 Release(h); // A replacement device must not inherit an old device's hold offset.
                 h.aimInitialized = false;
+                h.guideTriggerOwned = false;
                 h.armed = false;
                 h.previousPoseTime = 0;
             }
@@ -510,6 +582,7 @@ namespace SpatialModeling
                 Near(pointed != null, objectDistance);
                 Near(screen.RaycastSurface(currentRay, out float screenDistance), screenDistance);
                 if (scene.Table != null) Near(scene.Table.RaycastControls(currentRay, out float menuDistance), menuDistance);
+                if (scene.Table?.Guide != null) Near(scene.Table.Guide.Raycast(currentRay,out float guideDistance),guideDistance);
                 if (arrangement != null) Near(arrangement.Surfaces.RaycastLevel(currentRay, out float levelDistance) != null, levelDistance);
                 if (PreviewInteraction.Current != null) Near(PreviewInteraction.Current.RaycastVisual(currentRay, out float previewDistance), previewDistance);
                 endpoint=currentRay.GetPoint(pointerDistance);

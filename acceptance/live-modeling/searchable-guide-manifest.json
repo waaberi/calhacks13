@@ -1,0 +1,1399 @@
+{
+  "schema": 1,
+  "at": "2026-10-25T12:06:48.791530+00:00",
+  "application_source": "2e1f699275c868300b48b9afdc791569e986c49f",
+  "branch": "codex/talia-live-modeling-ai",
+  "assembly_sha256": "0a22d15d69c90486d903afec669f71f16ad1eb6e2e712d55570e5d2df84e4e54",
+  "mandatory_markers": [
+    "P25_MAPPING_CHECK PASS",
+    "P25_TRANSPORT_CHECK PASS",
+    "P25_INPUT_PROTOCOL_CHECK PASS",
+    "P25_WINDOW_CHECK PASS",
+    "P25_OBJECT_TOOLS_CHECK PASS",
+    "P25_SHORTCUT_CATALOG_CHECK PASS",
+    "P25_NUMERIC_CHECK PASS",
+    "P25_SPATIAL_TARGET_CHECK PASS",
+    "P25_SPATIAL_MAPPING_CHECK PASS",
+    "P25_PREVIEW_OCCLUSION_CHECK PASS",
+    "P25_WINDOW_UI_CHECK PASS",
+    "P2_PLACEMENT_LIFECYCLE_CHECK PASS",
+    "P2_LEFT_HAND_MENU_CHECK PASS",
+    "P2_CHECKS PASS",
+    "ARRANGEMENT_CHECKS PASS",
+    "CAPTURE_FRESHNESS_CHECK PASS",
+    "STARTUP_FACING_CHECK PASS",
+    "HEADSET_PLACEMENT_READINESS_CHECK PASS",
+    "CONTROLLER_POSE_FORMAT_CHECK PASS format=Current",
+    "CONTROLLER_POSE_FORMAT_CHECK PASS format=Legacy",
+    "WORKSPACE_CHECKS PASS",
+    "P1_VISUAL_BASELINE PASS",
+    "P1_BUILD_RESULT Succeeded errors=0",
+    "P2_BUILD_RESULT Succeeded errors=0",
+    "P25_KEYBOARD_ISOLATION_CHECK PASS",
+    "P25_BUILD_RESULT Succeeded errors=0",
+    "PHYSICAL_SCALE_CHECKS PASS",
+    "INDEPENDENT_PLANE_CHECK PASS",
+    "VERTICAL_PLANE_FRONT_CHECK PASS",
+    "SETTINGS_MENU_CHECKS PASS",
+    "ROOM_SPACE_REPLAY_CHECKS PASS",
+    "P225_CONTROLLER_OWNERSHIP_CHECK PASS",
+    "P225_XR_BASELINE_CHECK PASS exact_accepted_P2_standalone_flags=34",
+    "P225_CONTROLLER_UI_CHECK PASS",
+    "P225_CAPTURE_CLARITY_CHECK PASS",
+    "P225_P3_ROUTING_CHECK PASS",
+    "P3_BLENDER_ONLY_CHECK PASS",
+    "VOICE_OBJECT_SELECTION_CHECKS PASS",
+    "CONTROLLER_PAIR_CHECKS PASS",
+    "ROOM_LOCALIZATION_CHECKS PASS",
+    "P3_GLASS_ACCESSIBILITY_CHECK PASS",
+    "P3_GLASS_GEOMETRY_CHECK PASS",
+    "P3_GLASS_CONTROLLER_CHECK PASS",
+    "P3_GLASS_CURVE_CHECK PASS",
+    "P3_GLASS_OPTICS_CHECK PASS",
+    "P3_GLASS_CHECK PASS",
+    "P3_GLASS_RENDER_AIM_CHECK PASS",
+    "COMBINED_GLASS_CHECK PASS",
+    "P3_GLASS_BUILD_RESULT Succeeded",
+    "GLASS_EVENT_RAYCAST_CHECK PASS",
+    "GLASS_IDLE_GEOMETRY_CHECK PASS",
+    "GLASS_GRID_CHECK PASS",
+    "GLASS_STEREO_GPU_CHECK PASS",
+    "ROOM_RECOVERY_CHECKS PASS",
+    "P25_QUICK_ACTION_CHECK PASS",
+    "P25_DRAWING_MODE_CHECK PASS",
+    "LEFT_HAND_MENU_COMPACT_CHECK PASS",
+    "GLASS_HELD_POINT_JITTER_CHECK PASS",
+    "HANDHELD_MENU_CHECK PASS",
+    "BLENDER_VIEW_APPEARANCE_CHECK PASS",
+    "P25_EDIT_WORKFLOW_CHECK PASS",
+    "VOICE_COMPOSITION_CHECK PASS",
+    "VOICE_RESOLVE_HANDOFF_CHECK PASS",
+    "VOICE_DIRECT_CANCEL_CHECK PASS",
+    "DIRECT_MODEL_EDIT_CHECK PASS",
+    "DIRECT_EDIT_VOICE_INTEGRATION_BUILD PASS",
+    "LIVE_MODEL_SESSION_CHECK PASS",
+    "LIVE_CONTROLLER_CHECK PASS",
+    "AI_NATIVE_CONTEXT_CHECK PASS",
+    "AI_CANCELLATION_CHECK PASS",
+    "P25_DIRECT_MODE_INTENT_CHECK PASS",
+    "P25_NATIVE_MENU_RETURN_CHECK PASS",
+    "P25_STALE_DIRECT_MODE_RECOVERY_CHECK PASS",
+    "DIRECT_ROTATION_HANDLES_CHECK PASS",
+    "SURFACE_SCALE_CHECK PASS",
+    "VOICE_DIALOG_CHECK PASS",
+    "DIRECT_MANIPULATION_FEEDBACK_CHECK PASS",
+    "ROOM_CONTINUITY_CHECK PASS",
+    "DIRECT_TOOL_GUIDES_CHECK PASS",
+    "DIRECT_TOOL_USABILITY_CHECK PASS",
+    "DIRECT_TOOL_AVAILABILITY_CHECK PASS",
+    "GUIDE_CATALOG_CHECK PASS",
+    "GUIDE_INTERACTION_CHECK PASS",
+    "AI_REPLACEMENT_CHECK PASS"
+  ],
+  "intentionally_retired_markers": [
+    "KEYBOARD_PASSTHROUGH_CHECK PASS"
+  ],
+  "retirement_reason": "Human explicitly deleted the manual real-keyboard window/outline; absence and preserved virtual typing are checked in HANDHELD_MENU_CHECK.",
+  "compiler_inputs_verified": 464,
+  "frozen_xr_flags": 34,
+  "byte_audit": {
+    "addon/spatial_modeling": {
+      "matched": 43,
+      "mismatches": 0
+    },
+    "support": {
+      "matched": 10,
+      "mismatches": 0
+    },
+    "contracts": {
+      "matched": 96,
+      "mismatches": 0
+    }
+  },
+  "previous_unchanged_backend_voice_evidence": "C:\\Users\\talia\\Documents\\Codex\\calhacks13-p0\\artifacts\\live-modeling-v5-b\\SOFTWARE-RESULTS.json",
+  "gemini_service_source": "41703d4767f8567f7f3922ef558260ba2f204443",
+  "gemini_voice_dialog_source": "4080eb1a73380fd5dc02e8f171e9a55150f1d1d6",
+  "gemini_service_results": "GEMINI-SERVICE-RESULTS.json",
+  "helper_tests": {
+    "passed": 170,
+    "failed": 0,
+    "reused_from": "C:\\Users\\talia\\Documents\\Codex\\calhacks13-p0\\artifacts\\live-modeling-v5-b\\SOFTWARE-RESULTS.json",
+    "reason": "Production helper files remain byte-identical; no helper code change in this candidate"
+  },
+  "reused_native_checks": [
+    "native_live_modeling_gate-tools-a.json",
+    "native_modeling_tools_gate-tools-a.json",
+    "native_knife_tools_gate-tools-a.json",
+    "native_toolbar_tools_gate-tools-a.json"
+  ],
+  "guide_changes": [
+    "One left-hand Guide action with written paginated steps and local search",
+    "Separate local controller query keyboard; no Blender/network/AI typing",
+    "Explicit open admission and trigger-cycle isolation preserve editing/input"
+  ],
+  "guide_catalog_articles": 33,
+  "workspace_voice_expansion": "STOPPED_BY_HUMAN_BEFORE_IMPLEMENTATION",
+  "native_evidence_reuse": {
+    "source": "live-modeling-v5",
+    "reported_checks": 94,
+    "reason": "Guide and existing-voice UI reliability changes; actual backend and native gate inputs byte-identical to verified isolated Blender runs"
+  },
+  "tool_usability_changes": [
+    "Read-only exact native contextual guides, points and cut paths",
+    "Predictable native-axis scale and captured extrusion constraints with acknowledged feedback",
+    "Explicit unavailable-versus-blocked world-space popup, no silent unknown-tool fallback",
+    "Knife sample limit refuses and rolls back rather than replacing path detail"
+  ],
+  "changes": [
+    "Requested handheld Arrange-space and Actual-size heading/actions removed with existing APIs preserved",
+    "RGB native Move arrows with selected-mesh-only picking exception and nearer foreign fence",
+    "Native-acknowledged scale multiplier plus separate two-hand display-scale ratio",
+    "Durable verified-room identity continuity and non-destructive transactional loading with fresh containment",
+    "Gemini owner4080eb1 basic creation and bounded world-anchored full-text review pagination"
+  ],
+  "legacy_room_continuity": {
+    "private_identity_seed_required_for_this_PC": true,
+    "seed_shipped": false,
+    "active_persistent_data_mutated": false,
+    "fresh_live_containment_required": true,
+    "old_poses_replayed": false
+  },
+  "limitations": [
+    "Physical rotation/menu/cursor-drag usability remains unaccepted; exact original widget hit is inferred, not observed.",
+    "Held-button cursor-wrap regression is simulated; no actual native GUI input reproduction performed.",
+    "Keyboard-only G/R/S modal pointer movement is a separately assigned followup; nonzero motion retains a possible OS cursor-wrap-between-read-and-send race.",
+    "Frozen scale pivot preserves the original support point; arbitrary anisotropic/global-axis scaling of a rotated face may change the lowest vertex.",
+    "Contact admission is conservative at finite plane edges; arrangement contact pinning bypasses nonrepresentable parent shear and deliberate rotation.",
+    "Existing native cube displacement is preserved and not automatically repaired."
+  ],
+  "runtime_launched": false,
+  "physical_acceptance": false,
+  "no_pr_main_push_fps": true,
+  "gemini_managed_checks": {
+    "passed": 47,
+    "failed": 0,
+    "source": "569cff1f1d857c28271b6d7ff9eccc0a71d24866",
+    "feature_source": "024456c3c764ce9c9142d4036cc90e78c7060475",
+    "live_api_called": false,
+    "transport": "explicit fake replies; production interpreter and dialog code",
+    "input_hashes": {
+      "tests/ai/ModelingAI.Tests.csproj": "a5ffca610fe9a68fde025582837ad36147e097248f5755293ca4c0e97b8032b6",
+      "tests/ai/GeminiRecipeTests.cs": "9f1f0d15c2669aa57640d463e45c24b6ad723b0be925c1789740d884cf7dd3e0",
+      "tests/ai/VoiceDialogTests.cs": "e554f855f7af2a88bf030cc047bb16543d67eb6933e22740d4d0a9fbed7f7738",
+      "tests/ai/UnityTransportShim.cs": "31d49512aff3961731632e97a53786ab4278ffbb84cefbc6a603cb13f2a00bc0",
+      "app/Assets/SpatialModeling/Scripts/GeminiVoiceInterpreter.cs": "4951faf4641f9bdb8a02a33d5f4c883a199a6cf865dbc3f548143b71ce82b34f",
+      "app/Assets/SpatialModeling/Scripts/VoiceDialogPages.cs": "5e1010dab85ba72b5133efd8aabdbce436698d9b2021509f04a2767d46e25a4b"
+    },
+    "trx": "gemini-managed/gemini-managed.trx"
+  },
+  "gemini_reliability_source": "024456c3c764ce9c9142d4036cc90e78c7060475",
+  "gemini_reliability_changes": [
+    "Whole-utterance polite Add/create/make phrasing without dropping extra clauses",
+    "Actionable service/access/quota failure text without provider bodies or retry",
+    "Replacing a request revokes old confirmation and own unsent queued edit; sent receipt remains authoritative"
+  ],
+  "fresh_http_cases": [
+    9,
+    2,
+    9
+  ],
+  "retained_failed_attempts": {
+    "at": "2026-10-25T12:03:10.770554+00:00",
+    "attempts": [
+      {
+        "attempt": "a",
+        "exit": 1,
+        "source": "4624d6b8268d4a55d2aeff823d7d2a4d155d01b8",
+        "error": "NullReferenceException in GuideInteractionChecks.Panel56; EventSystem.current assigned before Editor fixture lifecycle registration",
+        "production_changes_during_build": false,
+        "compiler_inputs_verified_after_sdk_restore": true,
+        "retained_log": "build-a-unity.log",
+        "fix_owner": "input_diagnosis in isolated searchable-guide",
+        "candidate_delivered": false,
+        "runtime_launched": false
+      },
+      {
+        "attempt": "b",
+        "exit": 1,
+        "source": "a8dc2ae8d95723a4f711d95544869b16dcc143ba",
+        "error": "GUIDE_INTERACTION full literal text fit failure for search field with48W characters",
+        "production_changes_during_build": false,
+        "compiler_inputs_verified_after_sdk_restore": true,
+        "retained_log": "build-b-unity.log",
+        "fix_owner": "input_diagnosis in isolated searchable-guide",
+        "candidate_delivered": false,
+        "runtime_launched": false
+      },
+      {
+        "attempt": "guide-c",
+        "exit": 1,
+        "source": "73f7c780806715b0c469823286eca3ee20695c9b",
+        "error": "GUIDE_INTERACTION busy admission refuses help direct-draft: synthetic Table initialization hid its display; fixture had not placed model before real draft attempt",
+        "production_changes_during_build": false,
+        "compiler_inputs_verified_after_sdk_restore": true,
+        "retained_log": "guide-c-unity.log",
+        "fix_owner": "input_diagnosis in isolated searchable-guide",
+        "candidate_delivered": false,
+        "runtime_launched": false
+      },
+      {
+        "attempt": "guide-d",
+        "exit": 1,
+        "source": "805f16c7d6e571121a0fa5afb395016d8e1cfd57",
+        "error": "Reflection ArgumentException in GuideInteractionChecks.Admission; synthetic drawing draft used Vector3? for actual Vector2? field",
+        "production_changes_during_build": false,
+        "compiler_inputs_verified_after_sdk_restore": true,
+        "retained_log": "guide-d-unity.log",
+        "fix_owner": "input_diagnosis in isolated searchable-guide",
+        "candidate_delivered": false,
+        "runtime_launched": false
+      }
+    ]
+  },
+  "multi_user_integration": {
+    "thread_id": "01a172bf-7e2b-7fe2-9f6f-3ab5c77dae7e",
+    "included_in_this_candidate": false,
+    "requires_current_guide_composition": true
+  },
+  "package": "C:\\Users\\talia\\Documents\\Codex\\calhacks13-p0\\artifacts\\live-modeling-v6-c",
+  "manifest_sha256": "7ac1b2e5c2b5a20217d45010c535db6067ca2d569d86526209b6a663e82a2a53",
+  "package_validation_passed": true,
+  "native_input_hashes_verified": true,
+  "reused_native": {
+    "native_live_modeling_gate-tools-a.json": {
+      "passed": true,
+      "headset_acceptance": false,
+      "checks": [
+        {
+          "tool": "mesh.extrude",
+          "unit": 1,
+          "live_updates": 2,
+          "undo_redo": true,
+          "cancel": true
+        },
+        {
+          "tool": "mesh.inset",
+          "unit": 1,
+          "live_updates": 2,
+          "undo_redo": true,
+          "cancel": true
+        },
+        {
+          "tool": "mesh.bevel",
+          "unit": 1,
+          "live_updates": 2,
+          "undo_redo": true,
+          "cancel": true
+        },
+        {
+          "tool": "mesh.loop_cut",
+          "unit": 1,
+          "live_updates": 2,
+          "undo_redo": true,
+          "cancel": true
+        },
+        {
+          "tool": "mesh.merge",
+          "unit": 1,
+          "live_updates": 2,
+          "undo_redo": true,
+          "cancel": true
+        },
+        {
+          "tool": "mesh.dissolve",
+          "unit": 1,
+          "live_updates": 2,
+          "undo_redo": true,
+          "cancel": true
+        },
+        {
+          "tool": "mesh.delete",
+          "unit": 1,
+          "live_updates": 2,
+          "undo_redo": true,
+          "cancel": true
+        },
+        {
+          "tool": "mesh.translate",
+          "unit": 1,
+          "live_updates": 2,
+          "undo_redo": true,
+          "cancel": true
+        },
+        {
+          "tool": "mesh.extrude",
+          "unit": 0.001,
+          "live_updates": 2,
+          "undo_redo": true,
+          "cancel": true
+        },
+        {
+          "tool": "mesh.inset",
+          "unit": 0.001,
+          "live_updates": 2,
+          "undo_redo": true,
+          "cancel": true
+        },
+        {
+          "tool": "mesh.bevel",
+          "unit": 0.001,
+          "live_updates": 2,
+          "undo_redo": true,
+          "cancel": true
+        },
+        {
+          "tool": "mesh.loop_cut",
+          "unit": 0.001,
+          "live_updates": 2,
+          "undo_redo": true,
+          "cancel": true
+        },
+        {
+          "tool": "mesh.merge",
+          "unit": 0.001,
+          "live_updates": 2,
+          "undo_redo": true,
+          "cancel": true
+        },
+        {
+          "tool": "mesh.dissolve",
+          "unit": 0.001,
+          "live_updates": 2,
+          "undo_redo": true,
+          "cancel": true
+        },
+        {
+          "tool": "mesh.delete",
+          "unit": 0.001,
+          "live_updates": 2,
+          "undo_redo": true,
+          "cancel": true
+        },
+        {
+          "tool": "mesh.translate",
+          "unit": 0.001,
+          "live_updates": 2,
+          "undo_redo": true,
+          "cancel": true
+        }
+      ],
+      "blender": "5.2.2 LTS",
+      "kernel_sha256": {
+        "modeling_tools.py": "82d2329fb33ba4ddb182dc73e3902b70facfb37f44f43783045f4f756b9706ac",
+        "modeling_mesh.py": "2c5a913e25977f2e6830a7150808a669a82775ccc403c1a1fcdb7c273b7a3e87",
+        "tool_catalog.py": "bec74d08c9dc1719efd53efc6493715540ae7c8c2f86a3e7dac28ef2c8287024"
+      }
+    },
+    "native_modeling_tools_gate-tools-a.json": {
+      "blender": "5.2.2 LTS",
+      "checks": [
+        {
+          "tool": "mesh.extrude",
+          "unit": 1,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            12,
+            20,
+            10
+          ]
+        },
+        {
+          "tool": "mesh.extrude",
+          "unit": 1,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            12,
+            20,
+            10
+          ]
+        },
+        {
+          "tool": "mesh.extrude",
+          "unit": 1,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            32,
+            60,
+            30
+          ]
+        },
+        {
+          "tool": "mesh.inset",
+          "unit": 1,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            12,
+            20,
+            10
+          ]
+        },
+        {
+          "tool": "mesh.inset",
+          "unit": 1,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            16,
+            28,
+            14
+          ]
+        },
+        {
+          "tool": "mesh.bevel",
+          "unit": 1,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            14,
+            21,
+            9
+          ]
+        },
+        {
+          "tool": "mesh.bevel",
+          "unit": 1,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            14,
+            21,
+            9
+          ]
+        },
+        {
+          "tool": "mesh.bevel",
+          "unit": 1,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            16,
+            28,
+            14
+          ]
+        },
+        {
+          "tool": "mesh.loop_cut",
+          "unit": 1,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            16,
+            28,
+            14
+          ]
+        },
+        {
+          "tool": "mesh.merge",
+          "unit": 1,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            7,
+            11,
+            6
+          ]
+        },
+        {
+          "tool": "mesh.merge",
+          "unit": 1,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            7,
+            11,
+            6
+          ]
+        },
+        {
+          "tool": "mesh.dissolve",
+          "unit": 1,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            8,
+            11,
+            5
+          ]
+        },
+        {
+          "tool": "mesh.delete",
+          "unit": 1,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            8,
+            12,
+            5
+          ]
+        },
+        {
+          "tool": "mesh.subdivide",
+          "unit": 1,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            12,
+            18,
+            8
+          ]
+        },
+        {
+          "tool": "mesh.triangulate",
+          "unit": 1,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            8,
+            13,
+            7
+          ]
+        },
+        {
+          "tool": "mesh.split_edges",
+          "unit": 1,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            8,
+            12,
+            6
+          ]
+        },
+        {
+          "tool": "mesh.recalculate_normals",
+          "unit": 1,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            8,
+            12,
+            6
+          ]
+        },
+        {
+          "tool": "mesh.flip_normals",
+          "unit": 1,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            8,
+            12,
+            6
+          ]
+        },
+        {
+          "tool": "mesh.face_smooth",
+          "unit": 1,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            8,
+            12,
+            6
+          ]
+        },
+        {
+          "tool": "mesh.edge_seam",
+          "unit": 1,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            8,
+            12,
+            6
+          ]
+        },
+        {
+          "tool": "mesh.edge_properties",
+          "unit": 1,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            8,
+            12,
+            6
+          ]
+        },
+        {
+          "tool": "mesh.select_region",
+          "unit": 1,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            8,
+            12,
+            6
+          ]
+        },
+        {
+          "tool": "mesh.bisect",
+          "unit": 1,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            12,
+            20,
+            10
+          ]
+        },
+        {
+          "tool": "mesh.spin",
+          "unit": 1,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            14,
+            21,
+            9
+          ]
+        },
+        {
+          "tool": "native_proportional_translate",
+          "unit": 1
+        },
+        {
+          "tool": "axis_grid_snap",
+          "unit": 1
+        },
+        {
+          "tool": "extrude_native_axis_grid",
+          "unit": 1
+        },
+        {
+          "tool": "extrude_native_surface_target",
+          "unit": 1
+        },
+        {
+          "tool": "extrude_native_proportional",
+          "unit": 1
+        },
+        {
+          "tool": "arbitrary_world_rotation_native_frame_restored",
+          "unit": 1
+        },
+        {
+          "tool": "native_face_snap_alignment",
+          "unit": 1
+        },
+        {
+          "tool": "multiobject_per_target_changes_once_preserve_native_selection",
+          "unit": 1
+        },
+        {
+          "tool": "mesh.extrude",
+          "unit": 0.001,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            12,
+            20,
+            10
+          ]
+        },
+        {
+          "tool": "mesh.extrude",
+          "unit": 0.001,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            12,
+            20,
+            10
+          ]
+        },
+        {
+          "tool": "mesh.extrude",
+          "unit": 0.001,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            32,
+            60,
+            30
+          ]
+        },
+        {
+          "tool": "mesh.inset",
+          "unit": 0.001,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            12,
+            20,
+            10
+          ]
+        },
+        {
+          "tool": "mesh.inset",
+          "unit": 0.001,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            16,
+            28,
+            14
+          ]
+        },
+        {
+          "tool": "mesh.bevel",
+          "unit": 0.001,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            14,
+            21,
+            9
+          ]
+        },
+        {
+          "tool": "mesh.bevel",
+          "unit": 0.001,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            14,
+            21,
+            9
+          ]
+        },
+        {
+          "tool": "mesh.bevel",
+          "unit": 0.001,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            16,
+            28,
+            14
+          ]
+        },
+        {
+          "tool": "mesh.loop_cut",
+          "unit": 0.001,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            16,
+            28,
+            14
+          ]
+        },
+        {
+          "tool": "mesh.merge",
+          "unit": 0.001,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            7,
+            11,
+            6
+          ]
+        },
+        {
+          "tool": "mesh.merge",
+          "unit": 0.001,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            7,
+            11,
+            6
+          ]
+        },
+        {
+          "tool": "mesh.dissolve",
+          "unit": 0.001,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            8,
+            11,
+            5
+          ]
+        },
+        {
+          "tool": "mesh.delete",
+          "unit": 0.001,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            8,
+            12,
+            5
+          ]
+        },
+        {
+          "tool": "mesh.subdivide",
+          "unit": 0.001,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            12,
+            18,
+            8
+          ]
+        },
+        {
+          "tool": "mesh.triangulate",
+          "unit": 0.001,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            8,
+            13,
+            7
+          ]
+        },
+        {
+          "tool": "mesh.split_edges",
+          "unit": 0.001,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            8,
+            12,
+            6
+          ]
+        },
+        {
+          "tool": "mesh.recalculate_normals",
+          "unit": 0.001,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            8,
+            12,
+            6
+          ]
+        },
+        {
+          "tool": "mesh.flip_normals",
+          "unit": 0.001,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            8,
+            12,
+            6
+          ]
+        },
+        {
+          "tool": "mesh.face_smooth",
+          "unit": 0.001,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            8,
+            12,
+            6
+          ]
+        },
+        {
+          "tool": "mesh.edge_seam",
+          "unit": 0.001,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            8,
+            12,
+            6
+          ]
+        },
+        {
+          "tool": "mesh.edge_properties",
+          "unit": 0.001,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            8,
+            12,
+            6
+          ]
+        },
+        {
+          "tool": "mesh.select_region",
+          "unit": 0.001,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            8,
+            12,
+            6
+          ]
+        },
+        {
+          "tool": "mesh.bisect",
+          "unit": 0.001,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            12,
+            20,
+            10
+          ]
+        },
+        {
+          "tool": "mesh.spin",
+          "unit": 0.001,
+          "before": [
+            8,
+            12,
+            6
+          ],
+          "after": [
+            14,
+            21,
+            9
+          ]
+        },
+        {
+          "tool": "native_proportional_translate",
+          "unit": 0.001
+        },
+        {
+          "tool": "axis_grid_snap",
+          "unit": 0.001
+        },
+        {
+          "tool": "extrude_native_axis_grid",
+          "unit": 0.001
+        },
+        {
+          "tool": "extrude_native_surface_target",
+          "unit": 0.001
+        },
+        {
+          "tool": "extrude_native_proportional",
+          "unit": 0.001
+        },
+        {
+          "tool": "arbitrary_world_rotation_native_frame_restored",
+          "unit": 0.001
+        },
+        {
+          "tool": "native_face_snap_alignment",
+          "unit": 0.001
+        },
+        {
+          "tool": "multiobject_per_target_changes_once_preserve_native_selection",
+          "unit": 0.001
+        }
+      ],
+      "passed": true,
+      "physical_acceptance": false
+    },
+    "native_knife_tools_gate-tools-a.json": {
+      "passed": true,
+      "physical_acceptance": false,
+      "checks": [
+        "Unity_camera_handedness_perspective_ortho",
+        "two_actual_held_updates_each_from_baseline",
+        "one_Undo_Redo_preserves_prior_mesh_UV",
+        "exact_Cancel_selection_history_hiding_UV",
+        "front_only_cut_through_selected_only",
+        "view_restored_no_private_cutter_leaks"
+      ],
+      "cases": [
+        {
+          "perspective": true,
+          "unit": 1,
+          "component": "face",
+          "cut_through": false,
+          "selected_only": false,
+          "updates": 2,
+          "baseline_counts": [
+            8,
+            8,
+            8
+          ],
+          "undo_redo": true,
+          "cancel": true
+        },
+        {
+          "perspective": true,
+          "unit": 1,
+          "component": "vertex",
+          "cut_through": true,
+          "selected_only": false,
+          "updates": 2,
+          "baseline_counts": [
+            8,
+            8,
+            8
+          ],
+          "undo_redo": true,
+          "cancel": true
+        },
+        {
+          "perspective": true,
+          "unit": 1,
+          "component": "face",
+          "cut_through": true,
+          "selected_only": true,
+          "updates": 2,
+          "baseline_counts": [
+            8,
+            8,
+            8
+          ],
+          "undo_redo": true,
+          "cancel": true
+        },
+        {
+          "perspective": false,
+          "unit": 0.001,
+          "component": "edge",
+          "cut_through": false,
+          "selected_only": false,
+          "updates": 2,
+          "baseline_counts": [
+            8,
+            8,
+            8
+          ],
+          "undo_redo": true,
+          "cancel": true
+        },
+        {
+          "perspective": false,
+          "unit": 0.001,
+          "component": "face",
+          "cut_through": true,
+          "selected_only": false,
+          "updates": 2,
+          "baseline_counts": [
+            8,
+            8,
+            8
+          ],
+          "undo_redo": true,
+          "cancel": true
+        },
+        {
+          "perspective": false,
+          "unit": 0.001,
+          "component": "face",
+          "cut_through": true,
+          "selected_only": true,
+          "updates": 2,
+          "baseline_counts": [
+            8,
+            8,
+            8
+          ],
+          "undo_redo": true,
+          "cancel": true
+        }
+      ],
+      "affine": [
+        {
+          "kind": "nonuniform",
+          "perspective": true,
+          "cut_through": false,
+          "outcome": "exact_projected_cut",
+          "new_vertices": 2
+        },
+        {
+          "kind": "nonuniform",
+          "perspective": true,
+          "cut_through": true,
+          "outcome": "exact_projected_cut",
+          "new_vertices": 4
+        },
+        {
+          "kind": "mirrored",
+          "perspective": true,
+          "cut_through": false,
+          "outcome": "exact_projected_cut",
+          "new_vertices": 2
+        },
+        {
+          "kind": "mirrored",
+          "perspective": true,
+          "cut_through": true,
+          "outcome": "exact_projected_cut",
+          "new_vertices": 4
+        },
+        {
+          "kind": "sheared",
+          "perspective": true,
+          "cut_through": false,
+          "outcome": "exact_projected_cut",
+          "new_vertices": 2
+        },
+        {
+          "kind": "sheared",
+          "perspective": true,
+          "cut_through": true,
+          "outcome": "exact_projected_cut",
+          "new_vertices": 4
+        },
+        {
+          "kind": "nonuniform",
+          "perspective": false,
+          "cut_through": false,
+          "outcome": "exact_projected_cut",
+          "new_vertices": 2
+        },
+        {
+          "kind": "nonuniform",
+          "perspective": false,
+          "cut_through": true,
+          "outcome": "exact_projected_cut",
+          "new_vertices": 4
+        },
+        {
+          "kind": "mirrored",
+          "perspective": false,
+          "cut_through": false,
+          "outcome": "exact_projected_cut",
+          "new_vertices": 2
+        },
+        {
+          "kind": "mirrored",
+          "perspective": false,
+          "cut_through": true,
+          "outcome": "exact_projected_cut",
+          "new_vertices": 4
+        },
+        {
+          "kind": "sheared",
+          "perspective": false,
+          "cut_through": false,
+          "outcome": "exact_projected_cut",
+          "new_vertices": 2
+        },
+        {
+          "kind": "sheared",
+          "perspective": false,
+          "cut_through": true,
+          "outcome": "exact_projected_cut",
+          "new_vertices": 4
+        }
+      ],
+      "blender": "5.2.2 LTS",
+      "kernel_sha256": {
+        "modeling_knife.py": "155c4a01b7481234a24c459f7a809058514a7b585f66e32a11ab35e8e0c1f3ec",
+        "modeling_tools.py": "82d2329fb33ba4ddb182dc73e3902b70facfb37f44f43783045f4f756b9706ac",
+        "live_edit.py": "ff3e6e7cc4e019daf35119b4154b84b5e4071f043e2e90e879c4f5a7486fdc23"
+      }
+    },
+    "native_toolbar_tools_gate-tools-a.json": {
+      "passed": true,
+      "physical_acceptance": false,
+      "checks": [
+        "Merge_First_Last_preserves_three_pick_native_ACK_order_and_refuses_missing_history",
+        "native_2D_operator_paths_preserved",
+        "native_distance_property_converts_millimeter_units_once",
+        "selecting_native_toolbar_arms_only_no_geometry_or_Undo",
+        "editable_native_properties_roundtrip_in_telemetry",
+        "three_native_intents_reach_production_live_kernels",
+        "held_preview_one_Undo_Redo_and_exact_Cancel",
+        "idempotent_registration_active_unregister_no_document_change"
+      ],
+      "cases": [
+        {
+          "native_tool": "spatial_modeling.merge",
+          "tool": "mesh.merge",
+          "cancel": false,
+          "held_updates": 2
+        },
+        {
+          "native_tool": "spatial_modeling.merge",
+          "tool": "mesh.merge",
+          "cancel": true,
+          "held_updates": 2
+        },
+        {
+          "native_tool": "spatial_modeling.dissolve",
+          "tool": "mesh.dissolve",
+          "cancel": false,
+          "held_updates": 2
+        },
+        {
+          "native_tool": "spatial_modeling.dissolve",
+          "tool": "mesh.dissolve",
+          "cancel": true,
+          "held_updates": 2
+        },
+        {
+          "native_tool": "spatial_modeling.delete",
+          "tool": "mesh.delete",
+          "cancel": false,
+          "held_updates": 2
+        },
+        {
+          "native_tool": "spatial_modeling.delete",
+          "tool": "mesh.delete",
+          "cancel": true,
+          "held_updates": 2
+        }
+      ]
+    }
+  },
+  "visual_inspection": {
+    "passed": true,
+    "at": "2026-10-25T12:04:47.346586+00:00",
+    "files": {
+      "guide-local-search.png": "a9513c11905dcfb3d830255afac25c3e6aa435096ac2ad3099210b49c66e8641",
+      "guide-step-instructions.png": "46fa2574294f2b1bef23903e6b58289c6223440b84ebfaa80f7e38bc588df1f9"
+    },
+    "notes": {
+      "guide-local-search.png": "Inspected production synthetic search view: full search field/query, three ranked results, topic-page controls, local digits/QWERTY/space/backspace/clear keys and Close all fit within the curved panel. No clipped or overlapping labels.",
+      "guide-step-instructions.png": "Inspected production synthetic reading view: title/category, page/step labels, complete Step1 text and previous/next/back/close controls are legible and fit. Panel stays bounded; this is synthetic, not headset readability acceptance."
+    },
+    "synthetic_only": true,
+    "physical_acceptance": false
+  },
+  "preserved_blender_lifetimes": 9,
+  "running_runtime_unchanged": {
+    "player_pid": 17812,
+    "native_pid": 6820,
+    "helper_pid": 492
+  }
+}

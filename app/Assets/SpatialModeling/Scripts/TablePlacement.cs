@@ -38,6 +38,8 @@ namespace SpatialModeling
         int planePage;
         string planeNotice;
         public bool SettingsOpen => menuPage == MenuPage.Settings;
+        public SearchableGuidePanel Guide { get; private set; }
+        public string GuideNotice { get; private set; }="";
         WorkspaceRoomSetup roomSetup;
         Material material;
         readonly List<XRInputSubsystem> subsystems = new List<XRInputSubsystem>();
@@ -77,12 +79,14 @@ namespace SpatialModeling
 
         void OnDisable()
         {
+            Guide?.Close();
             foreach (var subsystem in subsystems) subsystem.trackingOriginUpdated -= TrackingReset;
             subsystems.Clear();
         }
 
         void OnDestroy()
         {
+            Guide?.Dispose();
             if (preview != null) ReleaseObject(preview.gameObject);
             if (panel != null) ReleaseObject(panel.gameObject);
             if (material != null) ReleaseObject(material);
@@ -230,6 +234,7 @@ namespace SpatialModeling
 
         void Update()
         {
+            Guide?.Tick();
             var camera = Camera.main;
             if (camera == null || display == null) return;
             bool xr = XRSettings.enabled || XRSettings.isDeviceActive;
@@ -441,6 +446,11 @@ namespace SpatialModeling
                 };
                 actions = selectionActions.ToArray();
             }
+            if(compact&&menuPage==MenuPage.Arrange)
+            {
+                var withGuide=new List<(string,Action)>(actions){("Guide",OpenGuide)};
+                actions=withGuide.ToArray();
+            }
             if(compact) title.text=MenuHeading(arrangement);
             for (int i = 0; i < actions.Length; i++)
             {
@@ -489,7 +499,22 @@ namespace SpatialModeling
                 " · auto surfaces: "+(arrangement.Surfaces.AutomaticEnabled?"on":"off")+
                 "\nSurface detection: "+(arrangement.AssistEnabled?"on":"off");
             if(menuPage==MenuPage.Planes) return "Horizontal / vertical planes\n"+(string.IsNullOrEmpty(planeNotice)?"Manual corrections stay independent":planeNotice)+"\nPage "+(planePage+1)+" · "+arrangement.Surfaces.PlaneTargets.Count+" planes";
-            return arrangement.SurfaceState;
+            return arrangement.SurfaceState+(GuideNotice.Length>0?"\n"+GuideNotice:"");
+        }
+
+        public void OpenGuide()
+        {
+            var interaction=FindFirstObjectByType<WorkspaceInteraction>();
+            if(interaction==null){SetGuideNotice("Guide: wait for the tracked workspace.");return;}
+            if(!interaction.CanOpenGuide(out string reason)){SetGuideNotice(reason);return;}
+            Guide??=new SearchableGuidePanel();
+            if(Guide.Open(Camera.main))SetGuideNotice("");
+        }
+        void SetGuideNotice(string value)
+        {
+            GuideNotice=value;
+            var arrangement=GetComponent<WorkspaceArrangement>();
+            if(title!=null&&arrangement!=null)title.text=MenuHeading(arrangement);
         }
 
         (string,Action)[] PlaneActions(WorkspaceSurfaces surfaces)
