@@ -171,9 +171,13 @@ namespace SpatialModeling.VoiceCore.Whisper
         /// </summary>
         public WhisperServer Server { get; set; }
 
+        /// <summary>Snap the transcript onto the grammar's phrases. False sends Whisper's own words (normalized) at
+        /// confidence 1, for the host resolver to read.</summary>
+        public bool SnapToGrammar { get; set; } = true;
+
         public void SetGrammar(IReadOnlyList<string> phrases)
         {
-            snapper = phrases == null ? null : new PhraseSnapper(phrases, threshold);
+            snapper = phrases == null || !SnapToGrammar ? null : new PhraseSnapper(phrases, threshold);
             prompt = promptWithGrammar ? PromptFor(basePrompt, phrases) : basePrompt;
         }
 
