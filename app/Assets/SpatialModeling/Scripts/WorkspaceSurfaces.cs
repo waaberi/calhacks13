@@ -442,7 +442,10 @@ namespace SpatialModeling
             if(host!=null && !host.DisplayPlacementReady)
             { pendingLevel="plane:"+orientation; message="Look ahead - waiting for workspace position"; return; }
             FindFirstObjectByType<WorkspaceInteraction>()?.CancelGrabs();
-            if(AutomaticEnabled && TryChoosePlane(kind,camera.transform.position,out var surface))
+            // A new vertical adjuster must be reachable in front of the shared
+            // settled workspace, even when the closest scanned wall is behind.
+            // Detected alignment remains an explicit one-shot menu action.
+            if(kind!="wall" && AutomaticEnabled && TryChoosePlane(kind,camera.transform.position,out var surface))
             {CreatePlane(orientation,surface.Pose,surface.Size,surface.Id);return;}
             var facing=host!=null ? host.PlacementHeadPose.rotation : camera.transform.rotation;
             CreatePlane(orientation,InitialLevelPose(kind,camera.transform.position,facing));

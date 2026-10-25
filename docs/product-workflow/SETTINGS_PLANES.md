@@ -14,9 +14,13 @@ on-headset system setup route.
 **Add horizontal plane** and **Add vertical plane** create separate, visibly
 numbered manual planes. Horizontal planes stay level; vertical planes stay upright.
 Grip/aim moves their position, sticks deliberately rotate/change distance and
-two hands resize/rotate subject to the orientation constraint. A detected desk,
-floor or wall can seed a plane, but ordinary grabs never attach it back to that
-detected pose. **Manage planes** provides per-plane **Align** and **Delete**, with
+two hands resize/rotate subject to the orientation constraint. A detected desk or
+floor can seed a horizontal plane. A new vertical adjuster starts0.8m in front
+using the common settled workspace heading, so a nearby scanned wall behind the
+wearer cannot hide the new handle. It faces the wearer and starts as an independent
+manual plane; existing scanned walls and other corrections are untouched.
+Ordinary grabs never attach a correction back to a detected pose.
+**Manage planes** provides per-plane **Align** and **Delete**, with
 pagination when needed. Align is a deliberate one-time projection onto a matching
 nearby finite detected surface; subsequent movement remains independent. If no
 matching surface is nearby, the menu says so.
