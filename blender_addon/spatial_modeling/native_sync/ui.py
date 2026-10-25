@@ -7,6 +7,14 @@ def _client():
     return remote_client.native_client if remote_client.native_mode_requested else None
 
 
+def _host_service(context):
+    from .. import host
+    addon = context.preferences.addons.get(__package__.rsplit(".", 1)[0])
+    if addon is None or addon.preferences.role != "HOST":
+        return None
+    return getattr(host._server, "native_sync", None)
+
+
 class SPATIAL_OT_native_take_turn(bpy.types.Operator):
     bl_idname = "spatial_modeling.native_take_turn"
     bl_label = "Take edit turn"
@@ -43,6 +51,8 @@ class SPATIAL_OT_native_save_copy(bpy.types.Operator):
     bl_label = "Save local copy"
     bl_description = "Save the retained native draft or current original document as a separate .blend"
     filepath: bpy.props.StringProperty(subtype="FILE_PATH")
+    check_existing: bpy.props.BoolProperty(default=True, options={"HIDDEN"})
+    filter_glob: bpy.props.StringProperty(default="*.blend", options={"HIDDEN"})
 
     @classmethod
     def poll(cls, _context):
@@ -56,11 +66,44 @@ class SPATIAL_OT_native_save_copy(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
     def execute(self, _context):
+        if not self.filepath:
+            self.report({"WARNING"}, "Choose a separate .blend destination first")
+            return {"CANCELLED"}
         try:
             _client().save_copy(bpy.path.ensure_ext(self.filepath, ".blend"))
         except (OSError, ValueError, RuntimeError):
             self.report({"ERROR"}, "Could not save local native copy")
             return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class SPATIAL_OT_native_checked_document(bpy.types.Operator):
+    bl_idname = "spatial_modeling.native_checked_document"
+    bl_label = "I checked the shared document"
+    bl_description = "Record the inspected current native document without replaying an unknown request"
+
+    @classmethod
+    def poll(cls, context):
+        service = _host_service(context)
+        return service is not None and service.has_unknown
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(self, event,
+            title="Inspect the shared document",
+            message=("Only continue after inspecting the current Blender document. "
+                     "Previous unknown request will not be replayed."),
+            confirm_text="I checked the shared document", icon="QUESTION")
+
+    def execute(self, context):
+        service = _host_service(context)
+        if service is None or not service.has_unknown:
+            return {"CANCELLED"}
+        try:
+            service.reconcile_unknown()
+        except (OSError, RuntimeError, ValueError):
+            self.report({"ERROR"}, "Could not record the inspected document; finish the active native operation first")
+            return {"CANCELLED"}
+        self.report({"INFO"}, "Current document recorded; previous unknown requests were not replayed")
         return {"FINISHED"}
 
 
@@ -105,8 +148,31 @@ class SPATIAL_PT_native_client(bpy.types.Panel):
         layout.operator(SPATIAL_OT_native_reload.bl_idname)
 
 
+class SPATIAL_PT_native_host_recovery(bpy.types.Panel):
+    bl_label = "Native sharing recovery"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Spatial"
+
+    @classmethod
+    def poll(cls, context):
+        service = _host_service(context)
+        return service is not None and (service.has_unknown or bool(service.error))
+
+    def draw(self, context):
+        service, layout = _host_service(context), self.layout
+        if service.error:
+            layout.label(text=service.error, icon="ERROR")
+        if service.has_unknown:
+            layout.label(text="Inspect the current shared Blender document first.", icon="INFO")
+            layout.label(text="Previous unknown requests will not be replayed.")
+            layout.operator(SPATIAL_OT_native_checked_document.bl_idname)
+
+
 CLASSES = (SPATIAL_OT_native_take_turn, SPATIAL_OT_native_finish_turn,
-           SPATIAL_OT_native_save_copy, SPATIAL_OT_native_reload, SPATIAL_PT_native_client)
+           SPATIAL_OT_native_save_copy, SPATIAL_OT_native_reload,
+           SPATIAL_OT_native_checked_document, SPATIAL_PT_native_client,
+           SPATIAL_PT_native_host_recovery)
 
 
 def register():
