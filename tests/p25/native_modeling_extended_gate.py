@@ -133,6 +133,7 @@ def run():
     bpy.context.preferences.edit.use_global_undo = True
     check('private factory profiles', all(os.environ.get(key) for key in
           ('BLENDER_USER_CONFIG', 'BLENDER_USER_SCRIPTS', 'BLENDER_USER_DATAFILES', 'TEMP', 'TMP')))
+    check('default mesh camera and light freshness is serializable', len(tools.context_fingerprint(list(bpy.context.visible_objects))) == 64)
     for index in range(257):
         bpy.context.scene.collection.objects.link(bpy.data.objects.new('Untouched bound regression ' + str(index), None))
     unused = tools.ExtraBackup([{'tool': 'object.translate', 'target': 'unused'}], editor)

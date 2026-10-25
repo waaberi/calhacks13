@@ -1250,6 +1250,9 @@ def _fingerprint_value(value):
         return [_fingerprint_value(v) for v in value]
     if isinstance(value, (set, frozenset)):
         return sorted(value)
-    if not isinstance(value, (str, bool, int, float, type(None))) and hasattr(value, '__iter__'):
+    if isinstance(value, dict):
+        return {key: _fingerprint_value(item) for key, item in value.items()}
+    if (not isinstance(value, (str, bool, int, float, type(None)))
+            and (hasattr(value, '__iter__') or hasattr(value, '__len__') and hasattr(value, '__getitem__'))):
         return [_fingerprint_value(v) for v in value]
     return value
