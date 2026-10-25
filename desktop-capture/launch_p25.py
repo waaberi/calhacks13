@@ -69,9 +69,12 @@ def validate_binding(welcome, native, capture):
         raise RuntimeError("Native/helper preflight must return JSON objects")
     if welcome.get("can_edit") is not True:
         raise RuntimeError("Native host did not admit an editable local VR connection")
-    if welcome.get("capabilities", {}).get("preview_spatial") is not True:
+    capabilities = welcome.get("capabilities")
+    if not isinstance(capabilities, dict) or capabilities.get("preview_spatial") is not True:
         raise RuntimeError("Host does not advertise the P2.5 preview bridge; use this branch's add-on")
     document = welcome.get("document", {})
+    if not isinstance(document, dict) or not document:
+        raise RuntimeError("Native welcome must identify its document")
     expected = {"session_id": welcome.get("session_id"), "host_epoch": welcome.get("host_epoch"),
                 "document_id": document.get("id"), "open_epoch": document.get("open_epoch")}
     if any(not value or native.get(name) != value for name, value in expected.items()):
@@ -81,13 +84,45 @@ def validate_binding(welcome, native, capture):
                            + str(capture.get("reason", "unavailable")))
     native_pid = native.get("process_id")
     selection = capture.get("selection")
-    if (isinstance(native_pid, bool) or not isinstance(native_pid, int) or native_pid <= 0
-            or not isinstance(selection, dict) or selection.get("pid") != native_pid
-            or not isinstance(selection.get("hwnd"), int) or isinstance(selection.get("hwnd"), bool)):
+    def positive(value, maximum=(1 << 63) - 1):
+        return isinstance(value, int) and not isinstance(value, bool) and 0 < value <= maximum
+    if not isinstance(selection, dict) or not selection:
         raise RuntimeError("Capture selection must belong to the connected P2.5 native host process")
+    target_pid = selection.get("pid")
+    root_pid = selection.get("blender_pid", target_pid)
+    if (not positive(native_pid, (1 << 32) - 1) or not positive(target_pid, (1 << 32) - 1)
+            or not positive(root_pid, (1 << 32) - 1) or root_pid != native_pid
+            or not positive(selection.get("hwnd"))):
+        raise RuntimeError("Capture selection must belong to the connected P2.5 native host process")
+    if capture.get("release_error", False) is not False:
+        raise RuntimeError("Input helper must finish releasing its held input before P2.5 can launch")
+    geometry = capture.get("geometry")
+    family_fields = ("blender_pid", "blender_hwnd", "blender_process_started", "input_process_started")
+    extended = (target_pid != root_pid or any(name in selection for name in family_fields)
+                or isinstance(geometry, dict) and any(name in geometry for name in ("blender_pid", "blender_process_started")))
+    if extended:
+        # The helper already proved the native owner chain. Check that its
+        # selected target and fresh capture describe the same root AND target
+        # process lifetimes; a broker's own PID is intentionally different.
+        if (not isinstance(geometry, dict) or not positive(selection.get("blender_hwnd"))
+                or not positive(selection.get("blender_process_started"))
+                or not positive(selection.get("input_process_started"))
+                or geometry.get("blender_pid") != root_pid
+                or not positive(geometry.get("blender_pid"), (1 << 32) - 1)
+                or not positive(geometry.get("blender_process_started"))
+                or not positive(geometry.get("process_started"))
+                or geometry["blender_process_started"] != selection["blender_process_started"]
+                or geometry["process_started"] != selection["input_process_started"]
+                or any(not isinstance(capture.get(name), str) or not capture[name]
+                       for name in ("window_scope", "capture_instance"))):
+            raise RuntimeError("Capture target/root lifetime must match its fresh frame and helper selection scope")
+        if "blender_hwnd" in geometry and (not positive(geometry["blender_hwnd"])
+                                           or geometry["blender_hwnd"] != selection["blender_hwnd"]):
+            raise RuntimeError("Capture frame and selection name different Blender owner windows")
     # Deliberately omit the helper's input token and private document path.
-    return {"native_process_id": native_pid, "capture_hwnd": selection["hwnd"],
-            "native_cad_available": welcome.get("capabilities", {}).get("sketch") is True,
+    return {"native_process_id": native_pid, "capture_process_id": target_pid, "capture_hwnd": selection["hwnd"],
+            "root_lifetime_verified": extended,
+            "native_cad_available": capabilities.get("sketch") is True,
             "focused": capture.get("focused") is True, "binding_verified": True,
             "runtime_acceptance": False}
 

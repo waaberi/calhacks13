@@ -23,7 +23,38 @@ class WindowUnavailable(RuntimeError):
         self.state = state
 
 
+def selected_window_identity(api, selected):
+    """Revalidate the selected family/lifetimes before accepting any pixels."""
+    current = api.identity(selected["hwnd"])
+    if not current or current["pid"] != selected["pid"]:
+        return None
+    for key in ("window_class", "owner_hwnd", "parent_hwnd", "menu_owner_hwnd", "blender_hwnd", "blender_pid"):
+        if key in selected and selected[key] != current.get(key):
+            return None
+    bridge = getattr(api, "input_bridge", None)
+    if bridge and bridge.enabled:
+        from input_bridge import InputRejected
+
+        try:
+            live = bridge.native.inspect(selected)
+            with bridge.latest.lock:
+                same_scope = bridge.latest.window_scope == bridge.bound_scope
+            if (same_scope and bridge.process_binding
+                    and (live.get("blender_pid", selected["pid"]),
+                         live.get("blender_process_started", live["process_started"])) != bridge.process_binding[1:]):
+                return None
+        except (InputRejected, OSError):
+            return None
+    return current
+
+
 class Windows:
+    class GUIThreadInfo(C.Structure):
+        _fields_ = [("cbSize", W.DWORD), ("flags", W.DWORD),
+                    ("hwndActive", W.HWND), ("hwndFocus", W.HWND),
+                    ("hwndCapture", W.HWND), ("hwndMenuOwner", W.HWND),
+                    ("hwndMoveSize", W.HWND), ("hwndCaret", W.HWND), ("rcCaret", W.RECT)]
+
     def __init__(self):
         if os.name != "nt":
             raise RuntimeError("Window capture requires Windows.")
@@ -39,6 +70,9 @@ class Windows:
             (self.u, "GetWindowTextW", [W.HWND, W.LPWSTR, C.c_int], C.c_int),
             (self.u, "GetClassNameW", [W.HWND, W.LPWSTR, C.c_int], C.c_int),
             (self.u, "GetWindowThreadProcessId", [W.HWND, C.POINTER(W.DWORD)], W.DWORD),
+            (self.u, "GetWindow", [W.HWND, W.UINT], W.HWND),
+            (self.u, "GetParent", [W.HWND], W.HWND),
+            (self.u, "GetGUIThreadInfo", [W.DWORD, C.POINTER(self.GUIThreadInfo)], W.BOOL),
             (self.u, "GetWindowRect", [W.HWND, C.POINTER(W.RECT)], W.BOOL),
             (self.u, "GetWindowDC", [W.HWND], W.HDC),
             (self.u, "ReleaseDC", [W.HWND, W.HDC], C.c_int),
@@ -71,36 +105,82 @@ class Windows:
         except (AttributeError, OSError):
             pass
 
-    def identity(self, hwnd):
-        pid = W.DWORD()
-        self.u.GetWindowThreadProcessId(hwnd, C.byref(pid))
-        handle = self.k.OpenProcess(0x1000, False, pid.value)
-        if not handle:
+    def raw_window(self, hwnd):
+        """Read one native window without admitting it to Blender's UI family."""
+        if not hwnd or not self.u.IsWindow(hwnd):
             return None
-        try:
-            name, length = C.create_unicode_buffer(32768), W.DWORD(32768)
-            if not self.k.QueryFullProcessImageNameW(handle, 0, name, C.byref(length)):
+        pid = W.DWORD()
+        thread_id = self.u.GetWindowThreadProcessId(hwnd, C.byref(pid))
+        if not thread_id or not pid.value:
+            return None
+        title = C.create_unicode_buffer(1024)
+        self.u.GetWindowTextW(hwnd, title, len(title))
+        cls = C.create_unicode_buffer(128)
+        if not self.u.GetClassNameW(hwnd, cls, len(cls)):
+            return None
+        owner = int(self.u.GetWindow(hwnd, 4) or 0)  # GW_OWNER, never GetParent.
+        parent = int(self.u.GetParent(hwnd) or 0) if not owner else 0
+        menu_owner = 0
+        if cls.value == "#32768":
+            info = self.GUIThreadInfo()
+            info.cbSize = C.sizeof(info)
+            if self.u.GetGUIThreadInfo(thread_id, C.byref(info)):
+                menu_owner = int(info.hwndMenuOwner or 0)
+        executable = None
+        handle = self.k.OpenProcess(0x1000, False, pid.value)
+        if handle:
+            try:
+                name, length = C.create_unicode_buffer(32768), W.DWORD(32768)
+                if self.k.QueryFullProcessImageNameW(handle, 0, name, C.byref(length)):
+                    executable = name.value
+            finally:
+                self.k.CloseHandle(handle)
+        # Reject destruction/recycling/reparenting during this metadata read.
+        confirmed = W.DWORD()
+        if (not self.u.IsWindow(hwnd)
+                or self.u.GetWindowThreadProcessId(hwnd, C.byref(confirmed)) != thread_id):
+            return None
+        if confirmed.value != pid.value or int(self.u.GetWindow(hwnd, 4) or 0) != owner:
+            return None
+        if not owner and int(self.u.GetParent(hwnd) or 0) != parent:
+            return None
+        if cls.value == "#32768":
+            confirmed_menu = self.GUIThreadInfo()
+            confirmed_menu.cbSize = C.sizeof(confirmed_menu)
+            confirmed_owner = (int(confirmed_menu.hwndMenuOwner or 0)
+                               if self.u.GetGUIThreadInfo(thread_id, C.byref(confirmed_menu)) else 0)
+            if confirmed_owner != menu_owner:
                 return None
-            if os.path.basename(name.value).lower() != "blender.exe":
-                return None
-            title = C.create_unicode_buffer(1024)
-            self.u.GetWindowTextW(hwnd, title, len(title))
-            cls = C.create_unicode_buffer(128)
-            self.u.GetClassNameW(hwnd, cls, len(cls))
-            if cls.value != "GHOST_WindowClass":
-                return (
-                    None  # Never the console or an unrelated process with 'Blender' in its title.
-                )
-            return {"hwnd": int(hwnd), "pid": pid.value, "title": title.value}
-        finally:
-            self.k.CloseHandle(handle)
+        return {"hwnd": int(hwnd), "pid": pid.value, "title": title.value,
+                "window_class": cls.value, "owner_hwnd": owner, "parent_hwnd": parent,
+                "menu_owner_hwnd": menu_owner, "executable": executable}
 
-    def windows(self):
+    def _family_identity(self, hwnd, include_owned):
+        import ntpath
+
+        from window_family import resolve_window
+
+        # Preserve the legacy picker/capture identity shape when P2.5 is off.
+        if not include_owned:
+            item = self.raw_window(hwnd)
+            if (not item or item["window_class"] != "GHOST_WindowClass"
+                    or ntpath.basename(item.get("executable") or "").lower() != "blender.exe"):
+                return None
+            return {key: item[key] for key in ("hwnd", "pid", "title")}
+        return resolve_window(hwnd, self.raw_window)
+
+    def identity(self, hwnd):
+        bridge = getattr(self, "input_bridge", None)
+        return self._family_identity(hwnd, bool(bridge and bridge.enabled))
+
+    def windows(self, include_owned=False):
         result = []
+        bridge = getattr(self, "input_bridge", None)
+        include_owned = bool(include_owned and bridge and bridge.enabled)
 
         @self.callback
         def visit(hwnd, _):
-            item = self.identity(hwnd) if self.u.IsWindowVisible(hwnd) else None
+            item = self._family_identity(hwnd, include_owned) if self.u.IsWindowVisible(hwnd) else None
             if item:
                 result.append(item)
             return True
@@ -110,8 +190,11 @@ class Windows:
 
     def capture(self, selected):
         hwnd = selected["hwnd"]
-        current = self.identity(hwnd) if self.u.IsWindow(hwnd) else None
-        if not current or current["pid"] != selected["pid"]:
+        current = selected_window_identity(self, selected) if self.u.IsWindow(hwnd) else None
+        if (not current or current["pid"] != selected["pid"]
+                or any(key in selected and current.get(key) != selected[key] for key in
+                       ("window_class", "owner_hwnd", "parent_hwnd", "menu_owner_hwnd",
+                        "blender_hwnd", "blender_pid"))):
             raise WindowUnavailable(
                 "no_window",
                 "Selected Blender window closed. Reopen Blender and select its window again.",
@@ -178,6 +261,7 @@ class LatestFrame:
         self.input_geometry = None
         self.capture_instance = secrets.token_urlsafe(18)
         self.capture_geometry = ""
+        self.window_scope = secrets.token_urlsafe(18)
         self.status = {
             "state": "no_window",
             "window": None,
@@ -188,8 +272,10 @@ class LatestFrame:
             "message": "Select a Blender window in the capture helper.",
         }
 
-    def select(self, window):
+    def select(self, window, *, preserve_scope=False):
         with self.lock:
+            if not preserve_scope:
+                self.window_scope = secrets.token_urlsafe(18)
             self.selected = window
             self.generation += 1
             self.jpeg = None
@@ -221,7 +307,7 @@ class LatestFrame:
     def publish(self, generation, image, title, fps, captured_ms, input_geometry=None):
         output = io.BytesIO()
         image.save(output, format="JPEG", quality=95, subsampling=0)
-        self.publish_jpeg(
+        return self.publish_jpeg(
             generation, output.getvalue(), image.width, image.height, title, fps, captured_ms,
             input_geometry
         )
@@ -317,6 +403,32 @@ def capture_loop(api, latest, stop, fps):
         stop.wait(max(0.01, 1 / fps - (time.monotonic() - started)))
 
 
+def capture_dialog_snapshot(api, latest, selected, generation):
+    """Selected-window PrintWindow fallback; never reads desktop pixels."""
+    bridge = latest.input_bridge
+    if not bridge or not bridge.enabled or selected.get("kind") not in ("dialog", "popup"):
+        return False
+    if not selected_window_identity(api, selected):
+        raise WindowUnavailable("no_window", "Dialog ownership changed or its process ended.")
+    captured_ms = int(time.time() * 1000)
+    image, title = api.capture(selected)
+    # A dialog can close, move or change owners during PrintWindow/GetDIBits.
+    # Never renew freshness using pixels whose identity/geometry changed while
+    # they were read. Selection generation separately rejects a late old image.
+    geometry = image.info.get("input_geometry")
+    if not selected_window_identity(api, selected):
+        raise WindowUnavailable("no_window", "Dialog ownership changed while reading its frame.")
+    try:
+        live = bridge.native.inspect(selected)
+    except (OSError, RuntimeError) as exc:
+        raise WindowUnavailable("no_window", "Dialog identity became unavailable during capture.") from exc
+    if not geometry or any(live.get(key) != geometry.get(key) for key in
+                           ("window_rect", "visible_rect", "dpi", "process_started",
+                            "blender_pid", "blender_process_started")):
+        raise WindowUnavailable("error", "Dialog moved or changed during capture; waiting for a new frame.")
+    return latest.publish(generation, image, title, 0, captured_ms, geometry)
+
+
 def graphics_capture_loop(api, latest, stop, fps):
     import cv2
     from windows_capture import WindowsCapture
@@ -366,7 +478,7 @@ def graphics_capture_loop(api, latest, stop, fps):
             except cv2.error as exc:
                 latest.fail(generation, "error", f"JPEG encode failed: {exc}")
                 continue
-            current = api.identity(selected["hwnd"])
+            current = selected_window_identity(api, selected)
             if item_session != session[0] or not ok or not current or current["pid"] != selected["pid"]:
                 continue
             if api.u.IsIconic(selected["hwnd"]):
@@ -414,7 +526,7 @@ def graphics_capture_loop(api, latest, stop, fps):
             if stop.is_set() or this_session != session[0]:
                 capture_control.stop()
                 return
-            current = api.identity(selected["hwnd"])
+            current = selected_window_identity(api, selected)
             if not current or current["pid"] != selected["pid"]:
                 latest.fail(
                     generation,
@@ -463,6 +575,7 @@ def graphics_capture_loop(api, latest, stop, fps):
         return capture, capture.start_free_threaded()
 
     _capture = None
+    print_generation = None
     try:
         while not stop.wait(0.1):
             with latest.lock:
@@ -472,15 +585,22 @@ def graphics_capture_loop(api, latest, stop, fps):
                     control.stop()
                 control, _capture = None, None
                 active_generation = generation
+                print_generation = None
             if not selected:
                 continue
-            current = api.identity(selected["hwnd"])
+            current = selected_window_identity(api, selected)
             if not current or current["pid"] != selected["pid"]:
                 latest.fail(
                     generation,
                     "no_window",
                     "Selected Blender window closed. Reopen and select its window again.",
                 )
+                continue
+            if print_generation == generation:
+                try:
+                    capture_dialog_snapshot(api, latest, selected, generation)
+                except (WindowUnavailable, OSError, ValueError, RuntimeError) as exc:
+                    latest.fail(generation, "error", f"Selected dialog capture failed: {type(exc).__name__}")
                 continue
             if api.u.IsIconic(selected["hwnd"]):
                 latest.fail(
@@ -501,11 +621,23 @@ def graphics_capture_loop(api, latest, stop, fps):
                 # A quick static-window refresh must not blank/flicker the panel.
                 control.stop()
                 control, _capture = None, None
+                try:
+                    if capture_dialog_snapshot(api, latest, selected, generation):
+                        print_generation = generation
+                        continue
+                except (WindowUnavailable, OSError, ValueError, RuntimeError):
+                    pass  # Try the selected-window graphics backend again.
                 print("CAPTURE_RECOVERY no_new_callback; reopening selected window", flush=True)
             if control is None or control.is_finished():
                 try:
                     _capture, control = start(selected, generation)
                 except (OSError, RuntimeError, ValueError) as exc:
+                    try:
+                        if capture_dialog_snapshot(api, latest, selected, generation):
+                            print_generation = generation
+                            continue
+                    except (WindowUnavailable, OSError, ValueError, RuntimeError):
+                        pass
                     latest.fail(generation, "error", f"Graphics capture failed: {exc}")
                     stop.wait(1)
                     continue
@@ -536,7 +668,7 @@ def make_server(latest, port, input_bridge=None):
                 code, mime, body = 200, "application/json", json.dumps(status).encode()
             elif self.path == "/selection":
                 # Launcher identity check; separate from the fixed status schema.
-                # Read-only: changing selection still requires the local picker.
+                # Read-only; authenticated P2.5 input can select owned windows.
                 with latest.lock:
                     selected = dict(latest.selected) if latest.selected else None
                 code, mime, body = 200, "application/json", json.dumps(selected).encode()
@@ -687,7 +819,10 @@ def picker(api, latest):
     root.geometry("720x290")
     ttk.Label(
         root,
-        text="Select the Blender window to show in VR. Only this window is captured.",
+        text=("Select the Blender window to show in VR. With P2.5 input enabled, "
+              "its owned dialogs and popup windows follow automatically. Other desktop windows are excluded."
+              if getattr(api, "input_bridge", None) and api.input_bridge.enabled else
+              "Select the Blender window to show in VR. Only this window is captured."),
         wraplength=680,
     ).pack(padx=16, pady=12)
     names = tk.StringVar()

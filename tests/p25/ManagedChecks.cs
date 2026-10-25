@@ -123,6 +123,7 @@ public static class ManagedChecks
             P25Checks.RunMapping(Console.WriteLine);
             P25Checks.RunTransport(Console.WriteLine);
             P25Checks.RunInputProtocol(Console.WriteLine);
+            P25WindowChecks.Run(Console.WriteLine);
             P25ObjectChecks.Run(Console.WriteLine);
             P25ShortcutChecks.Run(Console.WriteLine);
             P25NumericChecks.Run(Console.WriteLine);

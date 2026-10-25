@@ -67,7 +67,18 @@ Record the exact build and connection type. Observe a changing native Blender vi
 
 The view-only and GET-only descriptions above apply to the default P1/P2 launch. This feature branch adds input only when `capture_helper.py --enable-input` is explicitly selected. It then exposes native-client-only `/input/state` and authenticated sequenced `/input` endpoints; browser-origin requests are rejected. Without the flag those controls do not enable native editing.
 
-Use the separate P2.5 Player opt-in and a matching branch add-on. The controller maps only the actual displayed RawImage/crop to native pixels. Captured image instance, selection generation and geometry fingerprints bind the displayed JPEG to input; a fresh heartbeat is not a substitute for source identity or live pixels. Input uses exact selected Blender HWND/process validation, explicit focus, finite bounded coordinates and a held-input release watchdog. Other same-process Blender GHOST windows can be explicitly selected; non-GHOST OS dialogs have no desktop fallback.
+Use the separate P2.5 Player opt-in and a matching branch add-on. The controller
+maps the actual displayed RawImage/crop to native pixels. Captured image instance,
+selection generation and geometry fingerprints bind the displayed JPEG to input;
+a fresh heartbeat cannot substitute for live pixels. Input verifies the selected
+HWND, actual OS owner chain, Blender root process and separate root/target process
+lifetimes. Owned dialogs/menus follow automatically and return to the parent/main
+window on close; the VR window chooser also permits explicit selection and focus.
+An owned non-GHOST dialog/menu may use selected-window PrintWindow if WGC fails or
+stalls. Black, failed, late or identity/geometry-changing reads do not renew
+freshness. Neither backend captures the desktop. This is opt-in; default P1/P2
+capture selection and behavior remain unchanged. See the
+[window/menu guide](../docs/product-workflow/P2_5_WINDOW_MENU.md).
 
 See [P2.5 controls, supported routes and remaining coverage](../docs/product-workflow/P2_5_PREVIEW_INTERACTION.md). `launch_p25.py` requires explicit isolated native/capture ports and refuses competing Players. It does not start Blender, install add-ons, start helpers or steal focus during preflight.
 

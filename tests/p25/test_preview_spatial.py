@@ -67,6 +67,20 @@ def test_host_desktop_lease_admits_native_input_and_blocks_other_supported_write
     assert s.ui.begin(s.request(s.b), s.b)["payload"]["code"] == "lease_conflict"
 
 
+def test_scene_free_ping_marker_only_follows_a_real_active_reservation(setup):
+    s = setup
+    assert not getattr(s.a, "preview_ui_active", False)
+    assert not getattr(s.b, "preview_ui_active", False)
+    s.ui.begin(s.request(), s.a)
+    assert s.a.preview_ui_active
+    assert not getattr(s.b, "preview_ui_active", False)
+    s.ui.begin(s.request(s.b), s.b)
+    assert not getattr(s.b, "preview_ui_active", False)
+    s.ui.end(s.request(end=True), s.a)
+    assert not s.a.preview_ui_active
+    assert s.session.store.leases() == []
+
+
 @pytest.mark.parametrize("field", ["actor_id", "document_id", "open_epoch", "session_id", "host_epoch"])
 def test_wrong_identity_never_grants(setup, field):
     s = setup
@@ -74,6 +88,7 @@ def test_wrong_identity_never_grants(setup, field):
     msg["payload"][field] = uuid.uuid4().hex
     assert s.ui.begin(msg, s.a)["type"] == "error"
     assert s.session.store.leases() == []
+    assert not getattr(s.a, "preview_ui_active", False)
 
 
 def test_readonly_cannot_request_raw_ui(setup):
@@ -82,11 +97,37 @@ def test_readonly_cannot_request_raw_ui(setup):
     assert s.ui.begin(s.request(), s.a)["payload"]["code"] == "permission_denied"
 
 
-def test_modal_at_begin_is_refused_without_any_lease(setup):
+@pytest.mark.parametrize("operator", ["TRANSFORM_OT_translate", "WM_OT_fileselect", "SKETCHER_OT_line"])
+def test_explicit_begin_adopts_known_desktop_modal_without_document_or_receipt_changes(setup, operator):
     s = setup
-    s.window.modal_operators = [NS(bl_idname="TRANSFORM_OT_translate")]
-    assert s.ui.begin(s.request(), s.a)["payload"]["code"] == "busy"
-    assert not s.session.store.leases()
+    s.window.modal_operators = [NS(bl_idname=operator)]
+    request = s.request()
+    document = dict(s.session.document())
+    receipts = s.session.store.receipts([request["id"]])
+    reply = s.ui.begin(request, s.a)
+    assert reply["type"] == "preview.ui.granted"
+    assert reply["payload"]["input_allowed"]
+    assert reply["payload"]["modal_active"]
+    assert reply["payload"]["modal_operators"] == [operator]
+    assert s.session.store.leases() == [s.ui.lease]
+    assert s.ui.lease["owner"] == s.session.host
+    assert s.leases.check(s.session.participants[s.b]["actor_id"], "object.add")[0] == "lease_conflict"
+    assert s.ui.begin(s.request(s.b), s.b)["payload"]["code"] == "lease_conflict"
+    assert s.session.document() == document
+    assert s.session.store.receipts([request["id"]]) == receipts
+
+
+@pytest.mark.parametrize("mode", ["shared", "exclusive"])
+@pytest.mark.parametrize("owner", ["host", "remote"])
+def test_existing_modal_cannot_override_any_existing_native_or_remote_lease(setup, mode, owner):
+    s = setup
+    s.window.modal_operators = [NS(bl_idname="WM_OT_fileselect")]
+    actor = s.session.host if owner == "host" else s.session.participants[s.b]
+    held = s.leases.grant(actor["actor_id"], mode, [uuid.uuid4().hex] if mode == "shared" else [])
+    assert s.ui.begin(s.request(), s.a)["payload"]["code"] == "lease_conflict"
+    assert s.session.store.leases() == [held]
+    assert s.ui.owner is None
+    assert not getattr(s.a, "preview_ui_active", False)
 
 
 def test_native_modal_keeps_reservation_after_explicit_end_then_releases(setup):
@@ -97,11 +138,13 @@ def test_native_modal_keeps_reservation_after_explicit_end_then_releases(setup):
     assert reply["type"] == "preview.ui.ended"
     assert reply["payload"]["ui_ending"]
     assert not reply["payload"]["input_allowed"]
+    assert s.a.preview_ui_active
     assert len(s.session.store.leases()) == 1
     s.window.modal_operators = []
     s.ui.poll()
     assert not s.session.store.leases()
     assert s.ui.owner is None
+    assert not s.a.preview_ui_active
 
 
 def test_disconnect_does_not_release_while_native_tool_runs(setup):
@@ -112,9 +155,11 @@ def test_disconnect_does_not_release_while_native_tool_runs(setup):
     s.session.left(s.a)
     assert len(s.session.store.leases()) == 1  # belongs to host, not departed VR actor
     assert not s.ui.state(s.a)["input_allowed"]
+    assert s.a.preview_ui_active
     s.window.modal_operators = []
     s.ui.poll()
     assert not s.session.store.leases()
+    assert not s.a.preview_ui_active
 
 
 def test_same_connected_owner_can_resume_retained_modal_session(setup):
@@ -129,6 +174,7 @@ def test_same_connected_owner_can_resume_retained_modal_session(setup):
     assert resumed["payload"]["input_allowed"]
     assert not resumed["payload"]["ui_ending"]
     assert s.ui.token == token and s.ui.lease == lease
+    assert s.a.preview_ui_active
     assert len(s.session.store.leases()) == 1
 
 
@@ -164,12 +210,66 @@ def test_a_released_native_reservation_never_keeps_input_allowed(setup):
     s.leases.end(s.ui.lease["lease_id"], s.session.host["actor_id"])
     assert not s.ui.state(s.a)["input_allowed"]
     assert s.ui.owner is None
+    assert not s.a.preview_ui_active
 
 
 def test_missing_modal_information_fails_closed(setup):
     s = setup
     del s.window.modal_operators
     assert s.ui.begin(s.request(), s.a)["payload"]["code"] == "busy"
+    assert not getattr(s.a, "preview_ui_active", False)
+
+
+@pytest.mark.parametrize("operators", [None, [NS()], [NS(bl_idname="")], [NS(bl_idname=123)]])
+def test_uninspectable_or_malformed_modal_state_cannot_be_adopted(setup, operators):
+    s = setup
+    s.window.modal_operators = operators
+    assert s.ui.begin(s.request(), s.a)["payload"]["code"] == "busy"
+    assert s.session.store.leases() == []
+    assert not s.ui.state(s.a)["input_allowed"]
+    assert not getattr(s.a, "preview_ui_active", False)
+
+
+def test_any_unknown_window_blocks_adoption_even_when_another_modal_is_known(setup):
+    s = setup
+    s.window.modal_operators = [NS(bl_idname="WM_OT_fileselect")]
+    s.context.window_manager.windows.append(NS())
+    assert s.ui.begin(s.request(), s.a)["payload"]["code"] == "busy"
+    assert not s.session.store.leases()
+
+
+def test_modal_context_failure_fails_closed_instead_of_granting_or_dropping_a_lease(setup):
+    s = setup
+    def unavailable():
+        raise ReferenceError("Native window was destroyed during context inspection")
+    s.ui.context = unavailable
+    assert s.ui.begin(s.request(), s.a)["payload"]["code"] == "busy"
+    assert not s.session.store.leases()
+
+
+def test_unknown_modal_state_suspends_owned_input_and_retains_cleanup_until_known_empty(setup):
+    s = setup
+    s.window.modal_operators = [NS(bl_idname="WM_OT_fileselect")]
+    s.ui.begin(s.request(), s.a)
+    lease, token = s.ui.lease, s.ui.token
+    del s.window.modal_operators
+    assert not s.ui.state(s.a)["input_allowed"]
+    assert s.a.preview_ui_active
+    assert s.ui.begin(s.request(), s.a)["payload"]["code"] == "busy"
+    assert s.ui.lease == lease and s.ui.token == token
+    s.ui.end(s.request(end=True), s.a)
+    assert s.ui.ending and s.session.store.leases() == [lease]
+    assert s.ui.begin(s.request(), s.a)["payload"]["code"] == "busy"
+    assert s.ui.ending
+    s.ui.disconnected(s.a)
+    s.session.left(s.a)
+    assert s.session.store.leases() == [lease]
+    assert s.ui.begin(s.request(s.b), s.b)["payload"]["code"] == "lease_conflict"
+    s.window.modal_operators = []
+    s.ui.poll()
+    assert not s.session.store.leases()
+    assert s.ui.owner is None
+    assert not s.a.preview_ui_active
 
 
 def test_native_tool_and_unimplemented_options_are_reported(monkeypatch):

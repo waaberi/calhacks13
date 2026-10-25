@@ -10,6 +10,17 @@ The keyboard supports text/numbers/punctuation, Ctrl/Shift/Alt combinations, Ent
 
 The preview provides native navigation to workspace tabs, editors, expanding panels, scrolling properties, menus/submenus, Outliner controls and viewport tools. These use Blender's real mouse/keyboard handling, with no small allowlist of custom button hotspots. It does not imply that every resulting native data type is supported in the separate Unity scene mirror.
 
+Blender-owned dialogs and popup windows now use the same route. The helper follows
+the active verified dialog/menu, including a broker process whose actual OS owner
+chain ends at the connected Blender. Closing it returns to its owner or main
+window. **Windows / dialogs** opens a paginated chooser with literal window titles,
+**Back to Blender** and recovery controls even while the image is unavailable.
+An explicit choice also requests native focus. The input owner discards pending
+actions, waits for the new window's pixels and confirms held-input release before
+resuming. **Copy Ctrl+C / Paste Ctrl+V** use the ordinary native clipboard shortcuts.
+See the [full-preview and dialog guide](P2_5_WINDOW_MENU.md) for the user flow,
+identity rules, headless checks and integration handoff.
+
 **Draw in VR** ends the native input reservation after synthetic input release is acknowledged. Finish a native modal operation with Enter or Escape before switching. Choose an existing native sketch, or create XY/XZ/YZ through the native command path. Line uses two endpoints; Circle uses center and a radius point; Rectangle uses opposite sketch-plane corners. Orange geometry is an uncommitted local draft; cyan geometry comes from Blender's solved records. The existing native CAD Sketcher/slvs implementation owns geometry, constraints and history. Undo/Redo/Save in spatial mode use native transactions. A native toolbar choice also updates supported spatial tool intent through fresh state telemetry.
 
 ## Coverage and failures
@@ -61,15 +72,33 @@ The following are implemented routes, not a claim of completed native UI or head
 | Native editing | Add/delete, transforms, modifier properties, visibility, rename and native tool operation | Actual background operations and synchronized outcomes passed; UI delivery remains pending |
 | History and persistence | Native preview shortcuts and typed spatial Undo/Redo/Save | Actual background CAD Undo/Redo and fresh editable reopen passed |
 | Direct spatial CAD | Line, rectangle, circle, native tool/active sketch synchronization | Actual native solver/persistence passed; controller gesture/headset trial pending |
-| Auxiliary Blender windows | Explicit Next window among same-process GHOST Blender windows | Mocked switching/identity/closed-window recovery passed; actual pop-up trial pending |
+| Auxiliary windows and dialogs | Automatic active owned-window following, Next window and paginated chooser, nested dialog/parent/main recovery | Fake Win32/GDI/WGC and actual Unity UI/HTTP gates; actual OS capture/input trial remains separate |
 
-Controls needing native modal interaction remain usable inside the preview where their normal mouse/keyboard sequence is available; arbitrary tools do not automatically gain a direct spatial gesture. Continuous Draw, Auto Constraints and Live Project Snaps are not silently reproduced by the bounded spatial adapter: its status explains that these options must be off. Non-GHOST Windows dialogs are not captured or controlled. Unsupported native entities/constraints/planes are reported and isolated from other scene objects/sketches rather than disconnecting the whole session.
+Controls needing native modal interaction use their normal mouse/keyboard sequence
+inside the preview; arbitrary tools do not automatically gain a direct spatial
+gesture. An explicit Focus request may adopt a known existing native modal when
+no other editing reservation exists; unavailable modal information fails closed.
+Continuous Draw, Auto Constraints and Live Project Snaps are not reproduced by
+the planar drawing adapter: its status explains that these options must be off.
+Owned non-GHOST Windows dialogs are supported through verified window ownership;
+unrelated or unowned applications are excluded. Unsupported native
+entities/constraints/planes are reported and isolated from other scene
+objects/sketches rather than disconnecting the whole session.
 
 When a workflow fails, classify it as image/pointer mapping, event/focus/context, modal gesture, auxiliary-window capture, native operation failure, or mirror/spatial support. Verify the actual native result; merely sending a click is not a pass. Add reproduction and exact source/build to issue #139. Fix general transport/context problems before per-tool adapters; targeted adapters must still invoke real native operations.
 
 ## Input integrity and recovery
 
-Only an explicitly opted-in helper accepts input. It binds source pixels, selection generation, capture process instance and native geometry/DPI/process-start stamp. Unity admits input only for the displayed frame's matching identity/geometry and the same process as its current native document connection. Window resize, replacement, occlusion, lost focus, stale pixels, wrong owner or unavailable native state stops admission.
+Only an explicitly opted-in helper accepts input. It binds source pixels,
+selection generation, capture instance, native geometry/DPI and separate target
+and Blender process-start stamps. Unity admits input only for the displayed
+frame's matching identity/geometry and the verified Blender root of its current
+native document connection. A stable local selection scope permits owned dialog
+transitions without transferring authority to another Blender process. Window
+resize, replacement, occlusion, lost focus, stale pixels or wrong ownership stops
+admission. A confirmed native UI reservation survives ordinary tool-telemetry
+aging while the connection/document/helper identity remains current; typed
+modeling and spatial edits still require fresh native state.
 
 One HTTP owner serializes state reads and input events. After an uncertain delivery, it obtains the server's authoritative next sequence; it never blindly retries a model action. Release is separately idempotent cleanup. Native reservation ends only after release acknowledgement; an independent bounded cleanup component handles ordinary component disable. During application shutdown or helper loss, the helper watchdog and native connection/modal cleanup remain necessary; an unsuccessful cleanup does not prove release. A helper restart during held input requires checking native input/reconnecting rather than claiming old injected keys were released.
 
@@ -89,4 +118,10 @@ The normal P2 launch stays unchanged. A P2.5 build requires this branch's add-on
 
 Do not use the existing P2 headset session to validate this branch without coordination. Existing P2 menu acceptance is retained, not requested again. See [verification and remaining runtime gates](P2_5_RESULTS.md) and [spatial/native integration contract](P2_5_SPATIAL_BRIDGE.md).
 
-The current Windows candidate is the complete external `artifacts/p25-preview-spatial-v10` directory, built from frozen app source `129137a`, including P2 surfaces through `e880714`. Keep its executable, data directory and runtime dependencies together. Earlier v6/v7/v8/v9 checkpoints remain preserved. All were built and checked without launching a Player. Model tools adds actual Editor button/callback/context/overlay checks, two held-release HTTP cases and 602 native object-command assertions; nine existing HTTP cases, 77 helper checks, 873 Python tests and the cumulative Windows gates pass. Later P2 room/placement changes require selective integration after that work is ready. These software passes do not establish native GUI delivery or physical interaction acceptance.
+Current candidate provenance and the full-preview regression results are recorded
+in [verification results](P2_5_RESULTS.md). Keep the complete build directory,
+including its data/runtime files. Earlier candidates and failed observations are
+preserved. This feature branch includes P2 surfaces only through `e880714`;
+the separate integration chat must preserve final P2 `2e9ede3` / PR158 and its
+accepted placement/controller/room behavior. No integration or runtime takeover
+is performed by this headless P2.5 work.

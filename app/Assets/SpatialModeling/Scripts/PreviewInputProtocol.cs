@@ -18,8 +18,22 @@ namespace SpatialModeling
             catch (Exception) { return false; }
         }
 
-        static bool Window(JToken value) => value is JObject
-            && Number(value["hwnd"], 1, long.MaxValue) && Number(value["pid"], 1, uint.MaxValue);
+        static bool Window(JToken value)
+        {
+            if (!(value is JObject) || !Number(value["hwnd"], 1, long.MaxValue)
+                || !Number(value["pid"], 1, uint.MaxValue)) return false;
+            if (value["blender_pid"] != null && !Number(value["blender_pid"], 1, uint.MaxValue)) return false;
+            if (value["blender_hwnd"] != null && !Number(value["blender_hwnd"], 1, long.MaxValue)) return false;
+            foreach (string name in new[] { "blender_process_started", "input_process_started" })
+                if (value[name] != null && !Number(value[name], 1, long.MaxValue)) return false;
+            foreach (string name in new[] { "owner_hwnd", "parent_hwnd", "menu_owner_hwnd" })
+                if (value[name] != null && !Number(value[name], 0, long.MaxValue)) return false;
+            if (value["title"] != null && !Text(value["title"])) return false;
+            if (value["window_class"] != null && !Text(value["window_class"], true, 256)) return false;
+            if (value["kind"] != null && (value["kind"]?.Type != JTokenType.String
+                || ((string)value["kind"] != "blender" && (string)value["kind"] != "dialog" && (string)value["kind"] != "popup"))) return false;
+            return true;
+        }
 
         static bool Parse(string json, out JObject result)
         {
@@ -53,6 +67,14 @@ namespace SpatialModeling
             if (!ready && (p["capture_geometry"]?.Type != JTokenType.Null && !Text(p["capture_geometry"]))) return false;
             if (!(p["windows"] is JArray windows)) return false;
             foreach (var window in windows) if (!Window(window)) return false;
+            if (p["window_scope"] != null && !Text(p["window_scope"], true)) return false;
+            if (p["follow_windows"] != null && p["follow_windows"]?.Type != JTokenType.Boolean) return false;
+            if (p["geometry"] != null && p["geometry"].Type != JTokenType.Null)
+            {
+                if (!(p["geometry"] is JObject geometry)) return false;
+                if (geometry["blender_process_started"] != null && !Number(geometry["blender_process_started"], 1, long.MaxValue)) return false;
+                if (geometry["blender_pid"] != null && !Number(geometry["blender_pid"], 1, uint.MaxValue)) return false;
+            }
             state = p;
             return true;
         }

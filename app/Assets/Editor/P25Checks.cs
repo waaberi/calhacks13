@@ -28,6 +28,7 @@ public static class P25Checks
         RunMapping(message => Debug.Log(message));
         RunTransport(message => Debug.Log(message));
         RunInputProtocol(message => Debug.Log(message));
+        P25WindowChecks.Run(message => Debug.Log(message));
         P25ObjectChecks.Run(message => Debug.Log(message));
         P25ShortcutChecks.Run(message => Debug.Log(message));
         P25NumericChecks.Run(message => Debug.Log(message));
@@ -36,6 +37,7 @@ public static class P25Checks
         RunPreviewOcclusion();
         P25ObjectUiChecks.Run();
         P25CommonUiChecks.Run();
+        P25WindowUiChecks.Run();
     }
 
     public static void RunCumulativeEditor()

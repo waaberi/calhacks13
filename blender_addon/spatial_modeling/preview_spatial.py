@@ -20,15 +20,23 @@ TOOLS = {
 }
 
 IGNORED_MODALS = {"SPATIAL_MODELING_OT_input_gate"}
+UNKNOWN_MODAL_STATE = "Modal state unavailable"
+MODAL_INSPECTION_ERRORS = (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError)
 
 
 def modal_operators(context):
     """Blender 5.2 exposes each window's running operators, not just history."""
     found = []
-    for window in context.window_manager.windows:
-        if not hasattr(window, "modal_operators"):
-            return ["Modal state unavailable"]
-        found.extend(op.bl_idname for op in window.modal_operators if op.bl_idname not in IGNORED_MODALS)
+    try:
+        for window in context.window_manager.windows:
+            for op in window.modal_operators:
+                name = op.bl_idname
+                if not isinstance(name, str) or not name or name == UNKNOWN_MODAL_STATE:
+                    return [UNKNOWN_MODAL_STATE]
+                if name not in IGNORED_MODALS:
+                    found.append(name)
+    except MODAL_INSPECTION_ERRORS:
+        return [UNKNOWN_MODAL_STATE]
     return found
 
 
@@ -44,6 +52,18 @@ class NativePreviewSessions:
         self.owner = self.lease = self.token = None
         self.ending = False
         self.seen = set()
+
+    def _modals(self):
+        try:
+            return modal_operators(self.context())
+        except MODAL_INSPECTION_ERRORS:
+            return [UNKNOWN_MODAL_STATE]
+
+    def _clear(self):
+        if self.owner is not None:
+            self.owner.preview_ui_active = False
+        self.owner = self.lease = self.token = None
+        self.ending = False
 
     def _identity(self, msg, conn, end=False):
         fields = (*commands.REQUEST_FIELDS, *(('ui_session_id',) if end else ()))
@@ -67,8 +87,9 @@ class NativePreviewSessions:
     def state(self, conn):
         self.poll()
         actor = self.session.participants.get(self.owner)
-        modals = modal_operators(self.context())
-        return {"process_id": os.getpid(), "input_allowed": conn is self.owner and not self.ending and self.lease is not None,
+        modals = self._modals()
+        return {"process_id": os.getpid(), "input_allowed": conn is self.owner and not self.ending
+                and self.lease is not None and UNKNOWN_MODAL_STATE not in modals,
                 "ui_session_id": self.token if conn is self.owner else "", "ui_owner": dict(actor) if actor else None,
                 "ui_ending": self.ending, "modal_operators": modals, "modal_active": bool(modals)}
 
@@ -79,20 +100,29 @@ class NativePreviewSessions:
                 # The same connected owner may resume its retained reservation
                 # to send Enter/Escape after a focus-loss suspend. No new lease
                 # or actor is admitted while its native modal tool is running.
+                if UNKNOWN_MODAL_STATE in self._modals():
+                    raise session_store.SessionError("busy", "Native modal state is unavailable; restore it before resuming preview input.")
                 self.ending = False
+                conn.preview_ui_active = True
                 return protocol.message("preview.ui.granted", self.state(conn), re=msg["id"])
             if msg["id"] in self.seen or len(self.seen) >= 10000:
                 raise session_store.SessionError("duplicate_request", "This native UI request already ended or the session history is full; use a fresh session.")
             if self.owner is not None:
                 raise session_store.SessionError("lease_conflict", "Another preview writer owns the native UI or its modal operation is still ending.")
-            if modal_operators(self.context()):
-                raise session_store.SessionError("busy", "Finish or cancel the running native modal operation before starting preview input.")
             # Also preserve explicit host-desktop reservations instead of silently
             # nesting a second lease on behalf of another UI.
             if self.session.store.leases():
                 raise session_store.SessionError("lease_conflict", "Finish the current native/remote edit before enabling preview input.")
+            if UNKNOWN_MODAL_STATE in self._modals():
+                raise session_store.SessionError("busy", "Native modal state is unavailable; restore it before starting preview input.")
+            # An explicit request may adopt an already-running desktop modal.
+            # The ordinary host lease lets that same native operation continue;
+            # it does not invoke/confirm/cancel it or change native Undo history.
             self.lease = self.leases.grant(self.session.host["actor_id"], "exclusive")
             self.owner, self.token = conn, uuid.uuid4().hex
+            # Only server.py's scene-free built-in ping may use this marker.
+            # It is not edit permission and survives a retained modal cleanup.
+            conn.preview_ui_active = True
             self.seen.add(msg["id"])
             return protocol.message("preview.ui.granted", self.state(conn), re=msg["id"])
         except session_store.SessionError as exc:
@@ -117,14 +147,12 @@ class NativePreviewSessions:
     def poll(self):
         if self.lease is not None and not any(
                 lease["lease_id"] == self.lease["lease_id"] for lease in self.session.store.leases()):
-            self.owner = self.lease = self.token = None
-            self.ending = False
+            self._clear()
         # Keep the ordinary exclusive lease across mouse release, disconnection
         # and Escape until Blender confirms no native modal operator is running.
-        if self.ending and not modal_operators(self.context()):
+        if self.ending and not self._modals():
             self.leases.end(self.lease["lease_id"], self.session.host["actor_id"])
-            self.owner = self.lease = self.token = None
-            self.ending = False
+            self._clear()
 
 
 def read_state(context):

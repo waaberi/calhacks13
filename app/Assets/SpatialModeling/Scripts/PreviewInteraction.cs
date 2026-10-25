@@ -17,7 +17,7 @@ namespace SpatialModeling
     {
         public static PreviewInteraction Current { get; private set; }
         public static bool BlocksDesktopShortcuts => Current != null && (Current.inputEnabled || Current.focusRequested || Current.endAfterRelease
-            || Current.numbersShown || (Current.Drawing != null && Current.Drawing.IsNativeUiOwned));
+            || Current.numbersShown || Current.windowsShown || Current.windowResuming || Current.NativeInputOwned);
         public static bool Requested => Environment.GetEnvironmentVariable("CALHACKS_P25") == "1"
             || Array.IndexOf(Environment.GetCommandLineArgs(), "--p25") >= 0;
         public bool CapturesScroll { get; private set; }
@@ -27,9 +27,17 @@ namespace SpatialModeling
         BlenderScreen screen;
         HostScene scene;
         RectTransform panel, keyboard, modelToolsPanel;
-        RectTransform shortcutPanel, numberPanel;
+        RectTransform shortcutPanel, numberPanel, windowPanel;
         readonly List<Button> basicKeys = new List<Button>(), fullKeys = new List<Button>(), shortcutButtons = new List<Button>();
         readonly List<Button> numberFields = new List<Button>();
+        readonly List<Button> windowButtons = new List<Button>();
+        readonly NativePreviewAuthority windowAuthority = new NativePreviewAuthority();
+        Text windowFeedback;
+        string windowListSignature = "", windowAwaitSession = "";
+        bool windowsShown, windowResuming, windowReleaseQueued;
+        int windowPage;
+        long awaitedWindow;
+        float windowResumeUntil;
         Text numberFeedback, shortcutFeedback;
         Text feedback, objectTargetText;
         Button moveStepButton, turnStepButton, primitiveSizeButton;
@@ -106,18 +114,22 @@ namespace SpatialModeling
             if (modelToolsPanel != null) Destroy(modelToolsPanel.gameObject);
             if (shortcutPanel != null) Destroy(shortcutPanel.gameObject);
             if (numberPanel != null) Destroy(numberPanel.gameObject);
+            if (windowPanel != null) Destroy(windowPanel.gameObject);
         }
 
         void Update()
         {
             if (screen == null) screen = FindFirstObjectByType<BlenderScreen>();
             if (screen != null && screen.Placement != null && panel == null) BuildControls();
-            bool shown = screen != null && screen.Visible && screen.HasImage && screen.Placement.gameObject.activeInHierarchy;
+            // Recovery controls remain reachable if a dialog closes or capture
+            // is temporarily unavailable. Fresh image identity still gates input.
+            bool shown = screen != null && screen.Visible && screen.Placement != null && screen.Placement.gameObject.activeInHierarchy;
             if (panel != null) panel.gameObject.SetActive(shown);
             if (keyboard != null) keyboard.gameObject.SetActive(shown && keyboardShown);
             if (modelToolsPanel != null) modelToolsPanel.gameObject.SetActive(shown && modelToolsShown);
             if (shortcutPanel != null) shortcutPanel.gameObject.SetActive(shown && shortcutsShown);
             if (numberPanel != null) numberPanel.gameObject.SetActive(shown && numbersShown);
+            if (windowPanel != null) windowPanel.gameObject.SetActive(shown && windowsShown);
             if (!shown || scene == null || !scene.IsCurrent) Suspend();
             if (focusRequested && !endAfterRelease && Drawing != null && Drawing.IsNativeUiOwned)
             {
@@ -125,6 +137,7 @@ namespace SpatialModeling
                 {
                     focusRequested = false; inputEnabled = true;
                     ownedCaptureInstance = (string)state["capture_instance"] ?? "";
+                    if (Drawing.IsNativeUiOwned) windowAuthority.Capture(Drawing.Session, Drawing.NativeState, state);
                     // Cooperatively pass our foreground privilege, if we have
                     // it. Never attach input queues or alter Windows settings.
                     if ((Application.platform == RuntimePlatform.WindowsPlayer || Application.platform == RuntimePlatform.WindowsEditor)
@@ -133,6 +146,17 @@ namespace SpatialModeling
                     Enqueue(new JObject { ["type"] = "focus" });
                 }
                 else Notice = "Capture must select a window from the connected Blender host";
+            }
+            if (windowResuming && !endAfterRelease)
+            {
+                bool newWindowState = (awaitedWindow == 0 || (long?)state?["selection"]?["hwnd"] == awaitedWindow)
+                    && (string)state?["session"] != windowAwaitSession;
+                if (!NativeInputOwned || Time.unscaledTime > windowResumeUntil) RequestEndNativeUi();
+                else if (newWindowState && Ready() && !windowReleaseQueued)
+                {
+                    Enqueue(new JObject { ["type"] = "release" }); windowReleaseQueued = true;
+                    Notice = "New Blender window ready; confirming old input cleanup";
+                }
             }
             if (spatialRequested && !endAfterRelease && Drawing != null && !Drawing.IsNativeUiOwned && !Drawing.NativeUiTransitionPending)
             { spatialRequested = false; modelToolsShown = false; Drawing.SetEnabled(true); }
@@ -151,6 +175,7 @@ namespace SpatialModeling
                     + "\n" + (Drawing != null ? Drawing.StatusText : "Waiting for spatial bridge");
             if (modelToolsShown) RefreshObjectLabels();
             if (numbersShown) RefreshNumbers();
+            if (windowsShown) RefreshWindows();
             if (shortcutsShown && shortcutFeedback != null) shortcutFeedback.text = "Page " + (shortcutPage + 1) + " / 2 · click the intended Blender editor before using these shortcuts\n" + Notice;
         }
 
@@ -160,7 +185,8 @@ namespace SpatialModeling
         public void Suspend()
         {
             ReleaseNative();
-            if (inputEnabled || focusRequested || (Drawing != null && Drawing.IsNativeUiOwned)) RequestEndNativeUi();
+            if (inputEnabled || focusRequested || windowResuming || NativeInputOwned) RequestEndNativeUi();
+            windowAuthority.Clear(); windowResuming = windowReleaseQueued = windowsShown = false;
             inputEnabled = false;
             focusRequested = false;
             objectsRequested = spatialRequested = modelToolsShown = false;
@@ -199,7 +225,7 @@ namespace SpatialModeling
             if (modelToolsPanel != null && modelToolsPanel.gameObject.activeInHierarchy && Hit(modelToolsPanel, ray, out var modelDistance)
                 && modelDistance <= nearest)
             { ReleasePointer(); distance = modelDistance; return true; }
-            foreach (var overlay in new[] { shortcutPanel, numberPanel })
+            foreach (var overlay in new[] { shortcutPanel, numberPanel, windowPanel })
                 if (overlay != null && overlay.gameObject.activeInHierarchy && Hit(overlay, ray, out var overlayDistance) && overlayDistance <= nearest)
                 { ReleasePointer(); distance = overlayDistance; return true; }
             if (panel != null && panel.gameObject.activeInHierarchy && Hit(panel, ray, out var panelDistance) && panelDistance <= nearest)
@@ -249,11 +275,15 @@ namespace SpatialModeling
                 && rect.rect.Contains((Vector2)rect.InverseTransformPoint(ray.GetPoint(d)));
         }
 
-        bool MatchesNativeHost() => state != null && Drawing != null && Drawing.NativeProcessId > 0
-            && (long?)state["selection"]?["pid"] == Drawing.NativeProcessId;
+        bool NativeInputOwned => scene != null && scene.IsCurrent && Drawing != null && (Drawing.IsNativeUiOwned
+            || windowAuthority.Matches(Drawing.Session, Drawing.NativeState, state));
+        long NativeInputProcess => Drawing == null ? 0 : Drawing.NativeProcessId > 0 ? Drawing.NativeProcessId
+            : windowAuthority.Matches(Drawing.Session, Drawing.NativeState, state) ? windowAuthority.ProcessId : 0;
+        bool MatchesNativeHost() => state != null && NativeInputProcess > 0
+            && PreviewWindowState.RootPid(state) == NativeInputProcess;
         bool Ready() => state != null && (bool?)state["ready"] == true && (bool?)state["focused"] == true
             && (bool?)state["release_error"] == false
-            && MatchesNativeHost() && Drawing.IsNativeUiOwned && screen != null
+            && MatchesNativeHost() && NativeInputOwned && screen != null && screen.HasImage
             && PreviewInputMapping.FrameMatches(screen.DisplayedCaptureInstance, screen.DisplayedSelectionGeneration,
                 (string)state["capture_instance"], (long?)state["capture_generation"] ?? -1)
             && !string.IsNullOrEmpty(screen.DisplayedCaptureGeometry)
@@ -264,7 +294,8 @@ namespace SpatialModeling
             if (state == null || (bool?)state["enabled"] != true || session.Length == 0)
             { Notice = "Start the P2.5 helper with input enabled and select the connected Blender window"; return; }
             objectsRequested = modelToolsShown = false;
-            numbersShown = shortcutsShown = editorPointSet = false; Drawing.Numeric.Invalidate();
+            windowAuthority.Clear(); windowResuming = windowReleaseQueued = windowsShown = false;
+            numbersShown = shortcutsShown = windowsShown = editorPointSet = false; Drawing.Numeric.Invalidate();
             Drawing.Cancel(); Drawing.SetEnabled(false); Drawing.SetObjectToolsEnabled(false);
             focusRequested = true; spatialRequested = false;
             Drawing.BeginNativeUi();
@@ -273,6 +304,7 @@ namespace SpatialModeling
         void RequestEndNativeUi()
         {
             inputEnabled = focusRequested = false;
+            windowAuthority.Clear(); windowResuming = windowReleaseQueued = false;
             if (endAfterRelease) return;
             events.Clear(); pendingPointer = null; mouseHeld = false; modifiers.Clear();
             endAfterRelease = true; releaseQueued = false;
@@ -284,9 +316,9 @@ namespace SpatialModeling
             if (Drawing.NativeModalActive)
             { Notice = "Finish the native operation with Enter or Escape before switching to VR drawing"; return; }
             objectsRequested = modelToolsShown = false;
-            numbersShown = shortcutsShown = editorPointSet = false; Drawing.Numeric.Invalidate();
+            numbersShown = shortcutsShown = windowsShown = editorPointSet = false; Drawing.Numeric.Invalidate();
             Drawing.SetObjectToolsEnabled(false);
-            bool needsRelease = inputEnabled || focusRequested || Drawing.IsNativeUiOwned || Drawing.NativeUiTransitionPending;
+            bool needsRelease = inputEnabled || focusRequested || windowResuming || NativeInputOwned || Drawing.NativeUiTransitionPending;
             ReleaseNative(); inputEnabled = focusRequested = false;
             if (needsRelease) RequestEndNativeUi();
             spatialRequested = true;
@@ -294,9 +326,9 @@ namespace SpatialModeling
         void BeginObjects()
         {
             if (Drawing == null) return;
-            numbersShown = shortcutsShown = editorPointSet = false; Drawing.Numeric.Invalidate();
+            numbersShown = shortcutsShown = windowsShown = editorPointSet = false; Drawing.Numeric.Invalidate();
             if (Drawing.NativeModalActive) { Notice = "Finish or cancel the running Blender operation before Model tools"; return; }
-            bool needsRelease = inputEnabled || focusRequested || Drawing.IsNativeUiOwned || Drawing.NativeUiTransitionPending;
+            bool needsRelease = inputEnabled || focusRequested || windowResuming || NativeInputOwned || Drawing.NativeUiTransitionPending;
             ReleaseNative(); inputEnabled = focusRequested = false;
             Drawing.SetEnabled(false); spatialRequested = false; keyboardShown = false;
             if (needsRelease) RequestEndNativeUi();
@@ -325,22 +357,27 @@ namespace SpatialModeling
             { Notice = "Mesh shortcuts require native mesh Edit Mode"; return; }
             if (Drawing.NativeModalActive && id != "cancel" && id != "confirm")
             { Notice = "Confirm or cancel the running Blender operation first"; return; }
+            if (!QueueChord(shortcut.BuildEvents(), shortcut.RequiresEditorContext)) return;
+            Notice = shortcut.Label + (shortcut.OpensModal ? " · continue in Blender; Enter confirms, Escape cancels" : " · sent to the chosen native editor");
+        }
+        bool QueueChord(IReadOnlyList<JObject> chord, bool returnToEditor)
+        {
             var batch = new List<JObject>();
             if (mouseHeld) { var up = At("button", lastPoint); up["button"] = mouseButton; up["action"] = "up"; batch.Add(up); }
             var held = new List<string>(modifiers); held.Sort(StringComparer.Ordinal);
             foreach (string key in held) batch.Add(new JObject { ["type"] = "key", ["key"] = key, ["action"] = "up" });
-            if (shortcut.RequiresEditorContext) batch.Add(At("pointer", editorPoint));
-            foreach (var e in shortcut.BuildEvents()) batch.Add(e);
+            if (returnToEditor) batch.Add(At("pointer", editorPoint));
+            foreach (var e in chord) batch.Add(e);
             foreach (string key in held) batch.Add(new JObject { ["type"] = "key", ["key"] = key, ["action"] = "down" });
             if (events.Count + batch.Count > 64)
-            { FailTransport("Shortcut backlog cancelled; cleanup is required before focusing again"); return; }
+            { FailTransport("Shortcut backlog cancelled; cleanup is required before focusing again"); return false; }
             pendingPointer = null; mouseHeld = false;
             foreach (var e in batch) events.Enqueue(e);
-            Notice = shortcut.Label + (shortcut.OpensModal ? " · continue in Blender; Enter confirms, Escape cancels" : " · sent to the chosen native editor");
+            return true;
         }
         void OpenKeyboard(bool full)
         {
-            modelToolsShown = objectsRequested = numbersShown = shortcutsShown = false;
+            modelToolsShown = objectsRequested = numbersShown = shortcutsShown = windowsShown = false;
             Drawing.SetObjectToolsEnabled(false); Drawing.Numeric.Invalidate();
             keyboardShown = true; SetKeyboardPage(full);
         }
@@ -353,7 +390,7 @@ namespace SpatialModeling
         void OpenNumbers(string mode)
         {
             if (!Drawing.LoadNumeric(mode)) { Notice = Drawing.Numeric.Notice; return; }
-            numbersShown = true; modelToolsShown = keyboardShown = shortcutsShown = false; RefreshNumbers();
+            numbersShown = true; modelToolsShown = keyboardShown = shortcutsShown = windowsShown = false; RefreshNumbers();
         }
         static JObject At(string type, Vector2 p) => new JObject { ["type"] = type, ["x"] = p.x, ["y"] = p.y };
         void FlushPointer() { if (pendingPointer != null) { Enqueue(pendingPointer); pendingPointer = null; } }
@@ -424,16 +461,9 @@ namespace SpatialModeling
         void Shortcut(string key, bool shift = false)
         {
             if (!inputEnabled || !Ready()) return;
-            bool ctrl = modifiers.Contains("CTRL"), sh = modifiers.Contains("SHIFT"), alt = modifiers.Contains("ALT");
-            if (alt) Enqueue(new JObject { ["type"] = "key", ["key"] = "ALT", ["action"] = "up" });
-            if (!shift && sh) Enqueue(new JObject { ["type"] = "key", ["key"] = "SHIFT", ["action"] = "up" });
-            if (!ctrl) Enqueue(new JObject { ["type"] = "key", ["key"] = "CTRL", ["action"] = "down" });
-            if (shift && !sh) Enqueue(new JObject { ["type"] = "key", ["key"] = "SHIFT", ["action"] = "down" });
-            Key(key);
-            if (shift && !sh) Enqueue(new JObject { ["type"] = "key", ["key"] = "SHIFT", ["action"] = "up" });
-            if (!ctrl) Enqueue(new JObject { ["type"] = "key", ["key"] = "CTRL", ["action"] = "up" });
-            if (!shift && sh) Enqueue(new JObject { ["type"] = "key", ["key"] = "SHIFT", ["action"] = "down" });
-            if (alt) Enqueue(new JObject { ["type"] = "key", ["key"] = "ALT", ["action"] = "down" });
+            var shortcut = new PreviewShortcut("keyboard." + key, key, "Keyboard", key, editor: false,
+                modifiers: shift ? new[] { "CTRL", "SHIFT" } : new[] { "CTRL" });
+            QueueChord(shortcut.BuildEvents(), false);
         }
 
         IEnumerator ReadState()
@@ -454,32 +484,7 @@ namespace SpatialModeling
                             {
                                 if (!PreviewInputProtocol.TryState(request.downloadHandler.text, out var fresh))
                                     FailTransport("Input helper returned invalid state");
-                                else
-                                {
-                                    string nextSession = (string)fresh["session"] ?? "";
-                                    if (session != nextSession)
-                                    {
-                                        bool wasActive = inputEnabled || focusRequested || (Drawing != null && Drawing.IsNativeUiOwned);
-                                        events.Clear(); pendingPointer = null; mouseHeld = inputEnabled = false; modifiers.Clear();
-                                        releaseQueued = false;
-                                        session = nextSession;
-                                        Drawing?.Cancel();
-                                        if (wasActive) RequestEndNativeUi();
-                                    }
-                                    state = fresh; token = (string)fresh["token"] ?? "";
-                                    if (session.Length != 0 && token.Length != 0 && (long?)fresh["next_seq"] >= 1)
-                                        transport.Observe(session, (long)fresh["next_seq"]);
-                                    else transport.Unknown();
-                                    if ((bool?)fresh["enabled"] != true) Notice = "Start this feature's helper with --enable-input";
-                                    else if (!Ready())
-                                    {
-                                        ReleaseNative();
-                                        string why = (string)fresh["reason"];
-                                        Notice = !MatchesNativeHost() ? "Capture must select the connected Blender host"
-                                            : !Drawing.IsNativeUiOwned ? "Use Focus Blender to begin native preview interaction"
-                                            : !string.IsNullOrEmpty(why) ? why : "Waiting for the selected window's displayed frame and focus";
-                                    }
-                                }
+                                else ApplyInputState(fresh);
                             }
                             else FailTransport("P2.5 input helper unavailable");
                         }
@@ -487,6 +492,48 @@ namespace SpatialModeling
                     finally { readingState = false; }
                 }
                 yield return new WaitForSecondsRealtime(.5f);
+            }
+        }
+
+        void AwaitWindowState(string reason)
+        {
+            if (!windowResuming)
+            { windowAwaitSession = session; windowResumeUntil = Time.unscaledTime + 4f; awaitedWindow = 0; }
+            windowResuming = true; windowReleaseQueued = false; inputEnabled = focusRequested = false;
+            events.Clear(); pendingPointer = null; mouseHeld = false; modifiers.Clear(); editorPointSet = false;
+            triggerWasDown = true; Drawing?.Numeric.Invalidate(); transport.Unknown();
+            Notice = reason;
+        }
+
+        void ApplyInputState(JObject fresh)
+        {
+            string nextSession = (string)fresh["session"] ?? "";
+            if (session != nextSession)
+            {
+                bool wasActive = inputEnabled || focusRequested || windowResuming || NativeInputOwned;
+                bool sameFamily = !endAfterRelease && NativeInputOwned
+                    && PreviewWindowState.CanContinue(state, fresh, NativeInputProcess);
+                if (wasActive && sameFamily) AwaitWindowState("Following Blender dialog/window; release trigger before continuing");
+                else
+                {
+                    events.Clear(); pendingPointer = null; mouseHeld = inputEnabled = false; modifiers.Clear();
+                    editorPointSet = false; Drawing?.Cancel();
+                    if (wasActive) RequestEndNativeUi();
+                }
+                releaseQueued = false; session = nextSession;
+            }
+            state = fresh; token = (string)fresh["token"] ?? "";
+            if (session.Length != 0 && token.Length != 0 && (long?)fresh["next_seq"] >= 1)
+                transport.Observe(session, (long)fresh["next_seq"]);
+            else transport.Unknown();
+            if ((bool?)fresh["enabled"] != true) Notice = "Start this feature's helper with --enable-input";
+            else if (!Ready())
+            {
+                ReleaseNative();
+                string why = (string)fresh["reason"];
+                Notice = !MatchesNativeHost() ? "Capture must select the connected Blender host"
+                    : !NativeInputOwned ? "Use Focus Blender to begin native preview interaction"
+                    : !string.IsNullOrEmpty(why) ? why : "Waiting for the selected window's displayed frame and focus";
             }
         }
 
@@ -500,7 +547,12 @@ namespace SpatialModeling
                 var e = events.Dequeue(); string sentSession = session;
                 string kind = (string)e["type"];
                 if (kind != "release" && kind != "select_window" && !(kind == "focus" ? Drawing.IsNativeUiOwned && MatchesNativeHost() : Ready()))
-                { FailTransport("Input context changed; pending actions cancelled"); continue; }
+                {
+                    if (NativeInputOwned && !endAfterRelease && windowAuthority.ProcessId > 0)
+                        AwaitWindowState("Window context changed; pending actions discarded");
+                    else FailTransport("Input context changed; pending actions cancelled");
+                    continue;
+                }
                 e["session"] = sentSession; e["token"] = token; e["seq"] = transport.TakeSequence();
                 sendingEvent = true;
                 using (var request = new UnityWebRequest(BlenderScreen.CaptureBaseUrl + "/input", "POST"))
@@ -512,7 +564,9 @@ namespace SpatialModeling
                     if (session != sentSession) { sendingEvent = false; continue; }
                     if (request.result != UnityWebRequest.Result.Success)
                     {
-                        FailTransport("Input stopped: " + request.responseCode + ". Refresh/focus; the action was not retried.");
+                        if (request.responseCode == 409 && !endAfterRelease && NativeInputOwned && windowAuthority.ProcessId > 0)
+                            AwaitWindowState("Blender window changed; waiting for fresh state. The action was not retried.");
+                        else FailTransport("Input stopped: " + request.responseCode + ". Refresh/focus; the action was not retried.");
                     }
                     else if (!PreviewInputProtocol.Acknowledged(request.downloadHandler.text, (long)e["seq"]))
                     {
@@ -524,6 +578,11 @@ namespace SpatialModeling
                         { Notice = "Input helper restarted; release status is unknown. Check native input and reconnect."; releaseQueued = true; }
                         else
                         { releaseQueued = endAfterRelease = false; ownedCaptureInstance = ""; Drawing.EndNativeUi(); Notice = "Native UI input released"; }
+                    }
+                    else if ((string)e["type"] == "release" && windowResuming && windowReleaseQueued)
+                    {
+                        windowReleaseQueued = false;
+                        if (Ready()) { windowResuming = false; inputEnabled = true; awaitedWindow = 0; Notice = "Blender dialog/window ready · old input released"; }
                     }
                     else if ((string)e["type"] == "focus")
                     {
@@ -539,9 +598,10 @@ namespace SpatialModeling
 
         void FailTransport(string reason)
         {
-            bool needsCleanup = inputEnabled || focusRequested || endAfterRelease || (Drawing != null && Drawing.IsNativeUiOwned);
+            bool needsCleanup = inputEnabled || focusRequested || endAfterRelease || windowResuming || NativeInputOwned;
             transport.Unknown(); state = null; events.Clear(); pendingPointer = null;
             inputEnabled = focusRequested = mouseHeld = false; modifiers.Clear();
+            windowAuthority.Clear(); windowResuming = windowReleaseQueued = false;
             releaseQueued = false;
             if (needsCleanup) RequestEndNativeUi();
             Notice = reason;
@@ -574,9 +634,12 @@ namespace SpatialModeling
             AddButton(panel, "Model tools", 0, 3, BeginObjects);
             AddButton(panel, "Preview tools", 1, 3, () => {
                 if (!inputEnabled || !Ready()) { Notice = "Focus Blender, then click the intended native editor first"; return; }
-                numbersShown = modelToolsShown = keyboardShown = false; shortcutsShown = true;
+                numbersShown = modelToolsShown = keyboardShown = windowsShown = false; shortcutsShown = true;
             });
             AddButton(panel, "Full keyboard", 2, 3, () => OpenKeyboard(true));
+            AddButton(panel, "Windows / dialogs", 3, 3, OpenWindows);
+            AddButton(panel, "Copy Ctrl+C", 4, 3, () => Shortcut("C"));
+            AddButton(panel, "Paste Ctrl+V", 5, 3, () => Shortcut("V"));
             feedback = MakeText(panel, new Vector2(0, -155), new Vector2(1780, 160), "", 25);
             // A temporary keyboard overlays the lower preview while typing. It
             // must not be placed metres below the screen (possibly below floor).
@@ -619,6 +682,7 @@ namespace SpatialModeling
             SetKeyboardPage(false); keyboard.gameObject.SetActive(false);
             BuildModelTools();
             BuildCommonControls();
+            BuildWindowControls();
         }
 
         void BuildModelTools()
@@ -716,14 +780,89 @@ namespace SpatialModeling
 
         void NextWindow()
         {
-            ReleaseNative();
             var windows = state?["windows"] as JArray;
             if (windows == null || windows.Count == 0) { Notice = "No other Blender windows available"; return; }
             long current = (long?)state?["selection"]?["hwnd"] ?? 0; int at = -1;
             for (int i = 0; i < windows.Count; i++) if ((long?)windows[i]["hwnd"] == current) at = i;
             var next = windows[(at + 1) % windows.Count];
-            inputEnabled = false; Enqueue(new JObject { ["type"] = "select_window", ["hwnd"] = next["hwnd"] });
-            Notice = "Selected next Blender window; focus it explicitly to interact";
+            ChooseWindow((long)next["hwnd"]);
+        }
+        void BuildWindowControls()
+        {
+            windowPanel = MakePanel("P2.5 Blender windows", new Vector2(0, -200), new Vector2(1840, 640));
+            windowPanel.localPosition += Vector3.back * 8f;
+            AddButton(windowPanel, "Previous windows", 0, 0, () => { windowPage = Mathf.Max(0, windowPage - 1); windowListSignature = ""; RefreshWindows(); });
+            AddButton(windowPanel, "Next windows", 1, 0, () => { windowPage++; windowListSignature = ""; RefreshWindows(); });
+            AddButton(windowPanel, "Back to Blender", 4, 0, ReturnToBlender);
+            AddButton(windowPanel, "Close windows", 6, 0, () => windowsShown = false);
+            windowFeedback = MakeText(windowPanel, new Vector2(0, -270), new Vector2(1780, 80), "", 25);
+            windowFeedback.supportRichText = false;
+            windowPanel.gameObject.SetActive(false);
+        }
+        void OpenWindows()
+        {
+            ReleasePointer();
+            windowsShown = true; modelToolsShown = numbersShown = shortcutsShown = keyboardShown = objectsRequested = spatialRequested = false;
+            Drawing?.SetObjectToolsEnabled(false); Drawing?.SetEnabled(false); Drawing?.Numeric.Invalidate();
+            windowListSignature = ""; RefreshWindows();
+        }
+        void RefreshWindows()
+        {
+            var list = state?["windows"] as JArray;
+            int count = list?.Count ?? 0, pages = Math.Max(1, (count + 5) / 6);
+            windowPage = Mathf.Clamp(windowPage, 0, pages - 1);
+            string signature = windowPage + ":" + (list?.ToString(Newtonsoft.Json.Formatting.None) ?? "");
+            if (signature == windowListSignature) return;
+            windowListSignature = signature;
+            foreach (var button in windowButtons)
+            {
+                buttons.Remove(button);
+                if (button != null)
+                {
+                    button.gameObject.SetActive(false);
+                    if (Application.isPlaying) Destroy(button.gameObject); else DestroyImmediate(button.gameObject);
+                }
+            }
+            windowButtons.Clear();
+            for (int i = windowPage * 6; i < Math.Min(count, windowPage * 6 + 6); i++)
+            {
+                var item = list[i]; long hwnd = (long)item["hwnd"];
+                var button = AddButton(windowPanel, "Window " + hwnd, 0, 1 + i % 6, () => ChooseWindow(hwnd), 1780, 1);
+                var label = button.GetComponentInChildren<Text>(); label.supportRichText = false;
+                string title = (string)item["title"] ?? "Untitled Blender window";
+                if (title.Length > 110) title = title.Substring(0, 110) + "…";
+                label.text = ((string)item["kind"] ?? "blender") + " · " + title;
+                windowButtons.Add(button);
+            }
+            windowFeedback.text = count == 0 ? "Waiting for a verified Blender window list. Focus Blender or refresh the helper selection."
+                : "Page " + (windowPage + 1) + " / " + pages + " · owned dialogs follow automatically; choose a window to recover or switch";
+        }
+        void ReturnToBlender()
+        {
+            long root = (long?)state?["selection"]?["blender_hwnd"] ?? 0;
+            var list = state?["windows"] as JArray;
+            if (list != null && root == 0)
+                foreach (var item in list) if ((string)item["kind"] == "blender" || item["kind"] == null) { root = (long)item["hwnd"]; break; }
+            if (root > 0) ChooseWindow(root); else Notice = "Main Blender window is unavailable; choose a verified window";
+        }
+        void ChooseWindow(long hwnd)
+        {
+            var list = state?["windows"] as JArray; JObject chosen = null;
+            if (list != null) foreach (var item in list)
+                if ((long?)item["hwnd"] == hwnd) { chosen = item as JObject; break; }
+            long pid = (long?)chosen?["blender_pid"] ?? (long?)chosen?["pid"] ?? 0;
+            if (chosen == null || pid <= 0 || pid != NativeInputProcess || endAfterRelease)
+            { Notice = "That window is unavailable or belongs to another Blender session"; return; }
+            // Selecting the current window is also an explicit focus/recovery
+            // request. Refresh its generation through the same verified path.
+            bool resume = NativeInputOwned;
+            bool synchronized = transport.Synchronized; long nextSequence = transport.NextSequence;
+            AwaitWindowState("Switching Blender window; pending input discarded");
+            windowResuming = resume; awaitedWindow = hwnd;
+            Enqueue(new JObject { ["type"] = "select_window", ["hwnd"] = hwnd });
+            // Selection itself must be sent on the authoritative old sequence.
+            if (synchronized) transport.Observe(session, nextSequence);
+            windowsShown = false;
         }
         RectTransform MakePanel(string name, Vector2 position, Vector2 size)
         {

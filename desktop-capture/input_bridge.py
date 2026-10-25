@@ -101,6 +101,14 @@ class WindowsInput:
         current = self.windows.identity(hwnd) if self.u.IsWindow(hwnd) else None
         if not current or current["pid"] != selected["pid"]:
             raise InputRejected("selected_window_closed")
+        root_pid = current.get("blender_pid", current["pid"])
+        if selected.get("blender_pid", root_pid) != root_pid:
+            raise InputRejected("selected_window_owner_changed")
+        if selected.get("blender_hwnd", current.get("blender_hwnd")) != current.get("blender_hwnd"):
+            raise InputRejected("selected_window_owner_changed")
+        for key in ("window_class", "owner_hwnd", "parent_hwnd", "menu_owner_hwnd"):
+            if key in selected and selected[key] != current.get(key):
+                raise InputRejected("selected_window_owner_changed")
         if not self.u.IsWindowVisible(hwnd) or self.u.IsIconic(hwnd):
             raise InputRejected("selected_window_hidden_or_minimized")
         full, visible = W.RECT(), W.RECT()
@@ -111,8 +119,14 @@ class WindowsInput:
         dpi = self.u.GetDpiForWindow(hwnd)
         if not dpi:
             raise InputRejected("window_dpi_unavailable")
+        target_started, root_started = self.process_stamp(selected["pid"]), self.process_stamp(root_pid)
+        if (selected.get("input_process_started", target_started) != target_started
+                or selected.get("blender_process_started", root_started) != root_started):
+            raise InputRejected("selected_process_identity_changed")
         return {"window_rect": self._rect(full), "visible_rect": self._rect(visible),
-                "dpi": dpi, "process_started": self.process_stamp(selected["pid"])}
+                "dpi": dpi, "process_started": target_started,
+                "blender_hwnd": current.get("blender_hwnd", hwnd),
+                "blender_pid": root_pid, "blender_process_started": root_started}
 
     def process_stamp(self, pid):
         handle = self.windows.k.OpenProcess(0x1000, False, pid)
@@ -128,19 +142,61 @@ class WindowsInput:
             self.windows.k.CloseHandle(handle)
 
     def windows_for(self, selected, process_started):
+        root_pid = selected.get("blender_pid", selected["pid"])
         try:
-            if self.process_stamp(selected["pid"]) != process_started:
+            if self.process_stamp(root_pid) != process_started:
                 return []
         except InputRejected:
             return []
-        return [w for w in self.windows.windows()
-                if w["pid"] == selected["pid"] and not self.u.IsIconic(w["hwnd"])]
+        result = []
+        for window in self.windows.windows(include_owned=True):
+            if window.get("blender_pid", window["pid"]) != root_pid or self.u.IsIconic(window["hwnd"]):
+                continue
+            try:
+                result.append({**window, "input_process_started": self.process_stamp(window["pid"]),
+                               "blender_process_started": process_started})
+            except InputRejected:
+                continue
+        return result
+
+    def follow_window(self, selected, process_started):
+        candidates = self.windows_for(selected, process_started)
+        foreground = int(self.u.GetForegroundWindow() or 0)
+        # An active native menu can leave its owner in the foreground. Only
+        # actual OS-owned interactive popups qualify, never passive tooltips.
+        for window in candidates:
+            if window.get("kind") == "popup" and self.foreground(window["hwnd"]):
+                return window
+        active = next((w for w in candidates if w["hwnd"] == foreground), None)
+        if active:
+            return active
+        if any(w["hwnd"] == selected["hwnd"] for w in candidates):
+            return None  # Another application gained focus; do not follow it.
+        # Closed/minimized dialogs return to their owner, then the main window.
+        for hwnd in (selected.get("owner_hwnd"), selected.get("blender_hwnd")):
+            parent = next((w for w in candidates if w["hwnd"] == hwnd), None)
+            if parent:
+                return parent
+        return next((w for w in candidates if w.get("kind") == "blender"), None)
 
     def foreground(self, hwnd):
-        # Same-process auxiliary windows are deliberately NOT accepted implicitly.
-        return int(self.u.GetForegroundWindow() or 0) == hwnd
+        foreground = int(self.u.GetForegroundWindow() or 0)
+        if foreground == hwnd:
+            return True
+        window = self.windows.identity(hwnd)
+        if not window or window.get("kind") != "popup":
+            return False
+        owner = window.get("menu_owner_hwnd") or window.get("owner_hwnd") or window.get("parent_hwnd")
+        # Menus/combo lists do not activate. A combo's immediate owner may be a
+        # child control; its actual top-level ancestor must be the foreground
+        # window. An unrelated same-process window is insufficient.
+        owner_root = owner if owner == foreground else int(self.u.GetAncestor(owner, 2) or 0) if owner else 0
+        active = self.windows.identity(foreground) if owner_root == foreground else None
+        return bool(active and active.get("blender_pid", active["pid"]) == window["blender_pid"])
 
     def focus(self, hwnd):
+        if self.foreground(hwnd):
+            return True
         self.u.SetForegroundWindow(hwnd)
         return self.foreground(hwnd)
 
@@ -207,6 +263,8 @@ class InputBridge:
         self.last_event = 0
         self.release_error = False
         self.process_binding = None
+        self.bound_scope = None
+        self.target_binding = None
 
     def frame_geometry(self, selected, width, height, source):
         """Only exact recognized native rectangles can authorize pointer mapping."""
@@ -233,6 +291,11 @@ class InputBridge:
             instance = self.latest.capture_instance
             geometry_id = self.latest.capture_geometry
             geometry = self.latest.input_geometry
+            window_scope = self.latest.window_scope
+        if self.bound_scope != window_scope:
+            self.process_binding = None  # Only an explicit local picker changes scope.
+            self.target_binding = None
+            self.bound_scope = window_scope
         reason, live = "", None
         if not self.enabled:
             reason = "input_disabled"
@@ -245,19 +308,34 @@ class InputBridge:
         else:
             try:
                 live = self.native.inspect(selected)
+                root_pid = live.get("blender_pid", selected["pid"])
+                root_started = live.get("blender_process_started", live["process_started"])
                 binding_changed = (self.process_binding is not None
-                                   and self.process_binding[0] == generation
-                                   and self.process_binding[1:] != (selected["pid"], live["process_started"]))
-                if (live["process_started"] != geometry["process_started"] or binding_changed
+                                   and self.process_binding[1:] != (root_pid, root_started))
+                target = (generation, selected["hwnd"], selected["pid"], live["process_started"])
+                target_changed = (self.target_binding is not None and self.target_binding[0] == generation
+                                  and self.target_binding != target)
+                if (live["process_started"] != geometry["process_started"] or binding_changed or target_changed
+                        or geometry.get("blender_process_started", root_started) != root_started
                         or selected.get("input_process_started", live["process_started"]) != live["process_started"]):
                     reason = "selected_process_identity_changed"
                 elif any(live[k] != geometry[k] for k in ("window_rect", "visible_rect", "dpi")):
                     reason = "window_geometry_changed_wait_for_frame"
                 else:
-                    self.process_binding = (generation, selected["pid"], live["process_started"])
+                    self.process_binding = (generation, root_pid, root_started)
+                    self.target_binding = target
+                    selected.update(blender_pid=root_pid, blender_process_started=root_started)
+                    selected["input_process_started"] = live["process_started"]
+                    if live.get("blender_hwnd"):
+                        selected["blender_hwnd"] = live["blender_hwnd"]
+                    with self.latest.lock:
+                        if self.latest.generation == generation and self.latest.window_scope == window_scope:
+                            self.latest.selected.update({key: value for key, value in selected.items()
+                                                         if key in ("blender_pid", "blender_hwnd", "blender_process_started",
+                                                                    "input_process_started")})
             except InputRejected as exc:
                 reason = exc.reason
-        fingerprint = (generation, selected and selected["hwnd"], selected and selected["pid"],
+        fingerprint = (window_scope, generation, selected and selected["hwnd"], selected and selected["pid"],
                        status["width"], status["height"], repr(geometry), reason)
         if fingerprint != self.fingerprint:
             self._release()
@@ -269,6 +347,8 @@ class InputBridge:
                 "session": self.session, "token": self.token if self.enabled else None,
                 "capture_generation": generation, "capture_instance": instance,
                 "capture_geometry": geometry_id,
+                "window_scope": window_scope,
+                "follow_windows": self.enabled,
                 "helper_pid": os.getpid(),
                 "frame": status["frame"],
                 "selection": selected, "image": {"width": status["width"], "height": status["height"]},
@@ -281,9 +361,36 @@ class InputBridge:
         # Closing a selected popup must not strand the user, but a recycled PID
         # must never authorize selecting a different Blender process. A previous
         # fresh, identity-verified frame supplies the process creation stamp.
-        if not selected or not self.process_binding or self.process_binding[1] != selected["pid"]:
+        if (not selected or not self.process_binding
+                or self.process_binding[1] != selected.get("blender_pid", selected["pid"])):
             return []
         return self.native.windows_for(selected, self.process_binding[2])
+
+    def _follow_windows(self):
+        follow = getattr(self.native, "follow_window", None)
+        if not self.enabled or follow is None or not self.process_binding:
+            return
+        with self.latest.lock:
+            selected = dict(self.latest.selected) if self.latest.selected else None
+            scope = self.latest.window_scope
+        if not selected or scope != self.bound_scope:
+            return
+        try:
+            window = follow(selected, self.process_binding[2])
+            if not window or window["hwnd"] == selected["hwnd"]:
+                return
+            live = self.native.inspect(window)
+            if (live.get("blender_pid", window["pid"]) != self.process_binding[1]
+                    or live.get("blender_process_started", live["process_started"]) != self.process_binding[2]):
+                return
+            self._release()
+            if self.release_error:
+                return
+            window = {**window, "input_process_started": live["process_started"],
+                      "blender_pid": self.process_binding[1], "blender_process_started": self.process_binding[2]}
+            self.latest.select(window, preserve_scope=True)
+        except (InputRejected, OSError):
+            return  # Unavailable or unproven windows never broaden the selection.
 
     def state(self):
         with self.lock:
@@ -309,6 +416,7 @@ class InputBridge:
         if not self.lock.acquire(blocking=False):
             return
         try:
+            self._follow_windows()
             state = self._snapshot()
             if (not state["ready"] or not state["focused"]
                     or self.clock() - self.last_event > 1.5 or self.release_error):
@@ -384,13 +492,23 @@ class InputBridge:
                 if not window:
                     raise InputRejected("window_outside_selected_process", 403)
                 live = self.native.inspect(window)
-                if live["process_started"] != self.process_binding[2]:
+                if (live.get("blender_pid", window["pid"]) != self.process_binding[1]
+                        or live.get("blender_process_started", live["process_started"]) != self.process_binding[2]):
                     raise InputRejected("selected_process_identity_changed", 403)
-                window = {**window, "input_process_started": live["process_started"]}
+                window = {**window, "input_process_started": live["process_started"],
+                          "blender_pid": self.process_binding[1], "blender_process_started": self.process_binding[2]}
                 self._release()
                 if self.release_error:
                     raise InputRejected("release_pending", 502)
-                self.latest.select(window)
+                # An explicit chooser action also requests activation. Automatic
+                # following never steals focus from another application.
+                if not self.native.focus(window["hwnd"]):
+                    raise InputRejected("foreground_activation_denied")
+                confirmed = self.native.inspect(window)
+                if any(confirmed.get(key) != live.get(key) for key in
+                       ("process_started", "blender_pid", "blender_process_started", "blender_hwnd")):
+                    raise InputRejected("selected_process_identity_changed", 403)
+                self.latest.select(window, preserve_scope=True)
                 return {"ok": True, "seq": seq, "selection_changed": True}
             if not state["ready"]:
                 raise InputRejected(state["reason"])
@@ -469,9 +587,15 @@ class InputBridge:
                 live = self.native.inspect(state["selection"])
                 if live["process_started"] != state["geometry"]["process_started"]:
                     raise InputRejected("selected_process_identity_changed")
+                if live.get("blender_process_started") != state["geometry"].get("blender_process_started"):
+                    raise InputRejected("selected_process_identity_changed")
                 if any(live[k] != state["geometry"][k]
                        for k in ("window_rect", "visible_rect", "dpi")):
                     raise InputRejected("window_geometry_changed_wait_for_frame")
+                # Owner/process inspection itself can cross a focus change.
+                # Keep the final check adjacent to SendInput admission.
+                if not self.native.foreground(hwnd):
+                    raise InputRejected("selected_window_not_foreground")
                 # Track possible downs only once dispatch is about to begin.
                 # A pre-dispatch context refusal must not emit phantom key-ups
                 # into the newly focused/changed window. A partial native send
