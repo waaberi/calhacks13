@@ -314,7 +314,23 @@ class NativeSyncState:
 
     def acknowledge_unknown(self, request_id, fence, *, revision, checkpoint_hash):
         """Explicit checked-scene acknowledgement; never converts unknown to applied."""
-        receipt = self.query(request_id, fence)
+        self.query(request_id, fence)  # retains original actor/session/document scope.
+        return self.reconcile_unknown(request_id, revision=revision,
+                                      checkpoint_hash=checkpoint_hash)
+
+    def reconcile_unknown(self, request_id, *, revision, checkpoint_hash):
+        """HOST INTERNAL: resume after the host explicitly verifies its current head.
+
+        NativeHost must freshly inspect/capture the authoritative document and
+        sync_head BEFORE this call. Never expose this method as an arbitrary peer
+        acknowledgement. It allows a fresh request ID, while the old receipt stays
+        UNKNOWN and its original actor and deduplication signature remain intact.
+        """
+        self._id(request_id)
+        self._head(revision, checkpoint_hash)
+        receipt = self._receipts.get(request_id)
+        if receipt is None:
+            raise Refused("not_unknown")
         if receipt.outcome != "unknown" or request_id not in self._uncertain:
             raise Refused("not_unknown")
         if (revision, checkpoint_hash) != (self.revision, self.checkpoint_hash):

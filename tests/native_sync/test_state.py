@@ -233,3 +233,43 @@ def test_abort_applying_is_unknown_unless_rollback_is_verified():
     state.prepare(OTHER, fence)
     receipt = state.abort(OTHER, code="rolled_back", rollback_verified=True)
     assert receipt.outcome == "rejected" and state.pending is None
+
+
+def test_host_reconciliation_requires_the_exact_fresh_canonical_head():
+    state, fence = fixture()
+    prepare(state, fence)
+    unknown = state.unknown(RID)
+    state.sync_head(8, AFTER)  # NativeHost's independently verified local capture.
+    refused("stale_revision", lambda: state.reconcile_unknown(
+        RID, revision=7, checkpoint_hash=BASE))
+    refused("stale_revision", lambda: state.reconcile_unknown(
+        RID, revision=8, checkpoint_hash=BASE))
+    refused("unknown_outcome", lambda: begin(state, fence, rid=OTHER,
+        base_revision=8, base_hash=AFTER))
+    assert state.reconcile_unknown(RID, revision=8, checkpoint_hash=AFTER) == unknown
+    assert begin(state, fence, rid=OTHER, base_revision=8, base_hash=AFTER).outcome == "pending"
+    assert state.query(RID, fence) == unknown
+
+
+def test_reconciliation_keeps_old_actor_scope_and_never_reopens_the_old_request():
+    state, fence = fixture()
+    prepare(state, fence)
+    unknown = state.disconnected(ACTOR)
+    state.reconcile_unknown(RID, revision=7, checkpoint_hash=BASE)
+    new_actor = replace(fence, actor_id="e" * 32, lease_owner="e" * 32, lease_id="f" * 32)
+    refused("wrong_actor", lambda: state.query(RID, new_actor))
+    refused("duplicate_request", lambda: begin(state, new_actor))
+    assert begin(state, fence) == unknown and state.pending is None
+    assert begin(state, new_actor, rid=OTHER).outcome == "pending"
+
+
+def test_reconciliation_cannot_clear_receiving_applied_or_unrecognized_receipts():
+    state, fence = fixture()
+    begin(state, fence)
+    refused("not_unknown", lambda: state.reconcile_unknown(RID, revision=7, checkpoint_hash=BASE))
+    state.chunk(RID, fence, 0, PAYLOAD)
+    state.prepare(RID, fence)
+    state.applied(RID, fence, revision=8, checkpoint_hash=AFTER)
+    refused("not_unknown", lambda: state.reconcile_unknown(RID, revision=8, checkpoint_hash=AFTER))
+    refused("not_unknown", lambda: state.reconcile_unknown(OTHER, revision=8, checkpoint_hash=AFTER))
+    assert state.query(RID, fence).outcome == "applied"
