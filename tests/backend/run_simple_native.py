@@ -50,8 +50,8 @@ def main():
                     with (out / "client-profile-bootstrap.log").open("w") as bootstrap_log:
                         subprocess.run([args.blender, "--background", "--factory-startup",
                             "--disable-autoexec", "--threads", "2", "--python-expr",
-                            "import bpy; bpy.context.preferences.view.show_splash=False; "
-                            "bpy.ops.wm.save_userpref()"], env=env, stdout=bootstrap_log,
+                            ("import bpy; bpy.context.preferences.view.show_splash=False; "
+                             "bpy.ops.wm.save_userpref()") ], env=env, stdout=bootstrap_log,
                             stderr=subprocess.STDOUT, startupinfo=startup, timeout=25,
                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), check=True)
                     args_.remove("--factory-startup")
