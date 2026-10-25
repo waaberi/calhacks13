@@ -11,7 +11,7 @@ using SpatialModeling.VoiceCore.Whisper;
 
 namespace SpatialModeling
 {
-    // Connects VoiceCore to HostScene: mic -> Vosk -> VoiceSession -> command -> host, plus prompts and feedback.
+    // Connects VoiceCore to HostScene: mic -> recognizer -> VoiceSession -> command -> host, plus prompts and feedback.
     // Voice off (no model/mic) never blocks controller or menu editing.
     public class VoiceUiAdapter : MonoBehaviour
     {
@@ -19,8 +19,9 @@ namespace SpatialModeling
         [Tooltip("Microphone to use, matched by name (case-insensitive, part of the name is enough). Empty: the default " +
                  "device. The command line -voiceMic NAME overrides it. A name that matches nothing turns voice off.")]
         public string microphoneName = "";
-        [Tooltip("FastPath: Vosk first, Whisper when Vosk isn't sure (Vosk alone if StreamingAssets/whisper is missing).")]
-        public RecognizerKind recognizer = RecognizerKind.FastPath;
+        [Tooltip("Whisper (the approved default, #159): whisper-server for every utterance, Vosk if it can't start. " +
+                 "FastPath: Vosk first, Whisper when Vosk isn't sure. Vosk: Vosk only.")]
+        public RecognizerKind recognizer = RecognizerKind.Whisper;
         // Voice text (status line, feedback, the question panel) is drawn on top of the scene over a dark backing, so it
         // stays readable over white or complex geometry and inside a big object. Call FitBacking after changing the text.
         public static void SetupText(TextMesh tm, GameObject go)
@@ -135,7 +136,7 @@ namespace SpatialModeling
         string grammarNames;              // the names the recognizer grammar was last built from
         bool talking, waitingResult, playing;   // feedback: holding talk, waiting for a result, a prompt is playing
         float resultDeadline;
-        InputAction talk, confirm, cancel;
+        InputAction talk, confirm, cancel, leftGrip;
 
         void Awake()
         {
@@ -167,6 +168,9 @@ namespace SpatialModeling
             confirm = new InputAction("ConfirmDelete", InputActionType.Button);
             confirm.AddBinding("<XRController>{LeftHand}/thumbstickClicked");
             confirm.AddBinding("<Keyboard>/backquote");
+            // Not while the left grip is held: P2 (#158) toggles free placement with a stick click during a grab.
+            leftGrip = new InputAction("LeftGripHeld", InputActionType.Button);
+            leftGrip.AddBinding("<XRController>{LeftHand}/gripPressed");
             cancel = new InputAction("CancelPending", InputActionType.Button);
             cancel.AddBinding("<Keyboard>/escape");
             talk.started += _ =>
@@ -185,9 +189,9 @@ namespace SpatialModeling
                 input?.StopUtterance();
                 if (input != null) { waitingResult = true; resultDeadline = Time.time + 3f; Note("Processing..."); }
             };
-            confirm.started += _ => ConfirmDelete();
+            confirm.started += _ => { if (!leftGrip.IsPressed()) ConfirmDelete(); };
             cancel.started += _ => CancelPressed();
-            talk.Enable(); confirm.Enable(); cancel.Enable();
+            talk.Enable(); confirm.Enable(); cancel.Enable(); leftGrip.Enable();
         }
 
         void Start()
@@ -260,7 +264,7 @@ namespace SpatialModeling
 
         void OnDestroy()
         {
-            talk?.Dispose(); confirm?.Dispose(); cancel?.Dispose();
+            talk?.Dispose(); confirm?.Dispose(); cancel?.Dispose(); leftGrip?.Dispose();
             if (mic != null) Microphone.End(micDevice);
             input?.Dispose();
         }
