@@ -209,6 +209,7 @@ More commands. Use the wording of one of these phrases when it fits, adding numb
 @"
 Rules:
 - Never invent a value. If the user did not give a distance, an angle, an axis, a factor or a shape, leave it out: the app asks for it.
+- The words come from speech recognition and can be wrong. ""[unk]"" marks audio the recognizer could not understand. If the meaning is unclear, or you would have to guess what the user wanted, return an empty phrase with the reason ""not sure what you said"" instead of a command.
 - One command only. If the user asks for several, return the first.
 - If nothing fits (small talk, an unsupported operation, unclear words), return an empty phrase and a reason of at most ten words.
 - ""reason"" is empty when you return a phrase.
