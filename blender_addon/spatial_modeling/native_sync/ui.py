@@ -46,7 +46,9 @@ class SPATIAL_OT_native_save_copy(bpy.types.Operator):
 
     @classmethod
     def poll(cls, _context):
-        return _client() is not None and _client().has_native_document and not _client().applying
+        client = _client()
+        return (client is not None and (client.has_native_document or client.initial_local_work)
+                and not client.applying)
 
     def invoke(self, context, _event):
         self.filepath = "native-local-copy.blend"

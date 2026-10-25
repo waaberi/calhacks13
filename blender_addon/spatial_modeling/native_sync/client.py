@@ -3,6 +3,9 @@
 This controller owns no socket or bpy call directly. The native document adapter
 performs file operations on Blender's main thread. A refused or disconnected
 upload remains a local draft; an incoming snapshot never overwrites that draft.
+Automatic receives also audit this peer's current saved bytes before applying.
+UI-only byte changes can conservatively pause receiving; explicit backed-up
+reload resolves that case. This is a preservation fence, not a semantic hash.
 """
 
 import json
@@ -32,6 +35,9 @@ class NativeClient:
         self.receiver = wire.ChunkReceiver()
         self.enabled = self.connected = self.can_edit = False
         self.has_native_document = self.applying = False
+        self.initial_local_work = False
+        self._initial_baseline_hash = None
+        self._incoming_conflict = False
         self.identity, self.actor_id = {}, ""
         self.head = self.applied_head = None
         self.lease_id = ""
@@ -95,6 +101,21 @@ class NativeClient:
         self.head = self.applied_head = None
         self.status = "Receiving original Blender document"
         self.error = ""
+        if not self.has_native_document:
+            # The connection was admitted into an empty session. Remember its
+            # complete LOCAL bytes after the temporary mirror was removed, so
+            # even an unreferenced material added before the first packet is
+            # protected. Objects/filepath are independently checked at apply.
+            if not self.document.is_empty_session():
+                self.initial_local_work = self._incoming_conflict = True
+                self.watcher.mark_dirty(self.clock())
+                self.error = "Local work appeared before initial sharing; it will not be replaced"
+            else:
+                try:
+                    self._initial_baseline_hash = self.document.capture(self.capture_path).sha256
+                except (OSError, RuntimeError, ValueError):
+                    self._initial_baseline_hash = None
+                    self.error = "Initial local checkpoint could not be verified; incoming data will wait"
         self._request_snapshot()
 
     def _request_snapshot(self):
@@ -115,7 +136,7 @@ class NativeClient:
         return {key: value[key] for key in (*_IDENTITY, "revision", "checkpoint_hash")}
 
     def mark_dirty(self, now=None):
-        if self.has_native_document and not self.applying:
+        if (self.has_native_document or self.initial_local_work) and not self.applying:
             self.watcher.mark_dirty(self.clock() if now is None else now)
 
     def take_edit_turn(self):
@@ -319,7 +340,30 @@ class NativeClient:
             self._download = None
             self._request_snapshot()
             return
-        if self.has_native_document and self._discard_next:
+        if not self._discard_next:
+            if not self.has_native_document and not self.document.is_empty_session():
+                self.initial_local_work = self._incoming_conflict = True
+                self.watcher.mark_dirty(self.clock())
+                self.error = "Local objects or a file appeared before initial sharing; incoming data waits"
+                return
+            baseline = (self.watcher.baseline_hash if self.has_native_document
+                        else self._initial_baseline_hash)
+            if baseline is None:
+                self.error = "Local checkpoint baseline is unverified; incoming native data waits"
+                return
+            try:
+                current = self.document.capture(self.capture_path)
+                if current.sha256 != baseline:
+                    (self.directory / ("before-incoming-" + complete["request_id"] + ".blend")).write_bytes(current.data)
+                    self.initial_local_work = not self.has_native_document
+                    self._incoming_conflict = True
+                    self.watcher.mark_dirty(self.clock())
+                    self.error = "Unannounced local changes were backed up; incoming native data waits"
+                    return
+            except (OSError, RuntimeError, ValueError):
+                self.error = "Current local checkpoint could not be verified; incoming data was not applied"
+                return
+        if self._discard_next:
             # Explicit reload is destructive to the current local graph. Keep
             # its latest settled state as well as any earlier in-flight draft.
             # A failed backup must leave the current graph untouched.
@@ -357,6 +401,8 @@ class NativeClient:
                 self.head = self.applied_head = dict(complete["head"])
                 self._ready_edit = bool(self.lease_id and self._want_edit)
                 self._discard_next = False
+                self.initial_local_work = self._incoming_conflict = False
+                self._initial_baseline_hash = None
                 self.status = "Your native Blender edit turn" if self._ready_edit else "Original Blender document is current; take an edit turn to share changes"
                 self.error = ""
             except (OSError, RuntimeError, ValueError):
@@ -391,10 +437,14 @@ class NativeClient:
         if self.applying:
             return
         now = self.clock()
-        if self.has_native_document:
+        if self.has_native_document or self.initial_local_work:
             pending = self.watcher.poll(now, self.document.is_idle(), self._export)
             if pending is not None:
-                if self.is_editing and self.can_edit:
+                if self._incoming_conflict:
+                    self.watcher.reject(pending.request_id, "local_changes_before_receive")
+                    self._retain()
+                    self.error = "Incoming native data waits; unannounced local draft was retained"
+                elif self.is_editing and self.can_edit:
                     self._start_upload(pending)
                 else:
                     self.watcher.reject(pending.request_id, "edit_turn_required")

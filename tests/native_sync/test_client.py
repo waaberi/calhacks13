@@ -53,6 +53,9 @@ class Document:
     def is_idle(self):
         return self.safe
 
+    def is_empty_session(self):
+        return self.data in {b"empty", b"empty with local material"}
+
     def capture(self, path):
         self.captures += 1
         Path(path).write_bytes(self.data)
@@ -268,7 +271,13 @@ def test_post_apply_capture_failure_preserves_document_but_never_grants_edit_tur
     client.receive("lease.granted", (client._lease_request, {"lease": {
         "lease_id": LEASE, "mode": "exclusive", "owner": {"actor_id": ACTOR}}}))
 
-    def failed_capture(_path):
+    original_capture = doc.capture
+    audits = []
+
+    def failed_capture(path):
+        if not audits:
+            audits.append(True)
+            return original_capture(path)
         raise OSError("cannot save local baseline")
 
     monkeypatch.setattr(doc, "capture", failed_capture)
@@ -397,3 +406,58 @@ def test_apply_finishing_after_disconnect_keeps_disconnected_status(tmp_path, mo
     callbacks.pop()({})
     assert not client.connected and not client.is_editing and not client.applying
     assert client.status.startswith("Disconnected")
+
+
+def test_native_edit_without_dirty_signal_is_backed_up_and_never_overwritten(tmp_path):
+    client, doc, _, now = setup(tmp_path)
+    before = doc.applies
+    doc.data = b"native changes with no depsgraph signal yet"
+    feed(client, b"incoming authoritative update", revision=1)
+    assert doc.data == b"native changes with no depsgraph signal yet" and doc.applies == before
+    assert client.watcher.dirty and client._incoming_conflict
+    backup = next(tmp_path.glob("before-incoming-*.blend"))
+    assert backup.read_bytes() == doc.data
+    now[0] += .3
+    client.tick()
+    assert client.watcher.rejection == "local_changes_before_receive"
+    assert client.watcher.retained_draft.payload.data == doc.data
+
+
+def test_objects_added_after_empty_connect_admission_block_first_native_apply(tmp_path):
+    now, sent = [0.0], []
+    doc = Document()
+    client = NativeClient(doc, lambda msg: sent.append(msg) or True, tmp_path,
+                          clock=lambda: now[0])
+    client.welcome(welcome())
+    doc.data = b"newly created object after connection"
+    feed(client)
+    assert doc.applies == 0 and not client.has_native_document
+    assert client.initial_local_work and client.watcher.dirty
+    now[0] = 1
+    client.tick()
+    assert client.watcher.rejection == "local_changes_before_receive"
+    assert client.watcher.retained_draft.payload.data == doc.data
+
+
+def test_unreferenced_data_added_without_objects_blocks_initial_native_apply(tmp_path):
+    doc = Document()
+    client = NativeClient(doc, lambda _msg: True, tmp_path, clock=lambda: 0)
+    client.welcome(welcome())
+    doc.data = b"empty with local material"  # still passes object/file empty admission
+    assert doc.is_empty_session()
+    feed(client)
+    assert doc.applies == 0 and client.initial_local_work
+    assert next(tmp_path.glob("before-incoming-*.blend")).read_bytes() == doc.data
+
+
+def test_failed_preapply_audit_retains_actual_document_without_starting_apply(tmp_path, monkeypatch):
+    client, doc, _, _ = setup(tmp_path)
+    before, applies = doc.data, doc.applies
+
+    def failed_capture(_path):
+        raise OSError("local hash audit could not save")
+
+    monkeypatch.setattr(doc, "capture", failed_capture)
+    feed(client, b"incoming update", revision=1)
+    assert doc.data == before and doc.applies == applies and not client.applying
+    assert "not applied" in client.error
