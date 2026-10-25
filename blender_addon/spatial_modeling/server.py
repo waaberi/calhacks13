@@ -5,7 +5,11 @@ It always listens on the localhost port for the Unity app, plain TCP on
 (lan.py), share its reader, queue and handlers; each has its own address and
 optionally TLS or a hello token.
 
-The network thread only reads, decodes and writes. Decoded messages, and an
+The network thread only reads, decodes and writes, except for the built-in
+scene-free ping while a joined connection holds a confirmed native-preview UI
+reservation. This keeps OS dialogs controllable when Blender's main thread is
+blocked; all other handlers and all unreserved pings still run through drain().
+Decoded messages, and an
 event whenever a connection opens or closes, go on one queue in the order they
 happened. drain() handles them on whichever thread calls it: Blender's main
 thread, through the timer in host.py. This module must not import bpy, so it
@@ -117,6 +121,7 @@ class Connection:
         self.joined = False  # welcomed; set by the hello handler on the main thread
         self.can_edit = False  # may send commands; set with joined (session.py)
         self.closing = False  # close() was called; drain() ignores its remaining messages
+        self.preview_ui_active = False  # set only by a confirmed native UI reservation
 
     def send(self, *msgs):
         self.server.send(self, *msgs)
@@ -399,6 +404,14 @@ class Server:
         return None
 
     def _enqueue(self, conn, msg):
+        # A native Windows dialog can block bpy timers. Only the built-in ping
+        # is safe to answer here: it reads no scene, invokes no registered edit
+        # handler and changes no lease. The main-thread reservation owner sets
+        # and clears this marker. Never bypass hello, custom handlers or edits.
+        if (msg["type"] == "ping" and conn.joined and not conn.closing
+                and getattr(conn, "preview_ui_active", False) is True and self.handlers.get("ping") is ping):
+            self._write(conn, protocol.encode(ping(msg, conn)))
+            return
         if not self._slots.acquire(blocking=False):
             text = "too many messages are waiting for Blender; try again"
             self._write(conn, protocol.encode(error("busy", text, msg["id"])))

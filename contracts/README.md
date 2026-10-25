@@ -376,3 +376,18 @@ python3 contracts/fakes/fake_client.py "move Shaft 10mm 0 0" "undo" --exit
 Shortcuts include `move OBJ DX DY DZ`, `rotate OBJ Z 90deg`, `scale OBJ 1 1 1.5`, `add cube X Y Z DX DY DZ`, `delete OBJ`, `undo`, `redo`, `save`, `lease OBJ...` (shared), `lease all` (exclusive), `release [LEASE]` and `again` (resend the last command with the same ID). It prints "… started editing …" when someone else's lease appears. For [Reconnecting](#reconnecting): `lose COMMAND` sends the command and drops the connection before its `result`, reconnects and asks for it with `receipt.query`; `query [ID ...]` asks about the last command or the given IDs. JSON gives any command or message. Bare numbers are meters and radians, as on the wire; `--help` lists everything. `--reconnect` reconnects every 2 s, `--role blender-client` acts like the Client role, and `--check` validates every message against [`schemas/`](schemas/) (needs `pip install jsonschema`). It speaks plain TCP only: the [LAN port](#lan-port)'s TLS and token aren't in it yet, so it reaches the host's port 8765 or a fake host.
 
 **Check:** `pytest tests/backend/test_fakes.py` runs the two fakes against each other through a recording proxy and validates every message they send against the schemas.
+
+## Optional P2.5 native preview extension
+
+The extension uses hierarchical type names and requires a current welcome/document identity. Missing capabilities disable spatial CAD tools. Native UI reservations use the ordinary host-desktop exclusive lease; they do not establish universal script locking.
+
+| Type | Direction | Purpose |
+| --- | --- | --- |
+| `preview.state.query` | VR to host | Read actual native tool, sketch, unsupported options, modal and UI reservation state. |
+| `preview.state` | Host to VR | Current process/document identity and read-only native state. |
+| `preview.ui.begin` | VR to host | Reserve native desktop input, with permission and identity checks. |
+| `preview.ui.granted` | Host to VR | Connection-owned native UI reservation. |
+| `preview.ui.end` | VR to host | Stop accepting input; retain reservation until native modal operations finish. |
+| `preview.ui.ended` | Host to VR | Input stopped, with explicit modal/ending state; does not alone prove reservation release. |
+
+Release all owned synthetic input and await its acknowledgement before requesting end. A disconnect also stops admission, but a running native modal operation retains the host lease until native confirmation/cancellation. Restore/cancel it in Blender before another writer starts. One unsupported sketch is omitted from the spatial sketch records and identified in `unsupported_sketches`; unrelated objects/sketches continue syncing. No geometry is fabricated for unsupported entities.

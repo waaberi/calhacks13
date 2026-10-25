@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "preview.ui.end.schema.json",
+  "title": "preview.ui.end",
+  "$ref": "envelope.schema.json",
+  "properties": {
+    "type": {
+      "const": "preview.ui.end"
+    },
+    "payload": {
+      "type": "object",
+      "required": [
+        "session_id",
+        "host_epoch",
+        "document_id",
+        "open_epoch",
+        "actor_id",
+        "ui_session_id"
+      ],
+      "properties": {
+        "session_id": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "host_epoch": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "document_id": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "open_epoch": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "actor_id": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "ui_session_id": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

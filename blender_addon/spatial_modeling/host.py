@@ -40,7 +40,7 @@ import uuid
 import bpy
 from bpy.app.handlers import persistent
 
-from . import commands, document, edits, gate, lan, leases, server, session
+from . import commands, document, edits, gate, lan, leases, preview_spatial, server, session, sketch
 from . import sync as scene_sync  # host.sync() is the role switch below
 
 DRAIN_INTERVAL = 0.02  # seconds between queue drains
@@ -205,6 +205,8 @@ def _drain():
         return None  # unregisters this timer
     _document.tick()
     _server.drain()
+    if hasattr(_server, "preview_ui"):
+        _server.preview_ui.poll()
     scene_sync.poll()  # direct edits in this Blender reach clients as scene.update
     gate.poll()  # after an ungated edit of leased data, stop writes (#77)
     _commands.poll()  # after an unknown outcome, retry the fresh snapshot until it goes out
@@ -245,6 +247,7 @@ def _describe_lan(listener):
 def _start_server(extra, sess, cmds, lses):
     srv = server.Server(extra_listeners=[extra] if extra else [])
     srv = lses.attach(cmds.attach(sess.attach(srv)))
+    srv = preview_spatial.attach(srv, sess, lses)
     srv.start()
     return srv
 
@@ -262,6 +265,7 @@ def start():
         on_change=_session_changed,
         name=prefs.host_name if prefs else None,
         client_can_edit=bool(prefs and prefs.client_edits),
+        capabilities=lambda: {"sketch": sketch.dependency_status()["available"], "preview_spatial": True},
     )
     editor = edits.Editor(scene_sync, undoable, doc)
     lses = leases.Leases(sess, editor)

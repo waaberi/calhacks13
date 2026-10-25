@@ -7,7 +7,7 @@
   "required": ["v", "type", "id", "payload"],
   "properties": {
     "v": { "const": 1 },
-    "type": { "type": "string", "pattern": "^[a-z]+(\\.[a-z_]+)?$" },
+    "type": { "type": "string", "pattern": "^[a-z]+(\\.[a-z_]+)*$" },
     "id": { "$ref": "#/$defs/uuid" },
     "re": { "$ref": "#/$defs/uuid" },
     "payload": { "type": "object" }

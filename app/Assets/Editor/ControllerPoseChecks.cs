@@ -109,9 +109,15 @@ public static class ControllerPoseChecks
         owner.SetActive(false);
         var target = new GameObject("Held plane");
         var stable = new GameObject("Surviving hand stable aim");
+        var previousPreview = PreviewInteraction.Current;
         try
         {
             var interaction = owner.AddComponent<WorkspaceInteraction>();
+            var preview = owner.AddComponent<PreviewInteraction>();
+            typeof(PreviewInteraction).GetProperty("Current").GetSetMethod(true).Invoke(null, new object[] { preview });
+            var previewPrivate = BindingFlags.Instance | BindingFlags.NonPublic;
+            typeof(PreviewInteraction).GetField("inputEnabled", previewPrivate).SetValue(preview, true);
+            typeof(PreviewInteraction).GetField("triggerWasDown", previewPrivate).SetValue(preview, true);
             var type = typeof(WorkspaceInteraction);
             var handType = type.GetNestedType("Hand", BindingFlags.NonPublic);
             object replaced = Activator.CreateInstance(handType, true);
@@ -123,6 +129,8 @@ public static class ControllerPoseChecks
                 handType.GetField("target").SetValue(hand, target.transform);
             }
             handType.GetField("previousGripControl").SetValue(replaced, oldGrip);
+            handType.GetField("node").SetValue(replaced, XRNode.RightHand);
+            handType.GetField("node").SetValue(surviving, XRNode.LeftHand);
             handType.GetField("previousGripControl").SetValue(surviving, replacementGrip);
             handType.GetField("stableAim").SetValue(surviving, stable.transform);
             type.GetField("left", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(interaction, replaced);
@@ -132,15 +140,21 @@ public static class ControllerPoseChecks
             target.transform.SetPositionAndRotation(new Vector3(3, 2, 1), Quaternion.Euler(0, 23, 0));
             var before = new Pose(target.transform.position, target.transform.rotation);
             type.GetMethod("UpdatePair", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(interaction, null);
+            Check(!(bool)typeof(PreviewInteraction).GetField("inputEnabled", previewPrivate).GetValue(preview)
+                && !(bool)typeof(PreviewInteraction).GetField("triggerWasDown", previewPrivate).GetValue(preview)
+                && (bool)typeof(PreviewInteraction).GetField("endAfterRelease", previewPrivate).GetValue(preview),
+                "controller replacement suspends native input and retains release acknowledgement barrier");
             Check(handType.GetField("target").GetValue(replaced) == null, "source replacement releases old hold");
             Check(ReferenceEquals(handType.GetField("target").GetValue(surviving), target.transform), "surviving hand keeps hold");
             Check(pair.GetValue(interaction) == null, "stale pair cleared after source replacement");
             Check(Vector3.Distance(target.transform.position, before.position) < .0001f
                 && Quaternion.Angle(target.transform.rotation, before.rotation) < .01f,
                 "replacement freezes object before surviving-hand rebase");
+            Debug.Log("P225_CONTROLLER_OWNERSHIP_CHECK PASS real paired-device replacement releases P2 hold and suspends P25 input with acknowledgement barrier");
         }
         finally
         {
+            typeof(PreviewInteraction).GetProperty("Current").GetSetMethod(true).Invoke(null, new object[] { previousPreview });
             // Inactive owner never enabled or owned these externally scoped actions.
             UnityEngine.Object.DestroyImmediate(owner);
             UnityEngine.Object.DestroyImmediate(target);

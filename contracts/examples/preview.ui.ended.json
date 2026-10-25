@@ -1,0 +1,15 @@
+{
+  "v": 1,
+  "type": "preview.ui.ended",
+  "id": "00000000000000000000000000000006",
+  "payload": {
+    "process_id": 1234,
+    "input_allowed": false,
+    "ui_session_id": "",
+    "ui_owner": null,
+    "ui_ending": false,
+    "modal_operators": [],
+    "modal_active": false
+  },
+  "re": "10000000000000000000000000000000"
+}

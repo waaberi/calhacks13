@@ -15,6 +15,13 @@
         "host_epoch": { "$ref": "envelope.schema.json#/$defs/uuid" },
         "actor_id": { "description": "Assigned to this connection.", "$ref": "envelope.schema.json#/$defs/uuid" },
         "can_edit": { "description": "False while this client is read-only, for example the Client role before P3A-W-3.", "type": "boolean" },
+        "capabilities": {
+          "description": "Missing means unavailable. Sketch is true only with the pinned native CAD adapter and solver available.",
+          "type": "object",
+          "required": ["sketch"],
+          "properties": { "sketch": { "type": "boolean" }, "preview_spatial": { "type": "boolean" } },
+          "additionalProperties": false
+        },
         "app": { "$ref": "envelope.schema.json#/$defs/app" },
         "document": { "$ref": "envelope.schema.json#/$defs/document" }
       },

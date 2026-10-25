@@ -98,6 +98,67 @@ def test_handlers_run_only_inside_drain():
         assert client.recv()["type"] == "pong"
 
 
+def test_confirmed_native_ui_ping_survives_paused_main_thread_without_running_edits():
+    seen = []
+
+    def reserve(msg, conn):
+        conn.joined = True
+        conn.preview_ui_active = True
+        return protocol.message("test.joined", re=msg["id"])
+
+    def edit(msg, conn):
+        seen.append(threading.get_ident())
+        return protocol.message("test.edited", re=msg["id"])
+
+    handlers = {"hello": reserve, "ping": server.ping, "edit": edit}
+    with running(handlers, pump=False) as srv, Client(port=srv.port) as client:
+        client.send(protocol.message("hello"))
+        wait_for_inbox(srv, 2)
+        assert srv.drain() == 2
+        assert client.recv()["type"] == "test.joined"
+        (conn,) = srv.connections
+        command = protocol.message("edit")
+        client.send(command)
+        wait_for_inbox(srv, 1)
+        # No drain simulates a blocking native file dialog. Built-in ping alone
+        # must answer; a buffered edit may not execute on the network thread.
+        assert_ping_works(client)
+        assert seen == [] and srv.inbox.qsize() == 1
+        conn.preview_ui_active = False
+        client.send(protocol.message("ping"))
+        wait_for_inbox(srv, 2)
+        assert srv.drain() == 2
+        assert seen == [threading.get_ident()]
+        assert client.recv()["re"] == command["id"]
+        assert client.recv()["type"] == "pong"
+
+
+@pytest.mark.parametrize("joined,active,closing,custom,kind", [
+    (False, True, False, False, "ping"),
+    (True, False, False, False, "ping"),
+    (True, 1, False, False, "ping"),
+    (True, True, True, False, "ping"),
+    (True, True, False, True, "ping"),
+    (True, True, False, False, "preview.ui.begin"),
+    (True, True, False, False, "command"),
+])
+def test_native_ui_heartbeat_exception_never_admits_other_handlers(joined, active, closing, custom, kind):
+    invoked, written = [], []
+
+    def custom_ping(msg, conn):
+        invoked.append(msg)
+        return server.ping(msg, conn)
+
+    srv = server.Server(handlers={"ping": custom_ping if custom else server.ping})
+    conn = server.Connection(srv, srv.listeners[0], 1, ("127.0.0.1", 1))
+    conn.joined, conn.preview_ui_active, conn.closing = joined, active, closing
+    srv._write = lambda *args: written.append(args)
+    msg = protocol.message(kind)
+    srv._enqueue(conn, msg)
+    assert srv.inbox.get_nowait() == (conn, msg)
+    assert invoked == written == []
+
+
 def test_malformed_json_is_rejected_and_connection_stays_open():
     with running() as srv, Client(port=srv.port) as client:
         client.send(b"not json\n")

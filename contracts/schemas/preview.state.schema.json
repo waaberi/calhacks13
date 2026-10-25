@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "preview.state.schema.json",
+  "title": "preview.state",
+  "$ref": "envelope.schema.json",
+  "properties": {
+    "type": {
+      "const": "preview.state"
+    },
+    "payload": {
+      "type": "object",
+      "required": [
+        "process_id",
+        "input_allowed",
+        "ui_session_id",
+        "ui_owner",
+        "ui_ending",
+        "modal_operators",
+        "modal_active",
+        "session_id",
+        "host_epoch",
+        "document_id",
+        "open_epoch",
+        "available",
+        "reason",
+        "tool",
+        "native_tool",
+        "sketch_id",
+        "mode",
+        "selected_entities",
+        "unsupported_options",
+        "unsupported_sketches"
+      ],
+      "properties": {
+        "process_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "input_allowed": {
+          "type": "boolean"
+        },
+        "ui_session_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ui_owner": {
+          "anyOf": [
+            {
+              "$ref": "envelope.schema.json#/$defs/actor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ui_ending": {
+          "type": "boolean"
+        },
+        "modal_operators": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "modal_active": {
+          "type": "boolean"
+        },
+        "session_id": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "host_epoch": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "document_id": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "open_epoch": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "native_tool": {
+          "type": "string"
+        },
+        "sketch_id": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "selected_entities": {
+          "type": "array",
+          "items": {
+            "$ref": "envelope.schema.json#/$defs/local_id"
+          }
+        },
+        "unsupported_options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unsupported_sketches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "reason"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "envelope.schema.json#/$defs/uuid"
+              },
+              "name": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "re"
+  ]
+}

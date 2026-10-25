@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "preview.state.query.schema.json",
+  "title": "preview.state.query",
+  "$ref": "envelope.schema.json",
+  "properties": {
+    "type": {
+      "const": "preview.state.query"
+    },
+    "payload": {
+      "type": "object",
+      "required": [],
+      "properties": {},
+      "additionalProperties": false
+    }
+  }
+}
