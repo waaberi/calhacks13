@@ -29,6 +29,18 @@ namespace SpatialModeling
         readonly DirectRotationHandles rotationHandles = new DirectRotationHandles();
         readonly DirectTranslationHandles translationHandles=new DirectTranslationHandles();
         readonly LiveScaleFeedback scaleFeedback=new LiveScaleFeedback();
+        readonly DirectToolGuides toolGuides=new DirectToolGuides();
+        readonly List<Transform> scaleEnds=new List<Transform>();
+        DirectToolGuides.Frame guideFrame;
+        int[] gestureIndices=Array.Empty<int>();
+        Vector3 gesturePivot,metricDirectionNative;
+        Vector3? hoverPoint,snapPoint;
+        int hoverIndex=-1;
+        string hoverComponent,pressBlocked;
+        bool attempted,attemptReported,normalPicked,gestureNormalConstrained,nativeMirrored,controllerCancelled,gestureHandle;
+        Vector3 normalPickNative;
+        Vector3[] gestureAxes;
+        Vector3 gestureDisplayPivot;
         DirectTranslationHandles.Frame translationPickFrame,translationGestureFrame;
         int translationAxis=-1;
         bool translationPickedArrow;
@@ -39,6 +51,7 @@ namespace SpatialModeling
         GameObject handleRoot;
         GameObject selectionRoot;
         Material handleMaterial;
+        Material axisMaterial;
         WorkspaceObjectView picked;
         JObject frozenModel, operation;
         JArray targets;
@@ -61,6 +74,9 @@ namespace SpatialModeling
         public bool Gesturing => held;
         public bool Busy => Session.Busy||waiting;
         public bool Available => (bool?)drawing.NativeState["model_edit"]?["live_supported"]==true;
+        public bool HasLiveProtocol => Model?["live_supported"]!=null;
+        public event Action<string> UnavailableAttempt;
+        public event Action<string> BlockedAttempt;
         public string Notice { get; private set; } = "Choose a native Blender tool";
         JObject Model => drawing.NativeState["model_edit"] as JObject;
         public DirectLiveController(HostScene host,PreviewInteraction input,PreviewSpatialDrawing native,Action<string> committed)
@@ -86,7 +102,7 @@ namespace SpatialModeling
         bool ObjectSelectionOperation => (bool?)operation?["selection_only"]==true&&(string)operation?["tool"]=="object.selection";
         public void Tick()
         {
-            if(!Available&&!Busy&&!held)return;
+            if(!HasLiveProtocol&&!Busy&&!held)return;
             if(!held&&!Session.Busy)
                 Selection.ObserveNative(Model,drawing.Session.Objects,!dirtySelection);
             if(!held&&!Session.Busy&&!waiting&&dirtySelection&&picked!=null&&drawing.NativeStateCurrent)
@@ -113,8 +129,10 @@ namespace SpatialModeling
                 HideHandles();
                 if(enabled&&held&&rotationGesture!=null)rotationHandles.Draw(rotationGesture.Frozen,rotationGesture.Axis);
                 if(enabled&&held&&translationGestureFrame!=null)translationHandles.Draw(translationGestureFrame,translationAxis);
+                if(enabled&&held&&ToolOf(frozenModel).EndsWith(".scale",StringComparison.Ordinal))DrawLinearHandles("mesh.scale",gestureDisplayPivot,gestureAxes);
             }
             if(scaleFeedback.Visible)scaleFeedback.Draw(currentPoint,Camera.main);
+            DrawGuides();
         }
         public void Receive(JObject message)
         {
@@ -141,6 +159,7 @@ namespace SpatialModeling
             }
             if(!Session.Busy&&!terminalObserved&&operation!=null)
             {
+                if(attempted&&!controllerCancelled&&Session.Phase!="committed")Refuse(false,Session.Notice);
                 terminalObserved=true;
                 foreach(var view in views.Values)if(view!=null&&boundId!=null)view.EndLivePresentation(boundId,Session.Phase=="committed");
                 boundId=null;held=waiting=false;rotationGesture=null;translationGestureFrame=null;scaleContacts.Clear();scaleFeedback.Hide();
@@ -155,6 +174,7 @@ namespace SpatialModeling
         }
         void SynchronizeSelection()
         {
+            if(!Available){dirtySelection=false;return;}
             var requested=Selection.Snapshot();var admitted=Selection.Targets();
             if(!admitted.OfType<JObject>().Any(row=>(string)row["id"]==picked.ObjectId)
                 &&drawing.Session.Objects.TryGetValue(picked.ObjectId,out var pickRecord))
@@ -194,7 +214,8 @@ namespace SpatialModeling
                 if(trigger)
                 {
                     if(Mathf.Abs(axis.y)>.2f){depth=Mathf.Max(.08f,depth+axis.y*Time.unscaledDeltaTime*.5f);currentPoint=ray.GetPoint(depth);}
-                    if(!moved&&(rotationGesture!=null?Mathf.Abs(rotationGesture.AngleDegrees)>=.8f:Vector3.Distance(startPoint,currentPoint)>=.003f))StartMovement();
+                    if(!attempted&&(rotationGesture!=null?Mathf.Abs(rotationGesture.AngleDegrees)>=.8f:Vector3.Distance(startPoint,currentPoint)>=.003f))
+                    {attempted=true;StartMovement();}
                     if(moved&&!waiting&&Session.Busy&&Time.unscaledTime>=nextUpdate)
                     {QueueParameters(ray);nextUpdate=Time.unscaledTime+.035f;}
                     Notice=waiting?"Releasing native input; keep holding the trigger":Session.Busy?Session.Notice:Notice;
@@ -204,8 +225,10 @@ namespace SpatialModeling
                 if(!moved)
                 {
                     scaleFeedback.Hide();
+                    if(attempted||!Available||pressBlocked!=null){translationGestureFrame=null;rotationGesture=null;return true;}
                     if(translationGestureFrame!=null){translationGestureFrame=null;Notice="Hold a coloured Move arrow and aim along its axis";return true;}
                     if(rotationGesture!=null){rotationGesture=null;Notice="Hold a coloured rotation ring and move around it to rotate";return true;}
+                    if(gestureHandle){Notice="Hold the visible tool handle and move to edit; tap the model body to change selection";return true;}
                     Selection.Pick(picked.ObjectId,picked.Generation,pickedComponent,pickedIndex,(string)frozenModel["topology_token"],false);
                     dirtySelection=true;Selection.InvalidateIntent();
                     if(pickedComponent=="object")
@@ -218,15 +241,18 @@ namespace SpatialModeling
                 }
                 if(waiting||!Session.Active||Session.Sequence==0)
                 {Cancel("Released before acknowledged live preview; no edit committed");return true;}
-                QueueParameters(ray);Session.Commit();Notice="Finishing native edit · one Undo on acknowledgement";return true;
+                QueueParameters(ray);
+                if(Session.Active&&moved){Session.Commit();Notice="Finishing native edit · one Undo on acknowledgement";}
+                return true;
             }
             if(Session.Busy)
             {Notice=Session.Notice;distance=4;return true;}
             if(waiting){distance=4;return true;}
             if(grip)return false;
             var view=scene.PickObject(ray,out float hitDistance);
+            string routeTool=(string)Model?["tool"]??CanonicalTool((string)Model?["native_tool"],(string)Model?["component"])??"";
             bool ownMoveFence=view!=null&&view.ObjectId==Selection.ActiveId&&Mathf.Abs(hitDistance-nearest)<.0005f
-                &&((string)Model?["tool"]??"").EndsWith(".translate",StringComparison.Ordinal);
+                &&(routeTool.EndsWith(".translate",StringComparison.Ordinal)||routeTool.EndsWith(".scale",StringComparison.Ordinal)||routeTool=="mesh.extrude");
             float moveArrowLimit=nearest;
             if(ownMoveFence)
             {
@@ -236,16 +262,21 @@ namespace SpatialModeling
             }
             bool handleHit=TryHandle(ray,nearest,out var handleAxis,out var constraint,out float handleDistance,moveArrowLimit);
             bool rotationRing=handleHit&&((string)Model?["tool"]??"").EndsWith(".rotate",StringComparison.Ordinal);
-            bool ownMoveArrow=handleHit&&translationPickedArrow&&ownMoveFence;
+            bool ownMoveArrow=handleHit&&(translationPickedArrow||normalPicked||routeTool.EndsWith(".scale",StringComparison.Ordinal))&&ownMoveFence;
             if(handleHit&&(view==null||handleDistance<=hitDistance+.015f||(rotationRing||ownMoveArrow)&&view.ObjectId==Selection.ActiveId))
             {view=FindView(Selection.ActiveId);hitDistance=handleDistance;}
             else handleHit=false;
-            if(view==null||hitDistance>nearest+.0005f&&!ownMoveArrow)return false;
+            if(view==null||hitDistance>nearest+.0005f&&!ownMoveArrow){hoverPoint=null;hoverIndex=-1;return false;}
             distance=hitDistance;Notice=ToolLabel();
+            hoverPoint=null;hoverIndex=-1;hoverComponent=null;
+            if(Model!=null&&view.ObjectId==(string)Model["active_object_id"]&&(string)Model["mode"]=="EDIT_MESH"
+                &&DirectModelEditMath.TryPick(Model,view.NativeToDisplayMatrix,ray,.012f,out int hover,out _,out var hoverAt))
+            {hoverPoint=hoverAt;hoverIndex=hover;hoverComponent=(string)Model["component"];}
             if(!pressed)return true;
             if(!drawing.NativeStateCurrent||Model==null){Notice="Wait for current native Blender tool state";return true;}
             picked=view;ownerHand=hand;frozenModel=(JObject)Model.DeepClone();primaryMap=view.NativeToDisplayMatrix;primaryNativeRotation=view.NativeRotation;
             pickedComponent=(string)frozenModel["component"]??"object";pickedIndex=-1;
+            pressBlocked=null;attempted=attemptReported=controllerCancelled=false;snapPoint=null;
             bool mesh=(string)frozenModel["mode"]=="EDIT_MESH";
             if(mesh)
             {
@@ -256,15 +287,24 @@ namespace SpatialModeling
                 else if(knife)validPick=TryKnifeStart(ray,out pickedIndex);
                 else validPick=DirectModelEditMath.TryPick(frozenModel,primaryMap,ray,.012f,out pickedIndex,out _,out _);
                 if((string)frozenModel["active_object_id"]!=view.ObjectId||!validPick)
-                {Notice="Aim at a visible native "+pickedComponent;return true;}
+                {pressBlocked="Aim at a visible native "+pickedComponent+" on the active Blender object";Notice=pressBlocked;}
             }
             depth=hitDistance;startPoint=currentPoint=ray.GetPoint(depth);firstRay=ray;
             lastRay=ray;lastParameters=null;
             gizmoConstraint=handleHit?constraint:null;
-            bool plane=handleHit&&constraint.Count(value=>value)==2;
+            gestureHandle=handleHit;
+            bool plane=handleHit&&constraint!=null&&constraint.Count(value=>value)==2;
             gizmoAxis=handleHit&&!plane?handleAxis:(Vector3?)null;gizmoPlaneNormal=plane?handleAxis:(Vector3?)null;
             rotationGesture=handleHit&&rotationRing?new DirectRotationHandles.Gesture(rotationPickFrame,rotationPick,ray):null;
             translationGestureFrame=handleHit&&translationPickedArrow?translationPickFrame:null;
+            gestureNormalConstrained=handleHit&&normalPicked;
+            nativeMirrored=view.NativeScale.x*view.NativeScale.y*view.NativeScale.z<0;
+            var viewRight=Vector3.Cross(Vector3.up,ray.direction).normalized;if(viewRight.sqrMagnitude<.1f)viewRight=Vector3.right;
+            metricDirectionNative=gestureNormalConstrained?normalPickNative:primaryMap.inverse.MultiplyVector(viewRight).normalized;
+            gestureIndices=Selection.ActiveId==view.ObjectId&&Selection.Component==pickedComponent?Selection.Indices.ToArray():Array.Empty<int>();
+            if(gestureIndices.Length==0&&pickedIndex>=0)gestureIndices=new[]{pickedIndex};
+            gesturePivot=primaryMap.inverse.MultiplyPoint3x4(SelectionPivotDisplay());
+            gestureDisplayPivot=SelectionPivotDisplay();gestureAxes=new[]{Axis(0),Axis(1),Axis(2)};
             if(((string)frozenModel["tool"]??"").EndsWith(".scale",StringComparison.Ordinal)&&(bool?)frozenModel["available"]==true)scaleFeedback.Begin();
             else scaleFeedback.Hide();
             context=ToolContext(frozenModel);identity=Identity();operation=null;targets=null;
@@ -283,20 +323,36 @@ namespace SpatialModeling
         {foreach(var view in scene.ObjectViews)if(view!=null&&view.ObjectId==id)return view;return null;}
         void StartMovement()
         {
-            string tool=(string)frozenModel["tool"]??CanonicalTool((string)frozenModel["native_tool"],pickedComponent);
-            if(tool.EndsWith(".selection",StringComparison.Ordinal)){Notice="Selection tool · trigger taps select; SHIFT adds/removes";return;}
-            if((bool?)frozenModel["available"]!=true){Notice=(string)frozenModel["reason"]??"Native tool unavailable";return;}
+            string tool=ToolOf(frozenModel);
+            string canonical=CanonicalTool((string)frozenModel["native_tool"],pickedComponent);
+            if(canonical==null||!Available&&(string)frozenModel["mode"]!="EDIT_MESH")
+            {Refuse(true,(string)frozenModel["reason"]??"This Blender tool is not available for direct 3D editing. Use the Blender view.");return;}
+            if(!Available||!SupportedOperation(tool))
+            {Refuse(false,(string)frozenModel["reason"]??"Choose mesh Edit mode and the appropriate vertex, edge or face selection mode in Blender for this tool.");return;}
+            if(tool.EndsWith(".selection",StringComparison.Ordinal))
+            {Refuse(true,"Spatial box, lasso and circle sweep selection is not available yet. Use trigger taps + SHIFT to select multiple elements, or use the Blender 2D view.");return;}
+            if((bool?)frozenModel["available"]!=true)
+            {string reason=(string)frozenModel["reason"]??"Native tool unavailable";Refuse(UnavailableReason(reason),reason);return;}
+            if(pressBlocked!=null){Refuse(false,pressBlocked);return;}
+            var prospective=Selection.ActiveId==picked.ObjectId&&Selection.Component==pickedComponent&&
+                (Selection.Contains(picked.ObjectId,pickedComponent,pickedIndex)||Selection.Additive)?Selection.Indices.ToList():new List<int>();
+            if(pickedComponent!="object"&&!prospective.Contains(pickedIndex))prospective.Add(pickedIndex);
+            if(!ValidateComponents(tool,prospective,out string blocked)){Refuse(false,blocked);return;}
             Selection.Pick(picked.ObjectId,picked.Generation,pickedComponent,pickedIndex,(string)frozenModel["topology_token"],true);
+            gestureIndices=Selection.Indices.ToArray();
             targets=Selection.Targets();foreach(JObject target in targets)
             {
-                var view=FindView((string)target["id"]);if(view==null){Cancel("A selected floating object is unavailable");return;}
+                var view=FindView((string)target["id"]);if(view==null){Refuse(false,"A selected floating object is unavailable. Wait for the current Blender scene, then select again.");Cancel(Notice);return;}
                 views[view.ObjectId]=view;maps[view.ObjectId]=view.NativeToDisplayMatrix;
             }
             commonPivot=SelectionPivotDisplay();
+            gesturePivot=primaryMap.inverse.MultiplyPoint3x4(commonPivot);
+            gestureDisplayPivot=commonPivot;gestureAxes=new[]{Axis(0),Axis(1),Axis(2)};
             CaptureScaleContacts(tool);
             var settings=frozenModel["settings"] is JObject nativeSettings?(JObject)nativeSettings.DeepClone():new JObject();
             if((string)frozenModel["native_tool"]=="builtin.extrude_individual")settings["individual"]=true;
             if(gizmoConstraint!=null)settings["constraint_axis"]=new JArray(gizmoConstraint);
+            if(gestureNormalConstrained)settings["constraint_axis"]=new JArray(false,false,false);
             operation=new JObject { ["tool"]=tool,["native_tool"]=frozenModel["native_tool"],["mode"]=frozenModel["mode"],
                 ["target_id"]=picked.ObjectId,["targets"]=new JArray(Selection.ObjectIds),
                 ["selection"]=new JObject { ["component"]=pickedComponent,["indices"]=new JArray(Selection.Indices) },
@@ -309,13 +365,66 @@ namespace SpatialModeling
             void Begin()
             {
                 if(!held||requestedGesture!=gestureEpoch)return;waiting=false;
-                if(!ValidStart()){Cancel("Native context changed during input handoff");return;}
-                if(!Session.Begin(operation,targets)){Cancel(Session.Notice);return;}
+                if(!ValidStart()){Refuse(false,"Native context changed during input handoff. Wait for the current Blender scene and try again.");Cancel(Notice);return;}
+                if(!Session.Begin(operation,targets)){Refuse(false,Session.Notice);Cancel(Session.Notice);return;}
                 QueueParameters(lastRay);
             }
             if(drawing.NativeCommandReady)Begin();
             else
-            {waiting=true;preview.HandoffNativeCommand(Begin,reason=>{if(requestedGesture==gestureEpoch)Cancel(reason);},true);}
+            {waiting=true;preview.HandoffNativeCommand(Begin,reason=>{if(requestedGesture==gestureEpoch){Refuse(false,reason);Cancel(reason);}},true);}
+        }
+        static bool SupportedOperation(string tool)
+        {
+            return new[]{"object.translate","object.rotate","object.scale","object.selection","mesh.translate","mesh.rotate","mesh.scale","mesh.selection",
+                "mesh.extrude","mesh.inset","mesh.bevel","mesh.loop_cut","mesh.knife","mesh.merge","mesh.dissolve","mesh.delete"}.Contains(tool);
+        }
+        static bool UnavailableReason(string reason)
+        {
+            string text=(reason??"").ToLowerInvariant();
+            return text.Contains("unsupported tool")||text.Contains("unsupported feature")||text.Contains("not implemented")||text.Contains("not available yet");
+        }
+        void Refuse(bool unavailable,string reason)
+        {
+            if(string.IsNullOrWhiteSpace(reason))reason=unavailable?"This Blender feature is not available for direct 3D editing. Use the Blender 2D view.":"Choose a compatible tool, selection and settings in Blender, then try again.";
+            reason=new string(reason.Where(c=>!char.IsControl(c)||c=='\n').ToArray());
+            Notice=reason;scaleFeedback.Hide();
+            if(attemptReported)return;attemptReported=true;
+            if(unavailable)UnavailableAttempt?.Invoke(reason);else BlockedAttempt?.Invoke(reason);
+        }
+        bool ValidateComponents(string tool,IReadOnlyList<int> indices,out string reason)
+        {
+            reason=null;if(!tool.StartsWith("mesh.",StringComparison.Ordinal))return true;
+            if((string)frozenModel["mode"]!="EDIT_MESH"){reason="Switch Blender to mesh Edit mode before using this tool on the floating model.";return false;}
+            string collection=pickedComponent=="vertex"?"vertices":pickedComponent=="edge"?"edges":pickedComponent=="face"?"faces":null;
+            var geometry=collection==null?null:frozenModel[collection] as JArray;
+            if(geometry==null||indices.Count==0||indices.Any(index=>!geometry.OfType<JObject>().Any(item=>(int?)item["index"]==index)))
+            {reason="Select visible native mesh elements before editing. Refresh the Blender view if the selection changed.";return false;}
+            bool individual=(string)frozenModel["native_tool"]=="builtin.extrude_individual"||(bool?)frozenModel["settings"]?["individual"]==true;
+            if((tool=="mesh.inset"||tool=="mesh.extrude"&&individual)&&pickedComponent!="face")
+            {reason="Select faces in Blender for "+(tool=="mesh.inset"?"Inset Faces":"Extrude Individual Faces")+".";return false;}
+            if(tool=="mesh.extrude"&&individual)
+            {
+                var settings=frozenModel["settings"];
+                if(settings?["constraint_axis"] is JArray constraints&&constraints.Values<bool>().Any(value=>value)||
+                    (bool?)settings?["use_snap"]==true||((float?)settings?["proportional_radius_m"]??0)>0)
+                {reason="Individual face extrusion uses each face normal. Turn off axis constraints, snapping and proportional editing for this gesture, then transform separately.";return false;}
+            }
+            if(tool=="mesh.bevel"&&(string)frozenModel["settings"]?["offset_type"]=="PERCENT")
+            {reason="Choose a distance based Bevel width in Blender (Offset, Width, Depth or Absolute), or use the Blender view for percentage bevels.";return false;}
+            if(tool=="mesh.merge")
+            {
+                if(pickedComponent!="vertex"||indices.Count<2){reason="Merge needs at least two selected vertices. Use vertex selection and SHIFT to add vertices first.";return false;}
+                string variant=(string)frozenModel["settings"]?["variant"]??"CENTER";
+                if((variant=="FIRST"||variant=="LAST")&&(bool?)frozenModel["selection"]?["order_complete"]!=true)
+                {reason="Merge "+variant+" needs a complete ordered Blender vertex selection. Select the destination in Blender or choose Center / Collapse / By Distance.";return false;}
+            }
+            if(tool=="mesh.loop_cut")
+            {
+                if(pickedComponent!="edge"||indices.Count!=1){reason="Loop Cut needs exactly one selected edge on a visible quad ring. Select one edge first.";return false;}
+                var guide=DirectToolGuides.Build(new DirectToolGuides.Frame{Tool=tool,Component=pickedComponent,Model=frozenModel,Indices=indices.ToArray(),Map=primaryMap});
+                if(!guide.Valid||!string.IsNullOrEmpty(guide.Limitation)){reason=string.IsNullOrEmpty(guide.Limitation)?"Choose an edge with a continuous quad ring for Loop Cut.":guide.Limitation;return false;}
+            }
+            return true;
         }
         bool ValidStart()
         {
@@ -344,12 +453,13 @@ namespace SpatialModeling
                 if(tool=="mesh.extrude")
                 {
                     value["individual"]=(bool?)settings["individual"]??false;
-                    if ((bool)value["individual"]) value["normal_distance_m"]=MetricDrag(primaryMap,displayDelta,firstRay.direction);
+                    if ((bool)value["individual"]) value["normal_distance_m"]=Vector3.Dot(native,metricDirectionNative);
                 }
                 var result=PerTarget(value,(map)=>new JObject { ["translation_m"]=DirectModelEditMath.ToWire(map.inverse.MultiplyVector(displayDelta)) });
                 if((bool?)settings["use_snap"]==true&&(bool?)settings["use_snap_translate"]!=false&&TrySnap(ray,settings,out var snap,out var normal))
                 {
                     result["snap_point_m"]=DirectModelEditMath.ToWire(snap);
+                    snapPoint=primaryMap.MultiplyPoint3x4(snap);
                     result["snap_target"]=(string)settings["snap_target"]??"CLOSEST";
                     if((bool?)settings["use_snap_align_rotation"]==true&&normal.HasValue)
                     {result["snap_align_rotation"]=true;result["snap_normal"]=DirectModelEditMath.ToWire(normal.Value);}
@@ -370,7 +480,9 @@ namespace SpatialModeling
             }
             if(tool.EndsWith(".scale",StringComparison.Ordinal))
             {
-                float factor=Mathf.Exp(Mathf.Clamp(ScalarDrag(displayDelta)*3,-4.6f,4.6f));
+                float amount=gizmoAxis.HasValue&&gizmoConstraint!=null&&gizmoConstraint.Count(value=>value)==1?
+                    Vector3.Dot(displayDelta,gizmoAxis.Value):ScalarDrag(displayDelta);
+                float factor=Mathf.Exp(Mathf.Clamp(amount*3,-4.6f,4.6f));
                 var selected=gizmoConstraint??(settings["constraint_axis"] as JArray)?.Values<bool>().ToArray();
                 if(selected==null||selected.Length!=3||!selected.Any(value=>value))selected=new[] {true,true,true};
                 var scale=new JArray(selected[0]?factor:1,selected[1]?factor:1,selected[2]?factor:1);
@@ -379,18 +491,18 @@ namespace SpatialModeling
                 {var branches=new JObject();foreach(var entry in maps)branches[entry.Key]=ScaleFor(entry.Key,entry.Value,scale,true);value["per_target"]=branches;}
                 return value;
             }
-            if(tool=="mesh.inset")return new JObject { ["thickness_m"]=Mathf.Abs(MetricDrag(primaryMap,displayDelta,firstRay.direction)),["depth_m"]=0,
+            if(tool=="mesh.inset")return new JObject { ["thickness_m"]=native.magnitude,["depth_m"]=0,
                 ["individual"]=(bool?)settings["individual"]??false,["outset"]=(bool?)settings["outset"]??false,
                 ["even_offset"]=(bool?)settings["even_offset"]??true,["relative_offset"]=(bool?)settings["relative_offset"]??false,
                 ["boundary"]=(bool?)settings["boundary"]??true };
-            if(tool=="mesh.bevel")return new JObject { ["width_m"]=Mathf.Abs(MetricDrag(primaryMap,displayDelta,firstRay.direction)),
+            if(tool=="mesh.bevel")return new JObject { ["width_m"]=native.magnitude,
                 ["segments"]=(int?)settings["segments"]??1,["profile"]=(float?)settings["profile"]??.5f,
                 ["vertices"]=settings["affect"]!=null?(string)settings["affect"]=="VERTICES":pickedComponent=="vertex",["clamp_overlap"]=(bool?)settings["clamp_overlap"]??true,
                 ["offset_type"]=(string)settings["offset_type"]??"OFFSET" };
             if(tool=="mesh.loop_cut")return new JObject { ["cuts"]=(int?)settings["cuts"]??1,["slide"]=LoopSlide(native) };
             if(tool=="mesh.knife")
             {
-                AddKnifePoint(ray);if(knifePath.Count<2)return null;
+                if(!AddKnifePoint(ray)||knifePath.Count<2)return null;
                 return new JObject { ["path_m"]=new JArray(knifePath.Select(p=>(object)DirectModelEditMath.ToWire(p))),
                     ["projection"]=MatrixArray(projection),["cut_through"]=(bool?)settings["cut_through"]??false,
                     ["selected_only"]=(bool?)settings["selected_only"]??false };
@@ -614,13 +726,15 @@ namespace SpatialModeling
             nativePoint=bestNative;nativeNormal=bestNormal;
             return found;
         }
-        void AddKnifePoint(Ray ray)
+        bool AddKnifePoint(Ray ray)
         {
-            if(frozenModel==null)return;var model=(JObject)frozenModel.DeepClone();model["component"]="face";
-            if(!DirectModelEditMath.TryPick(model,primaryMap,ray,.012f,out _,out _,out var hit))return;
+            if(frozenModel==null)return false;var model=(JObject)frozenModel.DeepClone();model["component"]="face";
+            if(!DirectModelEditMath.TryPick(model,primaryMap,ray,.012f,out _,out _,out var hit))return true;
             var native=primaryMap.inverse.MultiplyPoint3x4(hit);
-            if(knifePath.Count>0&&Vector3.Distance(knifePath[knifePath.Count-1],native)<.001f)return;
-            if(knifePath.Count==128)knifePath[127]=native;else knifePath.Add(native);
+            if(knifePath.Count>0&&Vector3.Distance(knifePath[knifePath.Count-1],native)<.001f)return true;
+            if(knifePath.Count>=128)
+            {Refuse(false,"Knife stroke is too long; use a shorter stroke");CancelWithCause(Notice,"knife_sample_limit");return false;}
+            knifePath.Add(native);return true;
         }
         bool TryKnifeStart(Ray ray,out int componentIndex)
         {
@@ -639,6 +753,8 @@ namespace SpatialModeling
         {CancelWithCause(reason,"request");}
         void CancelWithCause(string reason,string cause)
         {
+            if(attempted&&cause!="request")Refuse(false,reason);
+            controllerCancelled=true;
             if(held||Busy||waiting)
                 Debug.Log("P25_LIVE_CANCEL cause="+cause+" phase="+DiagnosticFlag(Session.Phase)+" tool="+DiagnosticFlag((string)Model?["tool"])
                     +" native="+DiagnosticFlag((string)Model?["native_tool"])+" mode="+DiagnosticFlag((string)Model?["mode"])
@@ -664,18 +780,22 @@ namespace SpatialModeling
             return !float.IsPositiveInfinity(distance);
         }
         public void Dispose()
-        {Cancel("Controller owner disposed");Session.Changed-=Changed;rotationHandles.Dispose();translationHandles.Dispose();scaleFeedback.Dispose();if(handleRoot!=null)Release(handleRoot);if(selectionRoot!=null)Release(selectionRoot);if(handleMaterial!=null)Release(handleMaterial);}
+        {Cancel("Controller owner disposed");Session.Changed-=Changed;rotationHandles.Dispose();translationHandles.Dispose();scaleFeedback.Dispose();toolGuides.Dispose();if(handleRoot!=null)Release(handleRoot);if(selectionRoot!=null)Release(selectionRoot);if(handleMaterial!=null)Release(handleMaterial);if(axisMaterial!=null)Release(axisMaterial);}
         public static string CanonicalTool(string native,string component)
         {
             string suffix=native=="builtin.move"?"translate":native=="builtin.rotate"?"rotate":native=="builtin.scale"?"scale":
                 native=="builtin.inset_faces"||native=="builtin.inset"?"inset":native=="builtin.bevel"?"bevel":native=="builtin.loop_cut"?"loop_cut":
-                native=="builtin.knife"?"knife":native!=null&&native.StartsWith("builtin.extrude",StringComparison.Ordinal)?"extrude":"selection";
-            return (component=="object"?"object.":"mesh.")+suffix;
+                native=="builtin.knife"?"knife":new[]{"builtin.extrude_region","builtin.extrude_region_move","builtin.extrude_individual"}.Contains(native)?"extrude":
+                native=="spatial_modeling.merge"?"merge":native=="spatial_modeling.dissolve"?"dissolve":native=="spatial_modeling.delete"?"delete":
+                new[]{"builtin.select","builtin.select_box","builtin.select_lasso","builtin.select_circle"}.Contains(native)?"selection":null;
+            return suffix==null?null:(component=="object"?"object.":"mesh.")+suffix;
         }
+        static string ToolOf(JObject model)
+        {string tool=(string)model?["tool"];return string.IsNullOrEmpty(tool)?CanonicalTool((string)model?["native_tool"],(string)model?["component"])??"":tool;}
         static Matrix4x4 SwapMatrix(){var m=Matrix4x4.identity;m[1,1]=m[2,2]=0;m[1,2]=m[2,1]=1;return m;}
         static JArray MatrixArray(Matrix4x4 m){var a=new JArray();for(int r=0;r<4;r++)for(int c=0;c<4;c++)a.Add(m[r,c]);return a;}
         static void Release(UnityEngine.Object obj){if(Application.isPlaying)UnityEngine.Object.Destroy(obj);else UnityEngine.Object.DestroyImmediate(obj);}
-        void HideHandles(){rotationHandles.Hide();translationHandles.Hide();if(handleRoot!=null)handleRoot.SetActive(false);if(selectionRoot!=null)selectionRoot.SetActive(false);}
+        void HideHandles(){rotationHandles.Hide();translationHandles.Hide();toolGuides.Hide();if(handleRoot!=null)handleRoot.SetActive(false);if(selectionRoot!=null)selectionRoot.SetActive(false);}
         DirectTranslationHandles.Frame TranslationFrame(WorkspaceObjectView view)
         {
             var pivot=SelectionPivotDisplay();var camera=Camera.main;
@@ -715,12 +835,71 @@ namespace SpatialModeling
                 basis=DirectModelEditMath.ToUnity(new JArray(matrix[index],matrix[3+index],matrix[6+index]));
             return view!=null?view.NativeToDisplayMatrix.MultiplyVector(basis).normalized:basis;
         }
+        void DrawGuides()
+        {
+            bool captured=held||moved&&Busy;
+            var model=captured?frozenModel:Model;var view=captured?picked:FindView(Selection.ActiveId);
+            if(!enabled||!drawing.NativeStateCurrent||!scene.IsCurrent||!scene.DisplayPlacementReady||view==null||model==null||!Available||!held&&Busy&&!moved)
+            {guideFrame=null;toolGuides.Hide();return;}
+            string tool=ToolOf(model);
+            if(!SupportedOperation(tool)){guideFrame=null;toolGuides.Hide();return;}
+            var ack=captured&&moved&&Session.Busy?Session.AcknowledgedParameters:null;
+            var settings=(captured?operation?["settings"]:model["settings"]) as JObject??model["settings"] as JObject;
+            guideFrame=new DirectToolGuides.Frame{Tool=tool,Component=captured?pickedComponent:Selection.Component,Model=model,
+                Map=captured?primaryMap:view.NativeToDisplayMatrix,Pivot=captured?gesturePivot:view.NativeToDisplayMatrix.inverse.MultiplyPoint3x4(SelectionPivotDisplay()),
+                Indices=captured?gestureIndices.ToArray():Selection.Indices.ToArray(),KnifePath=captured?knifePath.ToArray():Array.Empty<Vector3>(),
+                Acknowledged=ack,Held=held,Waiting=captured&&(waiting||ack==null||!JToken.DeepEquals(lastParameters,ack)),
+                NativeObjectMirrored=captured?nativeMirrored:view.NativeScale.x*view.NativeScale.y*view.NativeScale.z<0,
+                ExtrudeNormalConstrained=captured&&gestureNormalConstrained,Radius=(float?)settings?["proportional_radius_m"],
+                HoverPoint=captured?null:hoverPoint,HoverIndex=captured?-1:hoverIndex,HoverComponent=captured?null:hoverComponent,
+                SnapPoint=captured?snapPoint:null,IntentLabel=IntentLabel(tool,captured)};
+            toolGuides.Draw(guideFrame,Camera.main);
+        }
+        string IntentLabel(string tool,bool captured)
+        {
+            if(tool=="mesh.inset"||tool=="mesh.bevel")return "Distance from the grab start: move away to increase, return to reduce · native mm after ACK";
+            if(tool=="mesh.extrude")
+            {
+                bool individual=(string)(captured?frozenModel:Model)?["native_tool"]=="builtin.extrude_individual";
+                if(captured&&gestureNormalConstrained)return "Yellow normal: outward extends; inward reverses · frozen native normal";
+                if(individual)return "Grab a yellow normal, or drag right to extend / left to reverse along each face normal";
+                return "Grab XYZ arrows for an axis; yellow face normal for normal movement; body drag moves freely";
+            }
+            if(tool.EndsWith(".scale",StringComparison.Ordinal))return "Cube end: outward grows, inward shrinks · body / plane: right or up grows";
+            if(tool=="mesh.knife")return "Cyan path: controller stroke preview, not cut geometry · amounts below require Blender ACK";
+            return "Release: one native Undo step · grip: cancel and restore";
+        }
+        bool TryNormalHandle(WorkspaceObjectView view,Ray ray,float limit,out Vector3 direction,out float distance)
+        {
+            direction=default;distance=limit;
+            var model=Model;if(Selection.Component!="face"||!(model?["vertices"] is JArray vertices)||!(model["faces"] is JArray faces))return false;
+            var points=vertices.OfType<JObject>().ToDictionary(item=>(int)item["index"],item=>DirectModelEditMath.ToUnity((JArray)item["position"]));
+            var normals=new List<(Vector3 centre,Vector3 normal)>();bool mirrored=view.NativeScale.x*view.NativeScale.y*view.NativeScale.z<0;
+            foreach(JObject face in faces)if(Selection.Indices.Contains((int)face["index"])&&face["vertices"] is JArray ids&&ids.Count>=3&&ids.Values<int>().All(points.ContainsKey))
+            {
+                var path=ids.Values<int>().Select(id=>points[id]).ToArray();Vector3 centre=Vector3.zero,normal=Vector3.zero,origin=path[0];
+                foreach(var p in path)centre+=p;centre/=path.Length;
+                for(int i=0;i<path.Length;i++)normal+=Vector3.Cross(path[i]-origin,path[(i+1)%path.Length]-origin);
+                if(normal.sqrMagnitude>1e-16f)normals.Add((centre,normal.normalized*(mirrored?1:-1)));
+            }
+            bool individual=(string)model["native_tool"]=="builtin.extrude_individual";
+            if(normals.Count==0||!individual&&normals.Any(value=>Vector3.Dot(value.normal,normals[0].normal)<.9999f))return false;
+            bool found=false;
+            foreach(var value in normals.Take(24))
+            {
+                var at=view.NativeToDisplayMatrix.MultiplyPoint3x4(value.centre);var axis=view.NativeToDisplayMatrix.MultiplyVector(value.normal).normalized;
+                if(Mathf.Abs(Vector3.Dot(axis,ray.direction.normalized))>.96f)continue;
+                if(RaySegment(ray,at+axis*.015f,at+axis*.11f,out float miss,out float depth)&&miss<=Mathf.Clamp(depth*.006f,.01f,.018f)&&depth<distance)
+                {found=true;distance=depth;direction=axis;normalPickNative=value.normal;}
+            }
+            return found;
+        }
         bool TryHandle(Ray ray,float nearest,out Vector3 axis,out bool[] constraint,out float distance,float moveArrowLimit=-1)
         {
-            translationPickedArrow=false;
+            translationPickedArrow=normalPicked=false;
             axis=default;constraint=null;distance=nearest;
-            var view=FindView(Selection.ActiveId);string tool=(string)Model?["tool"]??"";
-            if(view==null||!(tool.EndsWith(".translate")||tool.EndsWith(".rotate")||tool.EndsWith(".scale")))return false;
+            var view=FindView(Selection.ActiveId);string tool=ToolOf(Model);
+            if(view==null||(bool?)Model?["available"]!=true||!(tool.EndsWith(".translate")||tool.EndsWith(".rotate")||tool.EndsWith(".scale")||tool=="mesh.extrude"))return false;
             if(tool.EndsWith(".rotate",StringComparison.Ordinal))
             {
                 rotationPickFrame=RotationFrame(view);
@@ -731,7 +910,11 @@ namespace SpatialModeling
                 distance=rotationPick.Distance;return true;
             }
             Vector3 pivot=SelectionPivotDisplay();bool hit=false;
-            bool move=tool.EndsWith(".translate",StringComparison.Ordinal);
+            float axisLimit=moveArrowLimit>0?moveArrowLimit:nearest;
+            if(tool=="mesh.extrude"&&TryNormalHandle(view,ray,axisLimit,out var normalDirection,out float normalDepth))
+            {normalPicked=true;axis=normalDirection;distance=normalDepth;return true;}
+            bool move=tool.EndsWith(".translate",StringComparison.Ordinal)||tool=="mesh.extrude";
+            if(tool=="mesh.extrude"&&(string)Model["native_tool"]=="builtin.extrude_individual")return false;
             if(move)
             {
                 translationPickFrame=TranslationFrame(view);
@@ -744,8 +927,13 @@ namespace SpatialModeling
                 // An end-on axis overlaps the free-move center; it must not
                 // silently turn an ordinary body drag into a depth constraint.
                 if(Mathf.Abs(Vector3.Dot(direction,ray.direction.normalized))>.96f)continue;
-                if(RaySegment(ray,a,b,out float miss,out float depth)&&miss<.008f&&depth<distance)
-                {distance=depth;axis=direction;constraint=new[] {i==0,i==1,i==2};hit=true;}
+                bool cube=new Bounds(b,Vector3.one*.022f).IntersectRay(ray,out float cubeDepth)&&cubeDepth>0&&cubeDepth<axisLimit;
+                if(cube||RaySegment(ray,a,b,out float miss,out float depth)&&miss<.008f&&depth<axisLimit)
+                {
+                    float at=cube?cubeDepth:Vector3.Dot(b-ray.origin,ray.direction.normalized);
+                    if(!cube)RaySegment(ray,a,b,out _,out at);
+                    if(!hit||at<distance){distance=at;axis=direction;constraint=new[] {i==0,i==1,i==2};hit=true;}
+                }
             }
             if(!tool.EndsWith(".rotate"))for(int normal=0;normal<3;normal++)
             {
@@ -766,30 +954,51 @@ namespace SpatialModeling
         }
         void DrawHandles()
         {
-            var view=FindView(Selection.ActiveId);string tool=(string)Model?["tool"]??"";
-            if(view==null||!(tool.EndsWith(".translate")||tool.EndsWith(".rotate")||tool.EndsWith(".scale"))){HideHandles();return;}
+            var view=FindView(Selection.ActiveId);string tool=ToolOf(Model);
+            if(view==null||(bool?)Model?["available"]!=true||!(tool.EndsWith(".translate")||tool.EndsWith(".rotate")||tool.EndsWith(".scale")||tool=="mesh.extrude")){HideHandles();return;}
             if(tool.EndsWith(".rotate",StringComparison.Ordinal))
             {translationHandles.Hide();if(handleRoot!=null)handleRoot.SetActive(false);rotationHandles.Draw(RotationFrame(view),highlightedRotationAxis);return;}
             rotationHandles.Hide();
-            bool move=tool.EndsWith(".translate",StringComparison.Ordinal);
+            bool move=tool.EndsWith(".translate",StringComparison.Ordinal)||tool=="mesh.extrude"&&(string)Model["native_tool"]!="builtin.extrude_individual";
             if(move)translationHandles.Draw(TranslationFrame(view),translationAxis);else translationHandles.Hide();
+            if(tool=="mesh.extrude"&&!move){if(handleRoot!=null)handleRoot.SetActive(false);return;}
+            DrawLinearHandles(tool,SelectionPivotDisplay(),new[]{Axis(0),Axis(1),Axis(2)});
+        }
+        void DrawLinearHandles(string tool,Vector3 pivot,Vector3[] axes)
+        {
+            if(axes==null||axes.Length!=3)return;
+            bool scale=tool.EndsWith(".scale",StringComparison.Ordinal);
             if(handleRoot==null)
             {
                 handleRoot=new GameObject("Native tool axes · no alternate modeling menu");
-                if(handleMaterial==null)handleMaterial=new Material(Shader.Find("Universal Render Pipeline/Unlit")??Shader.Find("UI/Default"));
+                axisMaterial=new Material(Shader.Find("UI/Default")??Shader.Find("Universal Render Pipeline/Unlit")){name="Native axis / Scale cube overlay",renderQueue=4000};
+                axisMaterial.SetInt("unity_GUIZTestMode",(int)UnityEngine.Rendering.CompareFunction.Always);
+                if(axisMaterial.HasProperty("_ZTest"))axisMaterial.SetInt("_ZTest",(int)UnityEngine.Rendering.CompareFunction.Always);
+                if(axisMaterial.HasProperty("_ZWrite"))axisMaterial.SetInt("_ZWrite",0);
                 foreach(var colour in new[] {Color.red,Color.green,Color.blue,new Color(1,1,0),new Color(0,1,1),new Color(1,0,1)})
                 {
                     var obj=new GameObject("Native constraint axis");obj.transform.SetParent(handleRoot.transform,false);
-                    var line=obj.AddComponent<LineRenderer>();line.sharedMaterial=handleMaterial;line.useWorldSpace=true;line.positionCount=2;line.widthMultiplier=.003f;
+                    var line=obj.AddComponent<LineRenderer>();line.sharedMaterial=axisMaterial;line.useWorldSpace=true;line.positionCount=2;line.widthMultiplier=.003f;
                     line.startColor=line.endColor=colour;handles.Add(line);
                 }
+                for(int i=0;i<3;i++)
+                {
+                    var cube=GameObject.CreatePrimitive(PrimitiveType.Cube);cube.name="Native "+"XYZ"[i]+" Scale cube";cube.transform.SetParent(handleRoot.transform,false);
+                    var collider=cube.GetComponent<Collider>();if(collider!=null){collider.enabled=false;Release(collider);}
+                    cube.GetComponent<Renderer>().sharedMaterial=axisMaterial;
+                    var colour=new MaterialPropertyBlock();colour.SetColor("_BaseColor",i==0?Color.red:i==1?Color.green:Color.blue);colour.SetColor("_Color",i==0?Color.red:i==1?Color.green:Color.blue);
+                    cube.GetComponent<Renderer>().SetPropertyBlock(colour);scaleEnds.Add(cube.transform);
+                }
             }
-            var pivot=SelectionPivotDisplay();
-            handleRoot.SetActive(true);for(int i=0;i<3;i++){handles[i].gameObject.SetActive(!move);handles[i].SetPosition(0,pivot+Axis(i)*.025f);handles[i].SetPosition(1,pivot+Axis(i)*.11f);}
+            handleRoot.SetActive(true);for(int i=0;i<3;i++)
+            {
+                handles[i].gameObject.SetActive(scale);handles[i].SetPosition(0,pivot+axes[i]*.025f);handles[i].SetPosition(1,pivot+axes[i]*.11f);
+                scaleEnds[i].gameObject.SetActive(scale);scaleEnds[i].position=pivot+axes[i]*.11f;scaleEnds[i].rotation=Quaternion.identity;scaleEnds[i].localScale=Vector3.one*.022f;
+            }
             for(int normal=0;normal<3;normal++)
             {
                 var line=handles[3+normal];line.gameObject.SetActive(!tool.EndsWith(".rotate"));line.positionCount=5;
-                var a=Axis((normal+1)%3);var b=Axis((normal+2)%3);var p=pivot;
+                var a=axes[(normal+1)%3];var b=axes[(normal+2)%3];var p=pivot;
                 line.SetPositions(new[] {p+a*.025f+b*.025f,p+a*.05f+b*.025f,p+a*.05f+b*.05f,p+a*.025f+b*.05f,p+a*.025f+b*.025f});
             }
         }
