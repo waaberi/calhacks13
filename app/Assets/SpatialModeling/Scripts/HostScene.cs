@@ -176,6 +176,8 @@ namespace SpatialModeling
             FindFirstObjectByType<BlenderScreen>()?.RequestRecenter();
         }
 
+        static readonly bool DesktopPlayer = System.Array.IndexOf(System.Environment.GetCommandLineArgs(), "--desktop") >= 0;
+
         // Tracked does not mean worn: Link can retain a valid pose on a desk.
         // Missing userPresence must not silently certify that the user is ready.
         public static bool HeadsetAllowsPlacement(bool xrActive, bool tracked,
@@ -230,7 +232,9 @@ namespace SpatialModeling
                 { InvalidateUnconfirmedPlacement(); return; }
                 headPose = WorkspaceInteraction.ToWorldPose(camera.transform.parent, new Pose(headPosition, headRotation));
             }
-            else if (!Application.isEditor || !Application.isFocused)
+            // A desktop Player (no headset: headless checks, laptop demos) opts in with --desktop and
+            // places once its window has focus, like the editor. VR Players keep waiting for the headset.
+            else if (!(Application.isEditor || DesktopPlayer) || !Application.isFocused)
             {
                 // A Windows VR Player must never commit the desktop/default
                 // camera while its XR loader or Link session is still starting.
