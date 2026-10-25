@@ -367,6 +367,7 @@ namespace SpatialModeling
         bool GuideVoiceLifetimeCurrent()
         {
             if(guideHadVoiceOwner&&guideVoiceOwner==null)return false;
+            if(voice!=null&&voice!=guideVoiceOwner)return false;
             foreach(var panel in guideVoicePanels)if(panel==null)return false;
             return true;
         }

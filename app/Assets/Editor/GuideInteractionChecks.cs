@@ -193,6 +193,14 @@ public static class GuideInteractionChecks
             review.Hide();f.Table.OpenGuide();using var popup=new ToolAvailabilityPopup(null);popup.Show(true,"builtin.shear","Use Blender's 2D view for this tool.",Camera.main,0);
             Check(f.Table.Guide.Visible&&popup.Visible,"independent informational availability popup retains its own lifetime");
             popup.Hide();Check(f.Table.Guide.Visible,"popup dismissal does not close Guide");
+            var newOwner=new GameObject("Guide late voice owner");newOwner.SetActive(false);
+            try
+            {
+                Set(f.Workspace,"voice",newOwner.AddComponent<VoiceUiAdapter>());
+                f.Route(XRNode.RightHand,new Ray(Vector3.zero,Vector3.forward),false);
+                Check(!f.Table.Guide.Visible&&f.Native.Sent.Count==0&&f.Events.Count==0,"no-owner to known voice-owner transition closes Guide for rediscovery without edits or polling");
+            }
+            finally{UnityEngine.Object.DestroyImmediate(newOwner);}
         }
         finally{UnityEngine.Object.DestroyImmediate(obj);}
     }
