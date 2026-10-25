@@ -33,13 +33,12 @@ namespace SpatialModeling
         Pose savedPose;
         float savedSize, savedHeight, savedDistance, savedYaw;
         Text title;
-        enum MenuPage { Arrange, Settings, Planes, Environment, Appearance, Keyboard }
+        enum MenuPage { Arrange, Settings, Planes, Environment, Appearance }
         MenuPage menuPage;
         int planePage;
         string planeNotice;
         public bool SettingsOpen => menuPage == MenuPage.Settings;
         WorkspaceRoomSetup roomSetup;
-        KeyboardPassthrough keyboardWindow;
         Material material;
         readonly List<XRInputSubsystem> subsystems = new List<XRInputSubsystem>();
         readonly List<TableAction> buttons = new List<TableAction>();
@@ -355,7 +354,6 @@ namespace SpatialModeling
         {
             if (panel != null) return;
             if(roomSetup==null) roomSetup=gameObject.AddComponent<WorkspaceRoomSetup>();
-            if(keyboardWindow==null)keyboardWindow=GetComponent<KeyboardPassthrough>()??gameObject.AddComponent<KeyboardPassthrough>();
             panel = new GameObject("P2 left-hand placeable menu", typeof(RectTransform), typeof(Canvas), typeof(RoundedGlassImage)).transform;
             panel.localScale = Vector3.one * MenuScale * (MenuDocked ? DockedMenuFactor : 1f);
             panel.gameObject.AddComponent<GlassRoot>();
@@ -421,13 +419,7 @@ namespace SpatialModeling
                     if(adapter!=null)adapter.SetSelectionPopups(!adapter.SelectionPopups);
                     RefreshMenu();
                 }),
-                ("Physical keyboard",()=>ChangeMenu(MenuPage.Keyboard)),
                 ("Back to arrange",()=>ChangeMenu(MenuPage.Arrange))
-            };
-            if(compact && menuPage==MenuPage.Keyboard) actions=new (string,Action)[] {
-                ("Keyboard window: "+(keyboardWindow.Requested?"ON":"OFF"),()=>{keyboardWindow.Toggle();RefreshMenu();}),
-                ("Place keyboard window",()=>{keyboardWindow.PlaceFromHead();RefreshMenu();}),
-                ("Back to Settings",()=>ChangeMenu(MenuPage.Settings))
             };
             if(compact && menuPage==MenuPage.Appearance) actions=new (string,Action)[] {
                 ($"Text size: {GlassTheme.TextScale:0.##}×",()=>{GlassTheme.CycleText();RefreshMenu();}),
@@ -492,7 +484,6 @@ namespace SpatialModeling
 
         string MenuHeading(WorkspaceArrangement arrangement)
         {
-            if(menuPage==MenuPage.Keyboard) return "Physical laptop keyboard\n"+keyboardWindow.State+"\nManual real-room window · not automatic keyboard tracking";
             if(menuPage==MenuPage.Appearance) return "Appearance\nReadable glass · settings saved on this PC\nText and targets enlarge together";
             if(menuPage==MenuPage.Environment) return roomSetup.Heading;
             if(menuPage==MenuPage.Settings) return "Settings\nRoom geometry: "+(arrangement.Surfaces.ShowDetected?"shown":"hidden")+

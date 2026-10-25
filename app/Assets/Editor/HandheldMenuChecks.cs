@@ -73,6 +73,9 @@ public static class HandheldMenuChecks
             var page=typeof(TablePlacement).GetNestedType("MenuPage",BindingFlags.NonPublic);
             Invoke(table,"ChangeMenu",Enum.Parse(page,"Settings"));
             Check(!table.Menu.GetComponentsInChildren<TableAction>(true).Any(a=>a.name.StartsWith("Surface help")||a.name.StartsWith("Surface detection")),"surface control moved out of Settings");
+            Check(!table.Menu.GetComponentsInChildren<TableAction>(true).Any(a=>a.name.Contains("Physical keyboard")||a.name.Contains("keyboard window")),"rejected physical-keyboard window has no Settings control");
+            Check(typeof(TablePlacement).Assembly.GetType("SpatialModeling.KeyboardPassthrough")==null,"physical-keyboard outline/handle/window cannot be constructed in the runtime");
+            Check(Resources.Load<Shader>("KeyboardPassthrough")==null,"removed physical-keyboard alpha punch shader is not retained as a resource");
             Debug.Log("HANDHELD_MENU_CHECK PASS enlarged_readable_dock matched_curve_render_and_actual_ray_dispatch every_action direct_surface_toggle upright_held_facing anchored_release model_invariance");
         }
         finally

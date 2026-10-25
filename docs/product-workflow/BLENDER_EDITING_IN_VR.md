@@ -73,8 +73,9 @@ the same trigger through to geometry behind it.
 **Keyboard** supplies letters, numbers and modifiers. **Full keyboard** adds
 function and numpad keys. Click the intended native editor before typing. G/R/S
 start Blender's own move/rotate/scale; Tab changes mode; Enter confirms and Escape
-cancels the native operation. The real laptop keyboard remains visible through
-its existing passthrough window.
+cancels the native operation. Physical keyboard typing still follows the captured
+Blender window's desktop focus. The manual real-keyboard opening and outline
+have been removed; the VR keyboards and room passthrough remain available.
 
 With **Lock screen position**, the side grip right-clicks over the native view.
 Stick tilt scrolls/zooms; hold stick and tilt to pan. Outside a held direct edit,

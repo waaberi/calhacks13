@@ -22,31 +22,18 @@ input method. A voice edit switches out of native input automatically after
 cleanup; it must not be presented as a separate person working on the computer.
 Protection against an actual foreign writer or an unfinished native modal remains.
 
-## Seeing a real laptop keyboard
+## Typing
 
-The real keyboard window uses the existing room passthrough. It is a manually
-aligned opening, not automatic laptop recognition or keyboard tracking. It reads
-no room-camera buffers and does not change the saved room scan or native model.
-
-1. With room passthrough available and the headset worn/focused, the window starts
-   below the workspace. It waits for settled placement and fresh tracking.
-2. Grip its cyan handle and aim to align the opening over the real keyboard.
-   Stick up/down changes distance. Two grips can rotate and resize it. Release
-   leaves it in place. The clear opening itself does not steal native mouse input.
-3. **Settings > Physical keyboard** turns it off/on or places it again. An origin
-   reset hides it until explicitly placed again; headset readiness loss hides it.
-4. Keep Windows keyboard focus on the captured Blender window when typing into
-   Blender. The window reveals the real keys; it does not redirect physical keys.
-
-No fake camera image or guessed automatic keyboard pose is displayed if room
-passthrough is unavailable. Real keyboard legibility, physical placement, room
-alignment and the latest controller visuals remain hardware confirmation gates.
+**Keyboard** and **Full keyboard** provide the existing VR keys and modifiers for
+Blender's captured editors. A physical keyboard types into the captured Blender
+window when that window has desktop focus. The manual physical-keyboard window,
+outline, handle and Settings controls have been removed. Room passthrough remains
+available through the existing room-view controls.
 
 ## Verification
 
 The cumulative Windows build includes real curved button dispatch, menu scale and
-docking, scoped opaque shader/captured-pixel checks, an actual GPU alpha punch
-through opaque foreground geometry, and native edit release/owner-state handoff
+docking, scoped opaque shader/captured-pixel checks, and native edit release/owner-state handoff
 checks. Existing aim/stabilizer, controller formats, depth, startup, room replay,
 capture freshness and XR render settings remain protected. These software checks
 do not establish physical acceptance, two-PC operation or a full phase pass.
