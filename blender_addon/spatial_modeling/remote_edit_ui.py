@@ -15,6 +15,7 @@ from . import remote_client
 from .remote_client.requests import EditBlocked
 
 _enum_cache = []
+_chosen = None  # host object ID picked in the Object field
 _keymaps = []
 
 
@@ -33,20 +34,35 @@ def _connected():
 
 
 def _targets(_self, _context):
+    # Blender stores an enum's number, not its identifier. Numbering by list position
+    # would silently switch the chosen object when the host adds, deletes or renames
+    # one, so each object's number comes from its ID and stays the same.
     global _enum_cache
     state = remote_client.state
-    _enum_cache = [("NONE", "Choose a host object", "")]
+    _enum_cache = [("NONE", "Choose a host object", "", "NONE", 0)]
     if state.current:
-        _enum_cache += [(oid, record.get("name") or oid[:8], "Host object " + oid)
-                        for oid, record in sorted(state.objects.items(),
-                                                  key=lambda item: item[1].get("name") or "")]
+        used = {0}
+        for oid, record in sorted(state.objects.items(),
+                                  key=lambda item: item[1].get("name") or ""):
+            number = int(oid[:7], 16) + 1
+            while number in used:
+                number += 1
+            used.add(number)
+            _enum_cache.append((oid, record.get("name") or oid[:8], "Host object " + oid,
+                                "NONE", number))
     return _enum_cache
 
 
-def _target(context):
-    oid = context.window_manager.spatial_edit_target
-    record = remote_client.state.objects.get(oid)
-    return (oid, record.get("name") or oid[:8]) if record else (None, None)
+def _choose(wm, _context):
+    global _chosen
+    _chosen = wm.spatial_edit_target  # always a listed item here
+
+
+def _target(_context):
+    # The chosen ID, not the enum: reading an enum whose object has gone logs a warning,
+    # and the edit buttons' poll would do that on every redraw.
+    record = remote_client.state.objects.get(_chosen) if _chosen else None
+    return (_chosen, record.get("name") or _chosen[:8]) if record else (None, None)
 
 
 def _number(value):
@@ -254,7 +270,8 @@ CLASSES = (SPATIAL_OT_client_move, SPATIAL_OT_client_rotate, SPATIAL_OT_client_s
            SPATIAL_OT_client_redo, SPATIAL_OT_client_checked, SPATIAL_PT_client_edits)
 
 PROPS = {
-    "spatial_edit_target": lambda: bpy.props.EnumProperty(items=_targets, options={"SKIP_SAVE"}),
+    "spatial_edit_target": lambda: bpy.props.EnumProperty(items=_targets, update=_choose,
+                                                         options={"SKIP_SAVE"}),
     "spatial_edit_move": lambda: bpy.props.FloatVectorProperty(
         size=3, default=(10, 0, 0), soft_min=-1000, soft_max=1000, options={"SKIP_SAVE"}),
     "spatial_edit_axis": lambda: bpy.props.EnumProperty(
@@ -286,6 +303,8 @@ def register():
 
 
 def unregister():
+    global _chosen
+    _chosen = None
     for keymap, item in _keymaps:
         keymap.keymap_items.remove(item)
     _keymaps.clear()
