@@ -36,14 +36,18 @@ def source():
     return host.current_leases(), actor, host.status
 
 
-def marked_objects():
-    """Current native objects and owner labels. Does not assign IDs while drawing."""
+def _marks():
+    """(object, owner names) for current leases. Does not assign IDs while drawing."""
     leases, actor, _ = source()
     objects = {o.get(scene_sync.ID_PROPERTY): o for o in bpy.context.view_layer.objects}
     objects.pop(None, None)
     marks = ownership_state.markers(leases, objects, actor)
-    return [(objects[key], ", ".join(names)) for key, names in marks.items()
-            if objects[key].visible_get()]
+    return [(objects[key], names) for key, names in marks.items() if objects[key].visible_get()]
+
+
+def marked_objects():
+    """Current native objects and owner labels."""
+    return [(obj, ", ".join(names)) for obj, names in _marks()]
 
 
 def _corners(obj):
@@ -82,13 +86,13 @@ def _draw_names():
     context = bpy.context
     if context.region is None or context.region_data is None:
         return
-    for obj, owner in marked_objects():
+    for obj, names in _marks():
         corners = _corners(obj)
         point = sum(corners, Vector()) / 8
         point.z = max(v.z for v in corners)
         screen = view3d_utils.location_3d_to_region_2d(context.region, context.region_data, point)
         if screen is not None:
-            _text(f"{owner} — {obj.name}", screen.x + 6, screen.y + 10)
+            _text(ownership_state.object_label(names), screen.x + 6, screen.y + 10)
     held, actor, status = source()
     notice = ownership_state.activity_text(held, actor)
     if notice:
@@ -96,8 +100,9 @@ def _draw_names():
     if gate.bypasses:
         _text("Lock bypass detected — verify the reconciled scene", 20, 55,
               (1.0, 0.55, 0.1, 1.0))
-    if "lost" in status.lower() or "disconnected" in status.lower():
-        _text(status, 20, 34, (1.0, 0.55, 0.1, 1.0))
+    lost = ownership_state.connection_text(status)
+    if lost:
+        _text(lost, 20, 34, (1.0, 0.55, 0.1, 1.0))
 
 
 class SPATIAL_MODELING_PT_ownership(bpy.types.Panel):
@@ -110,7 +115,8 @@ class SPATIAL_MODELING_PT_ownership(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         held, actor, status = source()
-        layout.label(text=status)
+        lost = ownership_state.connection_text(status)
+        layout.label(text=lost or status, icon="ERROR" if lost else "NONE")
         notice = ownership_state.activity_text(held, actor)
         if notice:
             layout.label(text=notice, icon="INFO")
