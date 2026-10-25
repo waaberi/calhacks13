@@ -2,6 +2,16 @@
 
 The current single-user glass UI, local native input, direct controller tools, drawing, voice/Gemini, room recovery and acknowledged native-input handoff remain the baseline. Collaboration adds the published host/session/presence and optional bridge work from merge `4119970` (#165/#167, #156 and #169); it does not replace those newer features with an older app.
 
+## Full native shared editing is required and not yet delivered
+
+Both participants must use ordinary native Blender tools, including Edit Mode, modifiers and materials. The published Client's read-only evaluated mesh mirror and controlled requests do **not** meet that requirement. Full Blender binaries at both ends do not change the mirror's limitations.
+
+Real Windows host to Ubuntu 24.04/QEMU Client tests passed six production request/receipt/ownership/cancel/disconnect/reconnect checks over direct TLS and six over the bridge. These establish the existing supported collaboration path only. They do not establish arbitrary native synchronization, two physical PCs, different home networks or headset acceptance.
+
+Separate disposable feasibility checks preserve original quads, UVs, modifiers, shape keys and material nodes through a native copy and local atomic replacement with one Undo/Redo. A Windows to Linux native editing to Windows file round trip also preserves the tested data. These experiments are outside the production Client; they do not establish full data-type coverage, linked/external asset transfer or automatic synchronization. Initial replacement failures and Blender crash reports are retained. Corrected enumeration excludes aggregate bpy.data.all_ids so excluded UI/window data cannot re-enter the deletion set through it.
+
+Remaining work: a reviewed Host/Client full-native state contract, acknowledged ownership and base-state fences, automatic original-data synchronization, conflict/stale/disconnect recovery, native history and asset fidelity tests. Unlocking the evaluated mirror would produce unsynchronized local edits. Existing component ownership is retained in #176/#106/#87/#115. Root retains sole final Unity/package/runtime ownership.
+
 ## Start with one user
 
 Keep the host add-on in **Host** role and **SpacetimeDB: This PC**. LAN and Client edit permissions retain their existing opt-in defaults. With no local SpacetimeDB server, memory decides leases while the host continues to work. The collaboration panel stays hidden for the ordinary local Host + local VR pair. These are two connections to one workflow, not evidence of two people.
