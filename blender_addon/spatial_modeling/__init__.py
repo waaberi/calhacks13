@@ -208,9 +208,13 @@ def register():
     gate.register()
     remote_client.register()
     remote_test_ui.register()
+    from . import ownership
+    ownership.register()
 
 
 def unregister():
+    from . import ownership
+    ownership.unregister()
     remote_test_ui.unregister()
     remote_client.unregister()
     gate.unregister()
