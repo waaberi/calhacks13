@@ -261,8 +261,10 @@ class NativeClient:
                     or not _HASH.fullmatch(digest)):
                 raise ValueError("Invalid native applied receipt")
             self.watcher.acknowledge(pending.request_id)
-            self.head = {**self.identity, "revision": revision, "checkpoint_hash": digest}
-            self.applied_head = dict(self.head)
+            acknowledged_head = {**self.identity, "revision": revision, "checkpoint_hash": digest}
+            if self.head is None or revision >= self.head["revision"]:
+                self.head = acknowledged_head
+            self.applied_head = dict(acknowledged_head)
             self._outgoing, self._upload_stage = None, ""
             self.status, self.error = "Native checkpoint acknowledged by host", ""
         elif outcome in {"rejected", "unknown"}:
@@ -277,11 +279,21 @@ class NativeClient:
         return snapshot.sha256, snapshot
 
     def _start_upload(self, pending):
-        messages = iter(wire.iter_messages(pending.payload, self.head,
+        # An announced Host head is not yet this peer's native baseline. Local
+        # edits remain based on the last applied/acknowledged checkpoint, so a
+        # concurrent Host edit must produce a CAS rejection, never get adopted as
+        # the base of an older local draft.
+        base = self.applied_head
+        if base is None:
+            self.watcher.reject(pending.request_id, "missing_native_baseline")
+            self._retain()
+            self.error = "Native baseline is unavailable; local draft was retained"
+            return
+        messages = iter(wire.iter_messages(pending.payload, base,
                         request_id=pending.request_id, kind="native.commit"))
         begin = next(messages)
         payload = {**self._fields(), "request_id": pending.request_id,
-            "base_revision": self.head["revision"], "base_hash": self.head["checkpoint_hash"],
+            "base_revision": base["revision"], "base_hash": base["checkpoint_hash"],
             **{key: begin[key] for key in ("content_hash", "total_bytes", "chunk_count",
                                            "manifest", "active_scene_uuid")}}
         self._outgoing, self._upload_stage = messages, "begin_wait"

@@ -286,3 +286,38 @@ def test_wrong_document_snapshot_is_rejected_before_native_apply(tmp_path):
         for payload in wire.iter_messages(snapshot(b"other file"), bad_head):
             client.receive("native.snapshot", payload)
     assert doc.applies == before
+
+
+def test_announced_head_cannot_rebase_local_draft_onto_unapplied_host_edits(tmp_path):
+    client, doc, sent, now = setup(tmp_path)
+    edit_turn(client)
+    original_base = dict(client.applied_head)
+    doc.data = b"local edit based on original host data"
+    now[0] = 1
+    client.mark_dirty()
+    announced = head(b"concurrent host edit", revision=1)
+    client.receive("native.head", announced)
+    assert client.head == announced and client.applied_head == original_base
+    now[0] = 2
+    client.tick()
+    begin = next(msg for msg in reversed(sent) if msg["type"] == "native.begin")
+    assert begin["payload"]["base_revision"] == original_base["revision"] == 0
+    assert begin["payload"]["base_hash"] == original_base["checkpoint_hash"]
+    assert begin["payload"]["base_hash"] != announced["checkpoint_hash"]
+    # The authoritative Host will reject this stale baseline; preserve the draft.
+    client.receive("native.receipt", {"request_id": client.watcher.pending.request_id,
+                                      "outcome": "rejected", "code": "stale_revision"})
+    assert client.watcher.rejection == "stale_revision" and doc.data.startswith(b"local edit")
+
+
+def test_late_applied_receipt_does_not_regress_newer_announced_head(tmp_path):
+    client, doc, _, now = setup(tmp_path)
+    edit_turn(client)
+    pending = edited(client, doc, now)
+    latest = head(b"later authoritative head", revision=2)
+    client.receive("native.head", latest)
+    accepted_hash = digest(b"our accepted head at revision1")
+    client.receive("native.receipt", {"request_id": pending.request_id, "outcome": "applied",
+                                      "revision": 1, "checkpoint_hash": accepted_hash})
+    assert client.head == latest
+    assert client.applied_head["revision"] == 1 and client.applied_head["checkpoint_hash"] == accepted_hash
