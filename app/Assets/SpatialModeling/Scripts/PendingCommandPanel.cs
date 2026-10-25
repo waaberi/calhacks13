@@ -64,18 +64,18 @@ namespace SpatialModeling
             {
                 var lines = new System.Text.StringBuilder("Which one? Say its number" + (choice.Reason != null ? " (" + choice.Reason + ")" : "") + "\n");
                 for (int i = 0; i < choice.Candidates.Count && i < 3; i++) lines.Append(choice.Candidates[i]).Append('\n');
-                lines.Append("Cancel: say cancel, or left trigger (Esc) (" + left + ")");
+                lines.Append("Cancel: say cancel (Esc) (" + left + ")");
                 text.text = lines.ToString();
             }
             else if (deleting != null)
                 text.text = deleting + "?\n" +
-                            "Confirm: right trigger (`)\n" +
-                            "Cancel: left trigger (Esc) (" + left + ")";
+                            "Confirm: left stick click (`)\n" +
+                            "Cancel: say cancel (Esc) (" + left + ")";
             else if (pending != null)
                 text.text = "Pending: " + pending.Command + "\n" +
                             "Missing: " + pending.Missing + "\n" +
                             ((pending.Missing & MissingFields.Target) != 0 ? "Select or look at the object" : "Say the missing value") +
-                            ", or cancel: left trigger (Esc) (" + left + ")";
+                            ", or cancel: say cancel (Esc) (" + left + ")";
         }
 
         void LateUpdate()

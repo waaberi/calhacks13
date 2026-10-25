@@ -162,11 +162,12 @@ namespace SpatialModeling
             // Push-to-talk on the left menu button: the right grip grabs (P2), both triggers click and draw.
             talk.AddBinding("<XRController>{LeftHand}/menuButton");
             talk.AddBinding("<Keyboard>/rightShift");
+            // Confirm delete on the left stick click: both triggers click and draw (P2), so neither can confirm or cancel.
+            // Cancel by voice ("cancel") or Esc.
             confirm = new InputAction("ConfirmDelete", InputActionType.Button);
-            confirm.AddBinding("<XRController>{RightHand}/triggerPressed");
+            confirm.AddBinding("<XRController>{LeftHand}/thumbstickClicked");
             confirm.AddBinding("<Keyboard>/backquote");
             cancel = new InputAction("CancelPending", InputActionType.Button);
-            cancel.AddBinding("<XRController>{LeftHand}/triggerPressed");
             cancel.AddBinding("<Keyboard>/escape");
             talk.started += _ =>
             {
@@ -506,7 +507,7 @@ namespace SpatialModeling
             Send(command);
         }
 
-        // Left trigger, Esc, or "cancel": drops the delete waiting for its confirmation and the pending command.
+        // Esc or "cancel": drops the delete waiting for its confirmation and the pending command.
         void CancelPressed()
         {
             DropDelete(Prompt.Cancelled);
