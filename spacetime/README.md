@@ -2,12 +2,13 @@
 
 The SpacetimeDB spike (issue #16, [PHASE_PLAN.md › SpacetimeDB session state](../PHASE_PLAN.md#spacetimedb-session-state)). Owner: Waaberi.
 
-The module holds the session state the host shares: **participants**, **object leases** and the **receipt log** (activity is the receipts of applied commands). It never holds geometry, scene snapshots or native commands; those stay on the direct host connection. The wire format in [contracts/README.md](../contracts/README.md) doesn't change: the host builds `session.update`, `lease.granted` and `receipts` from these tables, or from memory if SpacetimeDB isn't used.
+The module holds the session state the host shares: **participants**, **object leases**, the **receipt log**, object **labels** and lease **refusals**. Its `acquire` reducer decides who may edit what. It never holds geometry, scene snapshots or native commands; those stay on the direct host connection. The wire format in [contracts/README.md](../contracts/README.md) doesn't change: the host builds `session.update`, `lease.granted` and `receipts` from these tables, or from memory if SpacetimeDB isn't used.
 
 | File | What it is |
 | --- | --- |
 | [`src/index.ts`](src/index.ts) | The module: tables `participant`, `lease`, `receipt` (public) and `authority` (private), and the reducers. |
-| [`../blender_addon/spatial_modeling/session_store.py`](../blender_addon/spatial_modeling/session_store.py) | The host's side: one `SessionStore` interface, `MemoryStore`, `SpacetimeStore` (stdlib HTTP) and `MirroredStore`, which the host uses: memory decides, a thread copies to SpacetimeDB. |
+| [`../blender_addon/spatial_modeling/session_store.py`](../blender_addon/spatial_modeling/session_store.py) | The host's side: one `SessionStore` interface, `MemoryStore`, `SpacetimeStore` (stdlib HTTP) and `MirroredStore`, which the host uses: SpacetimeDB's `acquire` reducer decides leases on a background thread. |
+| [`board/`](board/) | The session board: a live page subscribed to the module with the TypeScript SDK. |
 | [`LatencyProbe/`](LatencyProbe/) | C# console app on the official C# SDK; stands in for the Unity app. |
 | [`measure.py`](measure.py) | Measures HTTP round trips and subscription latency (stdlib only). |
 | [`../tests/backend/test_session_store.py`](../tests/backend/test_session_store.py) | Runs every store test against both stores; the SpacetimeDB half is skipped when no server is running. |
@@ -105,19 +106,34 @@ PowerShell, as Talia (not as administrator). Pin version **2.13.0** of everythin
 5. **Read only.** The bindings include the reducers, but only the host can call them; Unity gets `permission_denied`. Lease requests stay `lease.acquire` over the host connection. `session.update` over that connection carries the same lists, so the app must keep working without SpacetimeDB.
 6. **Criterion 2 in Unity:** in `OnInsert`, log `DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (long)row.AcquiredAt`. `acquired_at` is the server's clock when the reducer ran, on the same PC. The target is under 250 ms.
 
-## For the host (P3B, #165)
+## For the host (P3B, #165): SpacetimeDB decides who may edit what
 
-The host add-on uses SpacetimeDB through `MirroredStore` in `session_store.py`. Blender decides every lease in memory, as before, and answers at once. A background thread (`spacetime-mirror`) then copies participants and leases to the server the **SpacetimeDB** preference names (`http://127.0.0.1:3000` by default; leave it blank to turn this off). Nothing on Blender's main thread waits for SpacetimeDB.
+The host add-on uses SpacetimeDB through `MirroredStore` in `session_store.py`, whenever the server the **SpacetimeDB** preference names answers (`http://127.0.0.1:3000` by default; blank turns it off). The preferences show which of the two is deciding.
 
-- **Order.** The thread makes the server match memory: leave, release, join, then acquire, so a lease is released there before an overlapping one is acquired. The reducers check every write again; a disagreement is logged in the console, and the copy carries on.
-- **No server.** The host works exactly as with `MemoryStore` alone. The add-on preferences show why ("Not using SpacetimeDB: …"), and the thread tries again every 5 s. When the server comes back, the thread clears what an earlier host left and copies everything again.
-- **Lifetime.** Rows get the contract's 6 s TTL and the thread renews them every 2 s, even while Blender's main thread is busy rendering. If Blender quits or crashes, subscribers stop seeing its leases within 6 s. On a clean stop, the thread removes the host's participants.
-- **Token.** Kept in Blender's config folder as `spatial_modeling/spacetime-host-token`, outside Git and the `.blend` file. If the preferences say "another identity is already the host", free the slot with `spacetime call spatial-modeling reset_host` and change the SpacetimeDB preference (or restart Blender), so the host claims it.
-- **Not copied yet:** the receipt log. Receipts still live in `commands.py`, not in the store.
+- **SpacetimeDB decides.** When a client (VR or the remote Blender) asks for a lease, the add-on hands the request to a background thread (`spacetime-mirror`). The thread calls the module's `acquire` reducer, which grants or refuses it atomically, and the host answers the client with that decision. A lease that only SpacetimeDB holds still refuses the request (`test_spacetimedb_decides_against_a_real_server`).
+- **Blender never waits.** The main thread only hands the request over; the answer goes out on the add-on's next 20 ms drain. On localhost a client waits about 5 to 25 ms in all. In Blender the longest drain measured 4.4 ms with the server running (`tests/backend/spacetime_host_check.py`).
+- **Every read is local.** The leases SpacetimeDB granted are kept in memory, so each command's lease check, the desktop lock and `session.update` never touch the network.
+- **The rest is copied, in order.** Joins, leaves, releases and the host desktop's own leases change memory at once. The thread copies them in the order leave, release, join, acquire, so the reducer always decides against the current session. The reducers check those copies too; a disagreement is logged.
+- **Refusals and names.** The thread notes each refusal in the `refusal` table and the names of leased objects in `label`, for the session board.
+- **No server.** Blender decides every lease in memory, exactly as before. The thread tries again every 5 s. When the server is back, it clears what an earlier host left and copies memory there. If a reducer call fails midway, memory decides that request, and SpacetimeDB gets memory's state on reconnect.
+- **Lifetime.** Rows get the contract's 6 s TTL, and the thread renews them every 2 s, even while a render keeps Blender busy. If Blender quits or crashes, subscribers stop seeing its leases within 6 s.
+- **Token.** It's kept in Blender's config folder as `spatial_modeling/spacetime-host-token`. If the preferences say "another identity is already the host", run `spacetime call spatial-modeling reset_host` and re-enter the SpacetimeDB preference.
+- **Not stored there yet:** the receipt log (still in `commands.py`).
 
-The remote Blender client still joins through the host's TLS LAN port (8767) and gets presence and leases from the host. SpacetimeDB stays on localhost.
+The remote Blender client still joins through the host's TLS LAN port (8767). SpacetimeDB stays on localhost.
 
-`tests/backend/spacetime_host_check.py` runs this in Blender against a real server: two VR clients, a refused same-object lease, and the lease table before and after the release. `test_session_store.py` runs it when `BLENDER` is set and a server is up.
+## The session board
+
+A live page of who's connected, who's editing what, and every SpacetimeDB decision as it happens, including "SpacetimeDB refused Lee's request for Cube: Talia is editing Cube", each with how fast the subscription pushed it. It only reads.
+
+```sh
+cd spacetime
+npm ci                 # once, and after pulling module changes
+npm run board          # then open http://127.0.0.1:3100
+npm run board -- --url http://127.0.0.1:3000 --database spatial-modeling --port 3100   # the defaults
+```
+
+[`board/server.ts`](board/server.ts) subscribes with the official TypeScript SDK (Node 22 or later), and pushes each change to [`board/index.html`](board/index.html) over Server-Sent Events. It listens on 127.0.0.1 only. `board/module_bindings/` is generated. After changing `src/`, regenerate it with `spacetime generate --lang typescript --out-dir board/module_bindings --module-path . -y`.
 
 ## Security notes
 

@@ -1,7 +1,8 @@
 // Shared session state for Spatial Modeling: participants, object leases and the receipt log.
 //
-// The host add-on is the only writer: it calls these reducers over HTTP after it has checked a
-// request against contracts/README.md. The Unity app only subscribes. Geometry, scene snapshots
+// The host add-on is the only writer: it calls these reducers over HTTP, from a background
+// thread, after it has checked a request against contracts/README.md. `acquire` decides who
+// may edit what: the host grants a client's lease.acquire only if this reducer accepts it. The Unity app only subscribes. Geometry, scene snapshots
 // and native commands never come here; they stay on the direct host connection.
 //
 // Rows mirror the contract: a `participant` row is an `actor`, a `lease` row is a `lease`
@@ -51,6 +52,29 @@ const receipt = table(
   }
 );
 
+// Object names for the IDs in lease targets, so subscribers can show "Talia is editing Cube".
+// The host writes the names of what a lease covers just before it asks `acquire` for the lease.
+const label = table(
+  { name: 'label', public: true },
+  {
+    object_id: t.string().primaryKey(),
+    name: t.string(),
+  }
+);
+
+// Lease requests that `acquire` refused, the newest MAX_REFUSALS. A rejected reducer changes
+// nothing, so the host notes each refusal right after `acquire` turned it down.
+const refusal = table(
+  { name: 'refusal', public: true },
+  {
+    refusal_id: t.u64().primaryKey().autoInc(),
+    at: t.u64(),
+    actor_id: t.string(), // who asked
+    blocking_lease_id: t.string(), // the live lease that stopped it
+    targets: t.array(t.string()), // what was asked for; empty for the whole document
+  }
+);
+
 // Who may do what. Private: clients can't see or subscribe to it.
 // Slot OWNER is the CLI identity that published the database; slot HOST is the host add-on.
 const authority = table(
@@ -61,7 +85,7 @@ const authority = table(
   }
 );
 
-const spacetimedb = schema({ participant, lease, receipt, authority });
+const spacetimedb = schema({ participant, lease, receipt, label, refusal, authority });
 export default spacetimedb;
 
 type Ctx = ReducerCtx<InferSchema<typeof spacetimedb>>;
@@ -73,6 +97,7 @@ const ROLES = new Set(['vr', 'blender-client', 'host']);
 const OUTCOMES = new Set(['pending', 'applied', 'rejected', 'unknown']);
 const MAX_TTL_MS = 3_600_000n;
 const MAX_TARGETS = 1000;
+const MAX_REFUSALS = 50n;
 
 function nowMs(ctx: Ctx): bigint {
   return ctx.timestamp.microsSinceUnixEpoch / 1000n;
@@ -260,6 +285,44 @@ export const record_receipt = spacetimedb.reducer(
       ctx.db.receipt.request_id.update(args);
     } else if (old.body !== args.body || old.digest !== args.digest) {
       reject('duplicate_request', `receipt ${args.request_id} is final`);
+    }
+  }
+);
+
+// Name the objects a lease will cover: ids[i] is called names[i]. Upserts; names never expire.
+export const set_labels = spacetimedb.reducer(
+  { ids: t.array(t.string()), names: t.array(t.string()) },
+  (ctx, { ids, names }) => {
+    requireHost(ctx);
+    if (ids.length !== names.length || ids.length > MAX_TARGETS) {
+      reject('invalid_message', `ids and names must pair up, at most ${MAX_TARGETS}`);
+    }
+    ids.forEach((object_id, i) => {
+      requireUuid('id', object_id);
+      const name = names[i].slice(0, 256);
+      if (ctx.db.label.object_id.find(object_id) === null) {
+        ctx.db.label.insert({ object_id, name });
+      } else {
+        ctx.db.label.object_id.update({ object_id, name });
+      }
+    });
+  }
+);
+
+// `acquire` refused actor_id's request for targets because of blocking_lease_id.
+export const note_refusal = spacetimedb.reducer(
+  { actor_id: t.string(), blocking_lease_id: t.string(), targets: t.array(t.string()) },
+  (ctx, { actor_id, blocking_lease_id, targets }) => {
+    requireHost(ctx);
+    requireUuid('actor_id', actor_id);
+    if (targets.length > MAX_TARGETS) reject('invalid_message', `at most ${MAX_TARGETS} targets`);
+    ctx.db.refusal.insert({ refusal_id: 0n, at: nowMs(ctx), actor_id, blocking_lease_id, targets });
+    while (ctx.db.refusal.count() > MAX_REFUSALS) {
+      let oldest: bigint | null = null;
+      for (const row of ctx.db.refusal.iter()) {
+        if (oldest === null || row.refusal_id < oldest) oldest = row.refusal_id;
+      }
+      ctx.db.refusal.refusal_id.delete(oldest!);
     }
   }
 );

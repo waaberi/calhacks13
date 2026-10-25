@@ -420,7 +420,7 @@ def test_spacetime_from_blenders_own_python(spacetime_token, tmp_path):
         assert result.returncode == 0, result.stdout + result.stderr
 
 
-# MirroredStore: memory decides at once, a thread copies participants and leases to SpacetimeDB
+# MirroredStore: SpacetimeDB decides lease requests on a thread, memory holds the result
 
 
 class FakeRemote:
@@ -431,7 +431,7 @@ class FakeRemote:
     def __init__(self, participants=(), leases=(), reject=()):
         self.calls = []
         self.rows = {"participant": list(participants), "lease": list(leases)}
-        self.reject = set(reject)
+        self.reject = dict.fromkeys(reject, "disagrees") if not isinstance(reject, dict) else reject
         self.down = False
 
     def call(self, reducer, args=None):
@@ -439,7 +439,7 @@ class FakeRemote:
             raise StoreUnavailable("down")
         self.calls.append((reducer, args))
         if reducer in self.reject:
-            raise SessionError("lease_conflict", "disagrees")
+            raise SessionError("lease_conflict", self.reject[reducer])
 
     def select(self, sql):
         if self.down:
@@ -544,7 +544,7 @@ def test_mirror_recopies_everything_after_spacetimedb_comes_back():
         assert ("join", a) in remote.calls
         assert ("acquire", {"lease_id": lease["lease_id"], "owner_id": a["actor_id"],
                             "mode": "exclusive", "targets": [], "ttl_ms": 6000}) in remote.calls
-        assert store.status.startswith("Sharing")
+        assert store.status.startswith("SpacetimeDB decides")
     finally:
         store.close()
 
@@ -557,7 +557,7 @@ def test_mirror_logs_a_rejection_and_carries_on():
         store.join(a)
         store.acquire(a["actor_id"], "exclusive", [])
         assert store.wait_idle(5)
-        assert store.status.startswith("Sharing")
+        assert store.status.startswith("SpacetimeDB decides")
         assert [x["owner"]["name"] for x in store.leases()] == ["Talia"]
     finally:
         store.close()
@@ -617,3 +617,128 @@ def test_host_addon_copies_leases_to_spacetimedb(spacetime_token, tmp_path):
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=env,
                             check=False)
     assert result.returncode == 0, result.stdout[-4000:] + result.stderr[-4000:]
+
+
+class Decisions:
+    """A done callback for acquire_async that records what it was called with."""
+
+    def __init__(self):
+        self.got = []
+
+    def __call__(self, lease, error):
+        self.got.append((lease, error))
+
+
+def test_without_a_server_memory_decides_at_once():
+    store = MirroredStore(no_server, retry_s=60)
+    try:
+        a = actor("Talia")
+        store.join(a)
+        done = Decisions()
+        store.acquire_async(a["actor_id"], "exclusive", [], done)
+        assert len(done.got) == 1 and done.got[0][1] is None
+    finally:
+        store.close()
+
+
+def test_spacetimedb_decides_a_lease_request():
+    remote = FakeRemote()
+    store = mirrored(remote)
+    try:
+        a = actor("Talia")
+        store.join(a)
+        assert store.wait_idle(5) and store.deciding
+        target = uuid.uuid4().hex
+        done = Decisions()
+        store.acquire_async(a["actor_id"], "shared", [target], done, names={target: "Cube"})
+        assert done.got == [] and store.leases() == []  # nothing until SpacetimeDB answers
+        assert store.wait_idle(5)
+        store.poll()
+        [(lease, error)] = done.got
+        assert error is None and lease["targets"] == [target]
+        assert store.leases() == [lease]
+        assert ("set_labels", {"ids": [target], "names": ["Cube"]}) in remote.calls
+        assert reducers(remote, "acquire") == [("acquire", {
+            "lease_id": lease["lease_id"], "owner_id": a["actor_id"], "mode": "shared",
+            "targets": [target], "ttl_ms": 6000})]  # asked once, not copied again
+    finally:
+        store.close()
+
+
+def test_a_refusal_from_spacetimedb_is_the_answer_and_is_noted():
+    blocking = uuid.uuid4().hex
+    remote = FakeRemote(reject={"acquire": blocking})
+    store = mirrored(remote)
+    try:
+        a = actor("Lee", "blender-client")
+        store.join(a)
+        assert store.wait_idle(5)
+        target = uuid.uuid4().hex
+        done = Decisions()
+        store.acquire_async(a["actor_id"], "shared", [target], done)
+        assert store.wait_idle(5)
+        store.poll()
+        [(lease, error)] = done.got
+        assert lease is None and error.code == "lease_conflict"
+        assert store.leases() == []  # memory had no lease: SpacetimeDB decided
+        assert ("note_refusal", {"actor_id": a["actor_id"], "blocking_lease_id": blocking,
+                                 "targets": [target]}) in remote.calls
+    finally:
+        store.close()
+
+
+def test_memory_decides_when_spacetimedb_fails_midway():
+    remote = FakeRemote()
+    store = mirrored(remote)
+    try:
+        a = actor("Talia")
+        store.join(a)
+        assert store.wait_idle(5)
+        remote.down = True
+        done = Decisions()
+        store.acquire_async(a["actor_id"], "exclusive", [], done)
+        deadline = time.monotonic() + 5
+        while not done.got and time.monotonic() < deadline:
+            time.sleep(0.01)
+            store.poll()
+        [(lease, error)] = done.got
+        assert error is None and store.leases() == [lease]
+        assert not store.deciding
+    finally:
+        store.close()
+
+
+def test_spacetimedb_decides_against_a_real_server(spacetime_token):
+    """A lease only SpacetimeDB holds (memory doesn't know it) refuses the request."""
+    host = spacetime_store(spacetime_token)
+    clear(host)
+    store = MirroredStore(lambda: spacetime_store(spacetime_token))
+    try:
+        a, b = actor("Talia"), actor("Lee", "blender-client")
+        store.join(a)
+        store.join(b)
+        assert store.wait_idle(5) and store.deciding
+        target = uuid.uuid4().hex
+        hidden = host.acquire(a["actor_id"], "shared", [target])  # straight into SpacetimeDB
+        assert store.leases() == []
+        done = Decisions()
+        store.acquire_async(b["actor_id"], "shared", [target], done, names={target: "Cube"})
+        assert store.wait_idle(5)
+        store.poll()
+        [(lease, error)] = done.got
+        assert lease is None and error.code == "lease_conflict", done.got
+        [row] = host.select("SELECT * FROM refusal")[-1:]
+        assert (row["actor_id"], row["blocking_lease_id"]) == (b["actor_id"], hidden["lease_id"])
+        assert {r["object_id"]: r["name"] for r in host.select("SELECT * FROM label")}[
+            target] == "Cube"
+        host.release(hidden["lease_id"], a["actor_id"])
+        done = Decisions()
+        store.acquire_async(b["actor_id"], "shared", [target], done)
+        assert store.wait_idle(5)
+        store.poll()
+        [(lease, error)] = done.got
+        assert error is None and store.leases() == [lease]
+        assert [r["lease_id"] for r in host.select("SELECT * FROM lease")] == [lease["lease_id"]]
+    finally:
+        store.close()
+        store._thread.join(5)

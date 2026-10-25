@@ -20,10 +20,11 @@ then answers the old host_epoch's requests as `unknown` (contracts/README.md,
 "Reconnecting"). They aren't kept on disk: every restart also starts a new open
 epoch, so an old receipt couldn't be checked against the scene anyway, and the
 fresh snapshot is what clients trust. Participants and leases live as long too
-(session.py, leases.py; in memory). A background thread copies them to the
-SpacetimeDB server at the "SpacetimeDB" preference (127.0.0.1:3000 by default)
-while one answers, so the Unity app can subscribe to them; Blender never waits
-for it (session_store.MirroredStore). may_write() and blocked() are where the host
+(session.py, leases.py). While the SpacetimeDB server at the "SpacetimeDB"
+preference (127.0.0.1:3000 by default) answers, its `acquire` reducer decides
+every client's lease and holds the session for subscribers such as the session
+board (spacetime/board/); a background thread talks to it, so Blender never
+waits (session_store.MirroredStore). Without it, Blender decides in memory. may_write() and blocked() are where the host
 desktop's own edits ask for permission; gate.py asks them before Blender's own
 tools change anything, and its poll() runs in the drain timer (#77).
 
@@ -210,6 +211,7 @@ def _drain():
         return None  # unregisters this timer
     _document.tick()
     _server.drain()
+    _session.store.poll()  # lease decisions SpacetimeDB made since the last drain
     scene_sync.poll()  # direct edits in this Blender reach clients as scene.update
     gate.poll()  # after an ungated edit of leased data, stop writes (#77)
     _commands.poll()  # after an unknown outcome, retry the fresh snapshot until it goes out
