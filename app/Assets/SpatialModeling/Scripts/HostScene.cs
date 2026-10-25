@@ -10,7 +10,7 @@ namespace SpatialModeling
 {
     // P0 (#11): connects to the host add-on (or the fake host), draws the scene it sends,
     // and shows the connection state from the contract's table (contracts/README.md, Connecting).
-    public class HostScene : MonoBehaviour
+    public partial class HostScene : MonoBehaviour
     {
         [Header("Host connection (localhost only)")]
         [SerializeField] string host = "127.0.0.1";
@@ -376,7 +376,7 @@ namespace SpatialModeling
             if (GUI.Button(new Rect(20, 230, 300, 48), "Recenter view (B / Y / R)")) RequestRecenter();
         }
 
-        internal void Handle(HostEvent e)
+        void HandleCore(HostEvent e)
         {
             switch (e.Kind)
             {

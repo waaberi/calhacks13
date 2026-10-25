@@ -119,10 +119,16 @@ namespace SpatialModeling
         }
 
         void Warn(string text) => Post(new HostEvent(HostEventKind.Warning) { Text = text });
-
-        public void Send(string type, JObject payload) => SendEnvelope(new JObject {
-            ["v"] = 1, ["type"] = type, ["id"] = Guid.NewGuid().ToString("N"), ["payload"] = payload
-        });
+        public string Send(string type, JObject payload)
+        {
+            var s = stream;
+            if (s == null) return null;
+            string id = Guid.NewGuid().ToString("N");
+            var msg = new JObject { ["v"] = 1, ["type"] = type, ["id"] = id, ["payload"] = payload };
+            var bytes = Utf8.GetBytes(msg.ToString(Formatting.None) + "\n");
+            lock (writeLock) { try { s.Write(bytes, 0, bytes.Length); } catch { return null; } }   // a dead socket shows up on the read side
+            return id;
+        }
 
         public void SendEnvelope(JObject envelope)
         {
@@ -151,12 +157,35 @@ namespace SpatialModeling
                 {
                     case "welcome":
                         var d = p?["document"] as JObject;
-                        Post(new HostEvent(HostEventKind.Welcome) { Text = (string)d?["name"] ?? "" });
+                        Post(new HostEvent(HostEventKind.Welcome)
+                        {
+                            Text = (string)d?["name"] ?? "",
+                            SessionId = (string)p?["session_id"] ?? "",
+                            HostEpoch = (string)p?["host_epoch"] ?? "",
+                            ActorId = (string)p?["actor_id"] ?? "",
+                            CanEdit = (bool?)p?["can_edit"] ?? false,
+                            DocumentId = (string)d?["id"] ?? "",
+                            OpenEpoch = (string)d?["open_epoch"] ?? ""
+                        });
                         break;
                     case "scene.snapshot": Post(DecodeScene(p, snapshot: true)); break;
                     case "scene.update": Post(DecodeScene(p, snapshot: false)); break;
                     case "error":
-                        Post(new HostEvent(HostEventKind.Error) { Code = (string)p?["code"] ?? "", Text = (string)p?["message"] ?? "" });
+                        Post(new HostEvent(HostEventKind.Error)
+                        {
+                            Code = (string)p?["code"] ?? "",
+                            Text = (string)p?["message"] ?? "",
+                            Re = msg["re"]?.Type == JTokenType.String ? (string)msg["re"] : ""
+                        });
+                        break;
+                    case "result":
+                        Post(DecodeResult(p, msg["re"]?.Type == JTokenType.String ? (string)msg["re"] : ""));
+                        break;
+                    // P4 voice (#146): the host resolver's answers, passed on as JSON text for VoiceCore to parse.
+                    case "voice.candidates":
+                    case "voice.grammar":
+                        Post(new HostEvent(type == "voice.grammar" ? HostEventKind.VoiceGrammar : HostEventKind.VoiceCandidates)
+                        { Re = msg["re"]?.Type == JTokenType.String ? (string)msg["re"] : "", Text = p?.ToString(Formatting.None) ?? "" });
                         break;
                 }
                 // Additive consumers validate their own phase-specific payloads.
@@ -180,6 +209,27 @@ namespace SpatialModeling
                 if (reader.Read()) throw new JsonReaderException("Text after the message.");
                 return msg;
             }
+        }
+
+        static HostEvent DecodeResult(JObject p, string re)
+        {
+            if (p == null) throw new FormatException("no payload");
+            var e = new HostEvent(HostEventKind.Result)
+            {
+                Re = re ?? "",
+                Op = (string)p["op"] ?? "",
+                Outcome = (string)p["outcome"] ?? "",
+                Text = (string)p["summary"] ?? ""
+            };
+            if (p["revision"] != null && p["revision"].Type == JTokenType.Integer) e.Revision = (long)p["revision"];
+            var err = p["error"];
+            if (err is JObject eo)
+            {
+                e.Code = (string)eo["code"] ?? "";
+                if (e.Text.Length == 0) e.Text = (string)eo["message"] ?? "";
+            }
+            else if (err != null && err.Type == JTokenType.String) e.Code = (string)err;
+            return e;
         }
 
         internal static HostEvent DecodeScene(JObject p, bool snapshot)
@@ -322,7 +372,7 @@ namespace SpatialModeling
         }
     }
 
-    enum HostEventKind { Opened, Closed, Welcome, Scene, Error, Warning, InvalidScene, Message }
+    enum HostEventKind { Opened, Closed, Welcome, Scene, Error, Warning, InvalidScene, Message, Result, VoiceCandidates, VoiceGrammar }
 
     sealed class HostEvent
     {
@@ -333,6 +383,9 @@ namespace SpatialModeling
         public JObject RawMessage;
         public bool Snapshot;      // Scene
         public long? Revision;
+        public string Re = "", Op = "", Outcome = "";                                    // Result, Error
+        public string SessionId = "", HostEpoch = "", ActorId = "";   // Welcome (DocumentId and OpenEpoch above)
+        public bool CanEdit;                                                              // Welcome
         public readonly List<string> Removed = new List<string>();
         public readonly List<ObjectRecord> Objects = new List<ObjectRecord>();
 
