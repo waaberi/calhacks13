@@ -33,22 +33,12 @@ namespace SpatialModeling
             var mr = go.GetComponent<MeshRenderer>();
             if (mr == null) mr = go.AddComponent<MeshRenderer>();
             mr.sharedMaterial = OverlayTextMaterial(font);
+            mr.sortingOrder = 4001; // World-space glass sorts at 4000; text must remain above its backing.
 
-            var back = new GameObject(BackingName);
-            back.transform.SetParent(go.transform, false);
-            back.AddComponent<MeshFilter>().sharedMesh = BackingMesh();
-            var br = back.AddComponent<MeshRenderer>();
-            br.sharedMaterial = overlayBacking;
-            br.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            back.SetActive(false);
+            GlassVoiceText.Create(tm);
         }
 
-        const string BackingName = "VoiceTextBacking";
-        static Material overlayText, overlayBacking;
-        static Mesh backingMesh;
-
-        // A copy of the font's material (GUI/Text Shader) that ignores depth and draws after the scene's transparents,
-        // and a dark translucent backing drawn just before it. The font's own material stays as it was.
+        static Material overlayText;
         static Material OverlayTextMaterial(Font font)
         {
             if (overlayText != null) return overlayText;
@@ -58,35 +48,21 @@ namespace SpatialModeling
             overlayText.renderQueue = 4001;
             if (font != null)
                 Font.textureRebuilt += f => { if (f == font && overlayText != null) overlayText.mainTexture = f.material.mainTexture; };
-            overlayBacking = new Material(overlayText) { mainTexture = Texture2D.whiteTexture, color = new Color(0.04f, 0.05f, 0.08f, 0.82f) };
-            overlayBacking.renderQueue = 4000;
             return overlayText;
         }
 
-        static Mesh BackingMesh()
-        {
-            if (backingMesh != null) return backingMesh;
-            backingMesh = new Mesh { name = BackingName };
-            backingMesh.SetVertices(new[] { new Vector3(-0.5f, -0.5f, 0), new Vector3(0.5f, -0.5f, 0), new Vector3(0.5f, 0.5f, 0), new Vector3(-0.5f, 0.5f, 0) });
-            backingMesh.SetColors(new[] { Color.white, Color.white, Color.white, Color.white });
-            backingMesh.SetUVs(0, new[] { Vector2.zero, Vector2.right, Vector2.one, Vector2.up });
-            backingMesh.SetTriangles(new[] { 0, 2, 1, 0, 3, 2 }, 0);
-            return backingMesh;
-        }
+        public static void FitBacking(TextMesh tm) => tm.GetComponent<GlassVoiceText>()?.Fit();
 
-        // Sizes the backing to the text (with a margin); hides it when there is no text.
-        public static void FitBacking(TextMesh tm)
+        public const string TranscriptionPreference = "SpatialModeling.Voice.ShowTranscription";
+        public bool ShowTranscription { get; private set; }
+        public void SetShowTranscription(bool show)
         {
-            Transform back = tm.transform.Find(BackingName);
-            if (back == null) return;
-            Bounds b = tm.GetComponent<MeshRenderer>().localBounds;
-            bool show = tm.gameObject.activeInHierarchy && !string.IsNullOrEmpty(tm.text) && b.size.x > 0f && b.size.y > 0f;
-            if (back.gameObject.activeSelf != show) back.gameObject.SetActive(show);
-            if (!show) return;
-            float margin = tm.characterSize * tm.fontSize * 0.02f;
-            back.localPosition = new Vector3(b.center.x, b.center.y, 0f);
-            back.localRotation = Quaternion.identity;
-            back.localScale = new Vector3(b.size.x + 2 * margin, b.size.y + 2 * margin, 1f);
+            ShowTranscription = show;
+            PlayerPrefs.SetInt(TranscriptionPreference, show ? 1 : 0);
+            PlayerPrefs.Save();
+            if (!show && feedback != null && feedback.text.StartsWith("Heard:", StringComparison.Ordinal))
+                feedback.gameObject.SetActive(false);
+            if (status != null) PlaceStatus();
         }
 
         // The microphone to record from (null: the system default). A configured name wins (part of it, any case) and
@@ -141,6 +117,7 @@ namespace SpatialModeling
 
         void Awake()
         {
+            ShowTranscription = PlayerPrefs.GetInt(TranscriptionPreference, 0) == 1;
             if (host == null) host = FindAnyObjectByType<HostScene>();
 
             var p = new GameObject("PendingCommandPanel");
@@ -156,6 +133,7 @@ namespace SpatialModeling
             status.fontSize = 48; status.characterSize = 0.009f; status.anchor = TextAnchor.UpperLeft;
             status.color = new Color(0.6f, 1f, 0.7f);
             SetupText(status, st);
+            st.SetActive(ShowTranscription);
 
             speaker = gameObject.AddComponent<AudioSource>();
             speaker.spatialBlend = 0f;
@@ -359,7 +337,7 @@ namespace SpatialModeling
             var cam = Camera.main;
             string text = micLine + "\n" + ObjectTargetLabel + (heardLine.Length > 0 ? "\n" + heardLine : "") +
                           (session.WaitingForHost ? "\nthinking..." : resultLine.Length > 0 ? "\n" + resultLine : "");
-            status.gameObject.SetActive(cam != null);
+            status.gameObject.SetActive(ShowTranscription && cam != null);
             if (!status.gameObject.activeSelf) return;
             status.text = text;
             var t = status.transform;
@@ -428,7 +406,7 @@ namespace SpatialModeling
                 return;
             }
             GUI.SetNextControlName("voicebox");
-            typed = GUI.TextField(new Rect(Screen.width - 430, Screen.height - 36, 420, 26), typed);
+            typed = GlassDesktopStatus.TextEntry(new Rect(Screen.width - 430, Screen.height - 42, 420, 32), typed);
         }
 
         // ---------- scene ----------
@@ -564,6 +542,7 @@ namespace SpatialModeling
 
         void Note(string text)
         {
+            if (!ShowTranscription && text.StartsWith("Heard:", StringComparison.Ordinal)) return;
             feedback.text = text;
             feedback.gameObject.SetActive(true);
             noteUntil = Time.time + 4f;

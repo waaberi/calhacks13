@@ -21,8 +21,8 @@ namespace SpatialModeling
         public static bool Requested => Environment.GetEnvironmentVariable("CALHACKS_P25") == "1"
             || Array.IndexOf(Environment.GetCommandLineArgs(), "--p25") >= 0;
         public bool CapturesScroll { get; private set; }
-        public bool OwnsControllerButtons => inputEnabled || focusRequested || windowResuming || endAfterRelease || NativeInputOwned;
         const string PointerHandPreference = "SpatialModeling.PreviewPointerLeft";
+        public bool OwnsControllerButtons => inputEnabled || focusRequested || windowResuming || endAfterRelease || NativeInputOwned;
         public XRNode PrimaryHand { get; private set; } = XRNode.RightHand;
         public void SetPointerHand(XRNode hand)
         {
@@ -255,6 +255,7 @@ namespace SpatialModeling
             if (hit != null)
             {
                 ReleasePointer(); distance = uiDistance;
+                hit.GetComponent<GlassControl>()?.Hover();
                 if (!grip && pressed && hit.IsInteractable()) hit.onClick.Invoke();
                 return true;
             }
@@ -315,9 +316,7 @@ namespace SpatialModeling
 
         static bool Hit(RectTransform rect, Ray ray, out float d)
         {
-            d = 0;
-            return rect != null && new Plane(rect.forward, rect.position).Raycast(ray, out d) && d > 0 && d <= 4
-                && rect.rect.Contains((Vector2)rect.InverseTransformPoint(ray.GetPoint(d)));
+            return GlassRaycast.Hit(rect,ray,out d,out _);
         }
 
         void QuestPointer(Vector2 point, bool trigger, bool pressed, bool side, bool sidePressed, bool stick, bool stickPressed, Vector2 axis)
@@ -393,10 +392,7 @@ namespace SpatialModeling
                         : b.name == "Other hand" ? "Pointer: " + (selected ? "Left" : "Right") : b.name + (selected ? " · ON" : "");
                     b.GetComponentInChildren<Text>().text = label;
                 }
-                var c = b.colors;
-                c.normalColor = b == pulsedButton && Time.unscaledTime < pulseUntil ? new Color(1f, .62f, .08f)
-                    : selected ? new Color(.12f, .65f, .28f) : new Color(.08f, .24f, .34f);
-                c.highlightedColor = c.selectedColor = c.normalColor; b.colors = c;
+                GlassTheme.State(b,selected);
             }
             if (actionFeedback != null)
                 actionFeedback.text = lastControlAction + "\n" + (screen != null && screen.PositionLocked ? "Screen LOCKED · front: click · side: right-click · stick: scroll/zoom · hold stick + tilt: pan"
@@ -428,13 +424,7 @@ namespace SpatialModeling
                 : mode == "Off" ? "Input OFF · enable" : mode == "Blocked" ? "Input blocked · retry"
                 : mode == "Releasing" ? "Releasing input…" : "Enabling… · cancel";
             focusButton.interactable = !endAfterRelease;
-            var colors = focusButton.colors;
-            colors.normalColor = mode == "On" ? new Color(.12f, .65f, .28f)
-                : mode == "Blocked" ? new Color(.75f, .18f, .16f)
-                : mode == "Enabling" || mode == "Releasing" ? new Color(.8f, .5f, .08f)
-                : new Color(.16f, .36f, .65f);
-            colors.highlightedColor = colors.selectedColor = colors.normalColor;
-            focusButton.colors = colors;
+            GlassTheme.State(focusButton,mode=="On",mode=="Blocked");
         }
         void ToggleNativeUi()
         {
@@ -799,7 +789,7 @@ namespace SpatialModeling
 
         void BuildControls()
         {
-            panel = MakePanel("P2.5 controls", new Vector2(0, -1120), new Vector2(1840, 540));
+            panel = MakePanel("P2.5 controls", new Vector2(0, -1020), new Vector2(1840, 430));
             focusButton = AddButton(panel, "Focus Blender", 0, 0, ToggleNativeUi);
             RefreshInputIndicator();
             AddButton(panel, "Disable input", 1, 0, Suspend);
@@ -814,13 +804,12 @@ namespace SpatialModeling
             AddButton(panel, "Windows / dialogs", 6, 0, OpenWindows);
             AddButton(panel, "Escape / cancel", 0, 1, () => { Drawing.Cancel(); Key("ESC"); });
             AddButton(panel, "Enter", 1, 1, () => Key("ENTER"));
-            // Blender owns modeling, tools, dimensions, history and file actions.
+            // Input routing only. Native tools/history/file actions stay in Blender.
             AddButton(panel, "Draw in VR", 2, 1, BeginSpatial);
             AddButton(panel, "Full keyboard", 3, 1, () => OpenKeyboard(true));
             AddButton(panel, "Next window", 4, 1, NextWindow);
-            feedback = MakeText(panel, new Vector2(0, -155), new Vector2(1780, 160), "", 25);
-            actionFeedback = MakeText(panel, new Vector2(0, 355), new Vector2(1780, 160), "", 28);
-            actionFeedback.gameObject.AddComponent<Outline>().effectColor = Color.black;
+            feedback = MakeText(panel, new Vector2(0, -62), new Vector2(1780, 100), "", 25);
+            actionFeedback = MakeText(panel, new Vector2(0, -158), new Vector2(1780, 80), "", 22);
             mouseOptionsPanel = MakePanel("Optional mouse modes", new Vector2(0, -200), new Vector2(1840, 320));
             AddButton(mouseOptionsPanel, "Mouse left", 0, 0, () => { ReleaseNative(); questControls = false; mouseButton = "left"; });
             AddButton(mouseOptionsPanel, "Mouse right", 1, 0, () => { ReleaseNative(); questControls = false; mouseButton = "right"; });
@@ -835,13 +824,13 @@ namespace SpatialModeling
             for (int row = 0; row < rows.Length; row++) for (int col = 0; col < rows[row].Length; col++)
             {
                 string c = rows[row][col].ToString();
-                AddButton(keyboard, c, col, row, () => Character(c), 145, 12);
+                AddButton(keyboard, c, col, row, () => Character(c), 136, 13);
             }
             string[] names = { "CTRL", "SHIFT", "ALT", "TAB", "BACKSPACE", "ENTER", "SPACE", "DELETE", "LEFT", "RIGHT", "UP", "DOWN" };
             for (int i = 0; i < names.Length; i++)
             {
                 string key = names[i]; AddButton(keyboard, key, i, 4, () =>
-                { if (key == "CTRL" || key == "ALT" || key == "SHIFT") Modifier(key); else Key(key); }, 145, 12);
+                { if (key == "CTRL" || key == "ALT" || key == "SHIFT") Modifier(key); else Key(key); }, 136, 13);
             }
             AddButton(keyboard, "Caps", 0, 5, () => shiftText = !shiftText, 145, 12);
             AddButton(keyboard, "Close", 1, 5, () => keyboardShown = false, 145, 12);
@@ -1052,28 +1041,31 @@ namespace SpatialModeling
         }
         RectTransform MakePanel(string name, Vector2 position, Vector2 size)
         {
-            var go = new GameObject(name, typeof(RectTransform), typeof(Image));
+            var go = new GameObject(name, typeof(RectTransform), typeof(RoundedGlassImage));
             var rect = go.GetComponent<RectTransform>(); rect.SetParent(screen.Placement, false);
             rect.anchoredPosition = position; rect.sizeDelta = size;
-            go.GetComponent<Image>().color = new Color(.015f, .035f, .06f, .98f);
+            GlassTheme.StylePanel(go.GetComponent<Image>());
             return rect;
         }
         Button AddButton(RectTransform parent, string label, int col, int row, Action action, float width = 250, int columns = 7)
         {
-            var go = new GameObject(label, typeof(RectTransform), typeof(Image), typeof(Button));
+            var go = new GameObject(label, typeof(RectTransform), typeof(RoundedGlassImage), typeof(Button));
             var rect = go.GetComponent<RectTransform>(); rect.SetParent(parent, false);
             rect.sizeDelta = new Vector2(width - 8, 64);
-            rect.anchoredPosition = new Vector2((col - (columns - 1) * .5f) * width, parent.rect.height * .5f - 48 - row * 72);
+            int layoutColumns=columns;
+            rect.anchoredPosition = new Vector2((col - (layoutColumns - 1) * .5f) * width, parent.rect.height * .5f - 48 - row * 72);
             go.GetComponent<Image>().color = Color.white;
             var button = go.GetComponent<Button>(); button.onClick.AddListener(() =>
             {
                 pulsedButton = button; pulseUntil = Time.unscaledTime + .35f;
+                if(button!=null)button.GetComponent<GlassControl>()?.Press();
                 lastControlAction = "Pressed: " + label;
                 Debug.Log("P25_CONTROL_ACTION " + (parent == keyboard ? "Keyboard key" : label));
                 action(); RefreshControlFeedback();
             }); buttons.Add(button);
-            var colors = button.colors; colors.normalColor = new Color(.08f, .24f, .34f); colors.highlightedColor = colors.selectedColor = colors.normalColor; button.colors = colors;
-            MakeText(rect, Vector2.zero, rect.sizeDelta, label, columns == 12 ? 22 : 25);
+            GlassTheme.StyleAction(go);
+            string caption=label=="BACKSPACE"?"Backspace":label;
+            MakeText(rect, Vector2.zero, rect.sizeDelta, caption, columns >= 12 ? 22 : 25);
             return button;
         }
         static Text MakeText(Transform parent, Vector2 position, Vector2 size, string value, int fontSize)
@@ -1081,7 +1073,7 @@ namespace SpatialModeling
             var go = new GameObject("Label", typeof(RectTransform), typeof(Text));
             var rect = go.GetComponent<RectTransform>(); rect.SetParent(parent, false); rect.anchoredPosition = position; rect.sizeDelta = size;
             var t = go.GetComponent<Text>(); t.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            t.fontSize = fontSize; t.alignment = TextAnchor.MiddleCenter; t.color = Color.white; t.text = value; t.raycastTarget = false;
+            t.fontSize = fontSize; t.alignment = TextAnchor.MiddleCenter; t.color = Color.white; t.text = value; t.raycastTarget = false; GlassTheme.StyleText(t);
             return t;
         }
     }

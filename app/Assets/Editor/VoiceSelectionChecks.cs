@@ -118,8 +118,10 @@ public static class VoiceSelectionChecks
             clear.Invoke(); Check(voice.SelectedObjectId==null,"Clear selection removes latched target");
 
             // A nearer screen must occlude a model for selection, exactly as it does for grabbing.
-            var panel=new GameObject("Blocking screen fixture");
+            var panel=new GameObject("Blocking screen fixture",typeof(RectTransform),typeof(Canvas),typeof(GlassCurvedCanvas),typeof(RoundedGlassImage));
             panel.transform.position=toward(0).GetPoint(.2f); panel.transform.localScale=Vector3.one*.001f;
+            panel.GetComponent<RectTransform>().sizeDelta=new Vector2(1840,1250);
+            Set(screen,"body",panel);
             Set(screen,"canvasObject",panel);
             Set(screen,"buttons",Array.Empty<UnityEngine.UI.Button>());
             aim(right,left,toward(0),true,false);

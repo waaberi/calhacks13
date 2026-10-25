@@ -32,7 +32,7 @@ namespace SpatialModeling
         Pose savedPose;
         float savedSize, savedHeight, savedDistance, savedYaw;
         Text title;
-        enum MenuPage { Arrange, Settings, Planes, Environment }
+        enum MenuPage { Arrange, Settings, Planes, Environment, Appearance }
         MenuPage menuPage;
         int planePage;
         string planeNotice;
@@ -302,11 +302,12 @@ namespace SpatialModeling
             RaycastHit panelHit = default;
             bool hit = panel != null && panel.gameObject.activeInHierarchy &&
                 panel.GetComponent<Collider>().Raycast(ray, out panelHit, distance);
+            if(hit && !GlassTheme.ContainsWorld(panel,panelHit.point)) hit=false;
             if (hit) distance = panelHit.distance;
             foreach (var action in buttons)
             {
                 if (action == null || !action.gameObject.activeInHierarchy) continue;
-                if (action.GetComponent<Collider>().Raycast(ray, out var result, distance))
+                if (action.GetComponent<Collider>().Raycast(ray, out var result, distance) && GlassTheme.ContainsWorld(action.transform,result.point))
                 { distance = result.distance; hit = true; }
             }
             return hit;
@@ -319,13 +320,14 @@ namespace SpatialModeling
             foreach (var action in buttons)
             {
                 if (action == null || !action.gameObject.activeInHierarchy) continue;
-                if (action.GetComponent<Collider>().Raycast(ray, out var result, distance))
+                if (action.GetComponent<Collider>().Raycast(ray, out var result, distance) && GlassTheme.ContainsWorld(action.transform,result.point))
                 { distance = result.distance; selected = action; }
             }
             if(selected==null) return false;
             // Page callbacks may destroy/rebuild this action. Retain the hit
             // result so the same trigger cannot fall through after dispatch.
-            if(click) selected.Invoke();
+            var visual=selected.GetComponent<GlassControl>();visual?.Hover();
+            if(click) { visual?.Press();selected.Invoke(); }
             return true;
         }
 
@@ -333,14 +335,15 @@ namespace SpatialModeling
         {
             if (panel != null) return;
             if(roomSetup==null) roomSetup=gameObject.AddComponent<WorkspaceRoomSetup>();
-            panel = new GameObject("P2 left-hand placeable menu", typeof(RectTransform), typeof(Canvas), typeof(Image)).transform;
+            panel = new GameObject("P2 left-hand placeable menu", typeof(RectTransform), typeof(Canvas), typeof(RoundedGlassImage)).transform;
             panel.localScale = Vector3.one * MenuScale;
+            panel.gameObject.AddComponent<GlassRoot>();
             var canvas = panel.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
             var arrangement=GetComponent<WorkspaceArrangement>() ?? FindFirstObjectByType<WorkspaceArrangement>();
             bool compact=arrangement!=null;
             panel.GetComponent<RectTransform>().sizeDelta = new Vector2(640, compact?580:650);
-            panel.GetComponent<Image>().color = new Color(.015f,.025f,.04f,.96f);
+            GlassTheme.StylePanel(panel.GetComponent<Image>());
             panel.GetComponent<Image>().raycastTarget = false;
             var surface = panel.gameObject.AddComponent<BoxCollider>();
             surface.center = new Vector3(0, -6, 5);
@@ -380,7 +383,20 @@ namespace SpatialModeling
                     if(preview!=null) preview.SetPointerHand(preview.PrimaryHand==UnityEngine.XR.XRNode.RightHand?UnityEngine.XR.XRNode.LeftHand:UnityEngine.XR.XRNode.RightHand);
                     RefreshMenu();
                 }),
+                ("Appearance / accessibility",()=>ChangeMenu(MenuPage.Appearance)),
+                ("Voice transcription: " + ((GetComponent<VoiceUiAdapter>() ?? FindFirstObjectByType<VoiceUiAdapter>())?.ShowTranscription == true ? "ON" : "OFF"),()=>{
+                    var adapter=GetComponent<VoiceUiAdapter>() ?? FindFirstObjectByType<VoiceUiAdapter>();
+                    if(adapter!=null)adapter.SetShowTranscription(!adapter.ShowTranscription);
+                    RefreshMenu();
+                }),
                 ("Back to arrange",()=>ChangeMenu(MenuPage.Arrange))
+            };
+            if(compact && menuPage==MenuPage.Appearance) actions=new (string,Action)[] {
+                ($"Text size: {GlassTheme.TextScale:0.##}×",()=>{GlassTheme.CycleText();RefreshMenu();}),
+                ("Contrast: "+(GlassTheme.HighContrast?"HIGH":"standard"),()=>{GlassTheme.SetAccessibility(GlassTheme.TextScale,!GlassTheme.HighContrast,GlassTheme.ReducedTransparency,GlassTheme.ReducedMotion);RefreshMenu();}),
+                ("Transparency: "+(GlassTheme.ReducedTransparency?"reduced":"glass"),()=>{GlassTheme.SetAccessibility(GlassTheme.TextScale,GlassTheme.HighContrast,!GlassTheme.ReducedTransparency,GlassTheme.ReducedMotion);RefreshMenu();}),
+                ("Motion: "+(GlassTheme.ReducedMotion?"reduced":"standard"),()=>{GlassTheme.SetAccessibility(GlassTheme.TextScale,GlassTheme.HighContrast,GlassTheme.ReducedTransparency,!GlassTheme.ReducedMotion);RefreshMenu();}),
+                ("Back to Settings",()=>ChangeMenu(MenuPage.Settings))
             };
             if(compact && menuPage==MenuPage.Environment) actions=new (string,Action)[] {
                 ("Load saved room",arrangement.Surfaces.Reload), ("Scan / update on Quest",roomSetup.Scan),
@@ -399,13 +415,13 @@ namespace SpatialModeling
             if(compact) title.text=MenuHeading(arrangement);
             for (int i = 0; i < actions.Length; i++)
             {
-                var background = new GameObject(actions[i].Item1, typeof(RectTransform), typeof(Image));
+                var background = new GameObject(actions[i].Item1, typeof(RectTransform), typeof(RoundedGlassImage));
                 background.transform.SetParent(panel, false);
                 var rect = background.GetComponent<RectTransform>();
                 rect.anchoredPosition = new Vector2((i%2 == 0 ? -1 : 1)*155, 130-i/2*(compact?65:58));
                 rect.sizeDelta = new Vector2(300,52);
                 var image = background.GetComponent<Image>();
-                image.color = new Color(.02f,.05f,.09f,.96f);
+                GlassTheme.StyleAction(background);
                 image.raycastTarget = false;
                 // Render text as a child so the background sits behind it.
                 Label(background.transform, actions[i].Item1, Vector2.zero, new Vector2(300,52));
@@ -424,6 +440,10 @@ namespace SpatialModeling
                 gear.GetComponent<SettingsGearGraphic>().color=new Color(.85f,.94f,1);
                 gear.GetComponent<SettingsGearGraphic>().raycastTarget=false;
                 gear.GetComponent<BoxCollider>().size=new Vector3(64,64,8);
+                var gearBack=new GameObject("Settings circular target",typeof(RectTransform),typeof(RoundedGlassImage));
+                gearBack.transform.SetParent(panel,false);gearBack.transform.SetSiblingIndex(gear.transform.GetSiblingIndex());
+                gearBack.GetComponent<RectTransform>().anchoredPosition=rect.anchoredPosition;gearBack.GetComponent<RectTransform>().sizeDelta=new Vector2(64,64);
+                gearBack.GetComponent<RoundedGlassImage>().Radius=32;gearBack.GetComponent<Image>().color=GlassTheme.Control;gearBack.GetComponent<Image>().raycastTarget=false;
                 var action=gear.GetComponent<TableAction>();
                 action.Click=()=>ChangeMenu(menuPage==MenuPage.Settings?MenuPage.Arrange:MenuPage.Settings);
                 buttons.Add(action);
@@ -433,6 +453,7 @@ namespace SpatialModeling
 
         string MenuHeading(WorkspaceArrangement arrangement)
         {
+            if(menuPage==MenuPage.Appearance) return "Appearance\nReadable glass · settings saved on this PC\nText and targets enlarge together";
             if(menuPage==MenuPage.Environment) return roomSetup.Heading;
             if(menuPage==MenuPage.Settings) return "Settings\nRoom geometry: "+(arrangement.Surfaces.ShowDetected?"shown":"hidden")+
                 " · auto surfaces: "+(arrangement.Surfaces.AutomaticEnabled?"on":"off")+
@@ -493,7 +514,8 @@ namespace SpatialModeling
             var text = go.GetComponent<Text>();
             text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             text.fontSize = 23; text.alignment = TextAnchor.MiddleCenter;
-            text.color = Color.white; text.text = value; text.raycastTarget = false;
+            text.color = GlassTheme.Ink; text.text = value; text.raycastTarget = false;
+            GlassTheme.StyleText(text);
             return text;
         }
     }

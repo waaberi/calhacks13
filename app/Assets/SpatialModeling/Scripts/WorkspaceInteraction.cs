@@ -76,8 +76,8 @@ namespace SpatialModeling
             var shader = Shader.Find("Universal Render Pipeline/Unlit");
             if (shader == null) shader = Shader.Find("UI/Default");
             material = new Material(shader);
-            left = CreateHand(XRNode.LeftHand, "LeftHand", new Color(0.22f, 0.75f, 1f));
-            right = CreateHand(XRNode.RightHand, "RightHand", new Color(1f, 0.65f, 0.22f));
+            left = CreateHand(XRNode.LeftHand, "LeftHand", GlassTheme.LeftMetal);
+            right = CreateHand(XRNode.RightHand, "RightHand", GlassTheme.RightMetal);
             scene = FindFirstObjectByType<HostScene>();
             screen = FindFirstObjectByType<BlenderScreen>();
             arrangement = FindFirstObjectByType<WorkspaceArrangement>();
@@ -91,19 +91,8 @@ namespace SpatialModeling
             var h = new Hand { node = node, color = color };
             h.visual = new GameObject(usage + " tracked controller");
             h.visual.transform.SetParent(transform, false);
-            // A neutral tracking marker, not an inaccurately offset hand/controller model.
-            var handle = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-            handle.name = "Grip tracking marker";
-            Destroy(handle.GetComponent<Collider>());
-            handle.transform.SetParent(h.visual.transform, false);
-            handle.transform.localPosition = Vector3.zero;
-            handle.transform.localScale = Vector3.one * 0.025f;
-            var renderer = handle.GetComponent<Renderer>();
-            renderer.sharedMaterial = material;
-            var block = new MaterialPropertyBlock();
-            block.SetColor("_BaseColor", color);
-            block.SetColor("_Color", color);
-            renderer.SetPropertyBlock(block);
+            GlassController.Create(h.visual.transform,node);
+            var block=new MaterialPropertyBlock();block.SetColor("_BaseColor",color);block.SetColor("_Color",color);
             var rayObject = new GameObject(usage + " aim ray", typeof(LineRenderer));
             rayObject.transform.SetParent(h.visual.transform, false);
             h.ray = rayObject.GetComponent<LineRenderer>();
@@ -115,7 +104,8 @@ namespace SpatialModeling
             h.ray.startColor = h.ray.endColor = color;
             var tip = GameObject.CreatePrimitive(PrimitiveType.Sphere);
             tip.name = "Pointer target";
-            Destroy(tip.GetComponent<Collider>());
+            var tipCollider=tip.GetComponent<Collider>();tipCollider.enabled=false;
+            if(Application.isPlaying)Destroy(tipCollider);else DestroyImmediate(tipCollider);
             h.tip = tip.transform;
             h.tip.SetParent(h.visual.transform, false);
             h.tip.localScale = Vector3.one * 0.012f;
@@ -488,6 +478,9 @@ namespace SpatialModeling
             // drawing an independently jittering endpoint across the held item.
             var endpoint = h.target != null ? h.target.TransformPoint(h.localContact)
                 : aim.position + aim.rotation * Vector3.forward * h.pointerDistance;
+            // Appearance follows the accepted stabilized ray; input/grab mapping is unchanged.
+            var forward=endpoint-aim.position;
+            h.visual.transform.SetPositionAndRotation(aim.position,forward.sqrMagnitude>1e-10f ? Quaternion.LookRotation(forward,aim.rotation*Vector3.up) : aim.rotation);
             h.ray.SetPosition(1, endpoint);
             h.tip.position = endpoint;
             h.tip.gameObject.SetActive(h.hasHit || h.target != null);

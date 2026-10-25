@@ -470,17 +470,18 @@ namespace SpatialModeling
                 DestroyObject(handle.GetComponent<Collider>()); handle.transform.SetParent(target,false);
                 handle.transform.localScale=Vector3.one*.065f; handle.GetComponent<Renderer>().sharedMaterial=levelMaterial;
                 level.Handle=handle.transform;
-                var label = new GameObject("Level label backing",typeof(RectTransform),typeof(Canvas),typeof(Image));
+                var label = new GameObject("Level label backing",typeof(RectTransform),typeof(Canvas),typeof(RoundedGlassImage));
                 label.transform.SetParent(target,false); label.transform.localScale=Vector3.one*.001f;
                 label.GetComponent<Canvas>().renderMode=RenderMode.WorldSpace;
                 label.GetComponent<RectTransform>().sizeDelta=new Vector2(620,125);
-                label.GetComponent<Image>().color=new Color(.015f,.02f,.025f,.96f); label.GetComponent<Image>().raycastTarget=false;
+                GlassTheme.StylePanel(label.GetComponent<Image>());label.GetComponent<Image>().color=new Color(.015f,.02f,.025f,.96f);
                 level.LabelRoot=label.transform;
                 var text=new GameObject("Level instructions",typeof(RectTransform),typeof(Text)); text.transform.SetParent(label.transform,false);
                 var rect=text.GetComponent<RectTransform>(); rect.sizeDelta=new Vector2(600,115);
                 level.Label=text.GetComponent<Text>(); level.Label.font=Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
                 level.Label.fontSize=32; level.Label.fontStyle=FontStyle.Bold; level.Label.alignment=TextAnchor.MiddleCenter; level.Label.color=Color.white;
                 level.Label.raycastTarget = false;
+                GlassTheme.StyleText(level.Label);
             }
             level.Replaces=replaces;
             level.IndependentPlane=multiple;
@@ -562,8 +563,7 @@ namespace SpatialModeling
                 var labelPlane=new Plane(level.LabelRoot.forward,level.LabelRoot.position);
                 if(labelPlane.Raycast(ray,out float labelHit) && labelHit<distance)
                 {
-                    var localLabel=level.LabelRoot.InverseTransformPoint(ray.GetPoint(labelHit));
-                    if(Mathf.Abs(localLabel.x)<=310 && Mathf.Abs(localLabel.y)<=62.5f)
+                    if(GlassTheme.ContainsWorld(level.LabelRoot,ray.GetPoint(labelHit)))
                     { distance=labelHit; target=level.Target; }
                 }
                 var plane = new Plane(level.Target.forward, center);
@@ -731,7 +731,7 @@ namespace SpatialModeling
             level.LabelRoot.position=level.Target.position+Vector3.up*.17f;
             float scale=Mathf.Max(.001f,Mathf.Abs(level.Target.lossyScale.x));
             level.Handle.localScale=Vector3.one*(.065f/scale);
-            level.LabelRoot.localScale=Vector3.one*(.001f/scale);
+            level.LabelRoot.localScale=Vector3.one*(.001f*GlassTheme.TextScale/scale);
             level.LabelRoot.rotation=Camera.main!=null ? Quaternion.LookRotation(level.LabelRoot.position-Camera.main.transform.position,Vector3.up) : Quaternion.identity;
         }
         public static Surface DeskTop(Pose world, Bounds bounds)

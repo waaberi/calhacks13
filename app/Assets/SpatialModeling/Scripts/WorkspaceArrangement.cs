@@ -85,7 +85,11 @@ namespace SpatialModeling
         }
         public static Bounds LocalBounds(Transform target)
         {
-            if(target is RectTransform rect) return new Bounds(rect.rect.center,new Vector3(rect.rect.width,rect.rect.height,8));
+            if(target is RectTransform rect)
+            {
+                var curve=target.GetComponent<GlassCurvedCanvas>();
+                return curve!=null?curve.LocalBounds():new Bounds(rect.rect.center,new Vector3(rect.rect.width,rect.rect.height,8));
+            }
             var result=new Bounds(Vector3.zero,Vector3.zero);
             bool first=true;
             foreach(var filter in target.GetComponentsInChildren<MeshFilter>(true))

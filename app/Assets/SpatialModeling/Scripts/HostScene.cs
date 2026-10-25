@@ -286,7 +286,7 @@ namespace SpatialModeling
             {
                 // IMGUI is only visible on the monitor. A world-space canvas is rendered
                 // by both headset eyes, so a stale scene cannot silently look connected.
-                statusPanel = new GameObject("Blender connection status", typeof(RectTransform), typeof(Canvas), typeof(Image));
+                statusPanel = new GameObject("Blender connection status", typeof(RectTransform), typeof(Canvas), typeof(RoundedGlassImage));
                 statusPanel.transform.SetParent(camera.transform, false);
                 statusPanel.transform.localPosition = new Vector3(0f, 0.10f, 1f);
                 statusPanel.transform.localScale = Vector3.one * 0.001f;
@@ -296,7 +296,8 @@ namespace SpatialModeling
                 canvas.renderMode = RenderMode.WorldSpace;
                 canvas.worldCamera = camera;
                 var background = statusPanel.GetComponent<Image>();
-                background.color = new Color(0.015f, 0.02f, 0.03f, 0.94f);
+                GlassTheme.StylePanel(background);
+                statusPanel.AddComponent<GlassRoot>();
                 background.raycastTarget = false;
                 var label = new GameObject("Status", typeof(RectTransform), typeof(Text));
                 label.transform.SetParent(statusPanel.transform, false);
@@ -310,6 +311,7 @@ namespace SpatialModeling
                 headsetStatus.fontSize = 32;
                 headsetStatus.alignment = TextAnchor.MiddleCenter;
                 headsetStatus.raycastTarget = false;
+                GlassTheme.StyleText(headsetStatus);
             }
             var screen = FindFirstObjectByType<BlenderScreen>();
             bool screenVisible = screen != null && screen.Visible;
@@ -374,10 +376,7 @@ namespace SpatialModeling
                 case Status.Disconnected: text = $"Disconnected. Reconnecting...{stale}\n{reason}"; break;
                 default: text = $"Connecting to Blender at {host}:{port} ...{stale}\n{(link != null && link.SocketOpen ? "" : reason)}"; break;
             }
-            if (style == null) style = new GUIStyle(GUI.skin.label) { fontSize = 26 };
-            style.normal.textColor = status == Status.Connected ? Color.white : new Color(1f, 0.6f, 0.2f);
-            GUI.Label(new Rect(20, 20, 1400, 200), text, style);
-            if (GUI.Button(new Rect(20, 230, 300, 48), "Recenter view (B / Y / R)")) RequestRecenter();
+            GlassDesktopStatus.Draw(text,status!=Status.Connected,RequestRecenter);
         }
 
         void HandleCore(HostEvent e)

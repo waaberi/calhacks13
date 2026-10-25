@@ -77,16 +77,17 @@ namespace SpatialModeling
         }
         void CreateInstructions(Transform eye)
         {
-            var panel=new GameObject("Room setup instructions",typeof(RectTransform),typeof(Canvas),typeof(Image));
+            var panel=new GameObject("Room setup instructions",typeof(RectTransform),typeof(Canvas),typeof(RoundedGlassImage));
             panel.transform.SetParent(eye,false);panel.transform.localPosition=new Vector3(0,0,1.2f);
             panel.transform.localScale=Vector3.one*.001f;
             panel.GetComponent<Canvas>().renderMode=RenderMode.WorldSpace;
             panel.GetComponent<RectTransform>().sizeDelta=new Vector2(950,230);
-            panel.GetComponent<Image>().color=new Color(.01f,.025f,.04f,.94f);
+            GlassTheme.StylePanel(panel.GetComponent<Image>());panel.AddComponent<GlassRoot>();
             var text=new GameObject("Instructions",typeof(RectTransform),typeof(Text));text.transform.SetParent(panel.transform,false);
             text.GetComponent<RectTransform>().sizeDelta=new Vector2(910,215);
             instructions=text.GetComponent<Text>();instructions.font=Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             instructions.fontSize=28;instructions.alignment=TextAnchor.MiddleCenter;instructions.color=Color.white;
+            GlassTheme.StyleText(instructions);
         }
         public async void LoadSaved()
         {

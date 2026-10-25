@@ -40,7 +40,7 @@ public static class P25WindowUiChecks
         f.Preview.RouteControllerHand(XRNode.RightHand, buttonRay, false, false, Vector2.zero, 3, out _, false);
         Check(f.Preview.RouteControllerHand(XRNode.RightHand, buttonRay, true, false, Vector2.zero, 3, out _, false)
             && (bool)Get(f.Preview, "keyboardShown") && keyboardButton.GetComponentInChildren<Text>().text.Contains("ON")
-            && keyboardButton.colors.normalColor.r > .9f, "actual trigger ray opens keyboard and visibly acknowledges press plus persistent ON state");
+            && keyboardButton.GetComponent<GlassControl>().PressActive && keyboardButton.GetComponent<GlassControl>().Selected, "actual trigger ray opens keyboard and visibly acknowledges press plus persistent ON state");
         f.Preview.RouteControllerHand(XRNode.RightHand, buttonRay, true, false, Vector2.zero, 3, out _, false);
         Check((bool)Get(f.Preview, "keyboardShown"), "held trigger never repeatedly toggles a control");
         f.Preview.RouteControllerHand(XRNode.RightHand, buttonRay, false, false, Vector2.zero, 3, out _, false);
@@ -119,7 +119,7 @@ public static class P25WindowUiChecks
         string Label() => button.GetComponentInChildren<Text>().text;
         void Refresh() => Invoke(f.Preview, "RefreshInputIndicator");
         Refresh();
-        Check(Label() == "Input ON · turn off" && button.colors.normalColor.g > button.colors.normalColor.r,
+        Check(Label() == "Input ON · turn off" && button.GetComponent<Image>().color.g > button.GetComponent<Image>().color.r,
             "actual toggle is green and ON only after complete admission");
         f.State["focused"] = false; Refresh();
         Check(Label() == "Enabling… · cancel", "requested input cannot look ON without desktop focus");
@@ -128,7 +128,7 @@ public static class P25WindowUiChecks
         f.Frame(f.State); Set(f.Preview, "inputEnabled", false); Set(f.Preview, "focusRequested", true); Refresh();
         Check(Label() == "Enabling… · cancel", "permission request is visibly pending");
         Set(f.Preview, "focusRequested", false); Set(f.Preview, "lastInputFailure", "test denied"); Refresh();
-        Check(Label() == "Input blocked · retry" && button.colors.normalColor.r > button.colors.normalColor.g,
+        Check(Label() == "Input blocked · retry" && button.GetComponent<Image>().color.r > button.GetComponent<Image>().color.g,
             "blocked activation remains visibly distinct from OFF and ON");
         Set(f.Preview, "lastInputFailure", ""); Refresh();
         Check(Label() == "Input OFF · enable", "idle mode shows OFF");

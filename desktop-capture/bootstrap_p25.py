@@ -13,6 +13,7 @@ opens a port, installs into a personal profile, or changes the supplied sources.
 import argparse
 import hashlib
 import importlib
+import importlib.util
 import json
 import os
 import shutil
@@ -201,7 +202,11 @@ def configure_private_ui(bpy, resources):
     bpy.context.preferences.view.show_splash = False
     bpy.context.preferences.view.ui_scale = 1.5
     bpy.context.preferences.use_preferences_save = False
-    return {"config": str(config), "show_splash": False, "preference_autosave": False, "ui_scale": 1.5}
+    spec = importlib.util.spec_from_file_location("private_glass_theme", Path(__file__).with_name("glass_blender_theme.py"))
+    theme_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(theme_module)
+    glass = theme_module.apply_private_theme(bpy)
+    return {"config": str(config), "show_splash": False, "preference_autosave": False, "ui_scale": 1.5, "glass_theme": glass}
 
 
 def run(args, argv=None):
