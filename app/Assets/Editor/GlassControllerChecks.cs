@@ -86,7 +86,8 @@ public static class GlassControllerChecks
                     Check(Vector3.Distance(visual.transform.position,gripWorld.position)<.000001f,"accepted grip-root tracking preserved");
                     Check(Vector3.Distance(ray.GetPosition(0),expected.position)<.000001f,"pointer origin and cylinder share exact current sample");
                     Check(Vector3.Angle(ray.GetPosition(1)-ray.GetPosition(0),expected.rotation*Vector3.forward)<.03f,"pointer direction follows current cylinder without stable-ray latency");
-                    Check(Vector3.Distance(((Transform)Get(hand,"tip")).position,ray.GetPosition(1))<.000001f,"tip shares current ray endpoint");
+                    float endpointError=Vector3.Distance(((Transform)Get(hand,"tip")).position,ray.GetPosition(1));
+                    Check(endpointError<.00001f,"tip shares current ray endpoint within world/local float precision; error_m="+endpointError);
 
                 }
             }
