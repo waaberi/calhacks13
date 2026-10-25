@@ -427,7 +427,7 @@ def test_the_grammar_keeps_voicecores_own_words():
 def test_the_grammar_example_is_what_the_host_sends():
     example = json.loads((CONTRACTS / "examples" / "voice.grammar.json").read_text("utf-8"))
     assert example["payload"] == {"version": voice_ops.GRAMMAR_VERSION,
-                                  "phrases": voice_ops.GRAMMAR}
+                                  "phrases": voice_ops.GRAMMAR, "composition": True}
 
 
 @pytest.mark.parametrize("name", ["voice.candidates.json", "voice.candidates.ask.json",

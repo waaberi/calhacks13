@@ -108,6 +108,7 @@ namespace SpatialModeling
         void OnDestroy()
         {
             disposed = true; generation++;
+            DisposeRoomRawCompletion();
             ClearAnchors(); ClearLevels();
             foreach (var outline in outlines) if (outline != null) DestroyObject(outline.gameObject);
             if (levelMaterial != null) DestroyObject(levelMaterial);
@@ -133,11 +134,12 @@ namespace SpatialModeling
         { if (focus && Application.isPlaying && AutomaticEnabled) { attempts = 0; Reload(); } }
         void Update()
         {
-            var headset = InputDevices.GetDeviceAtXRNode(XRNode.Head);
-            headset.TryGetFeatureValue(CommonUsages.userPresence, out bool present);
+            // Link can lose its scene service while the headset remains mounted.
+            // Retry after full VR readiness returns, not only desktop focus/presence.
+            bool present=RoomHeadReady();
             if (present && !wasPresent && AutomaticEnabled) { attempts = 0; Reload(); }
             wasPresent = present;
-            if (present && AutomaticEnabled && detected.Count == 0 && !loading && attempts < 3
+            if (present && AutomaticEnabled && detected.Count == 0 && !loading
                 && Time.realtimeSinceStartup >= retryAt) Reload();
         }
         public void ToggleAutomatic()
@@ -169,9 +171,11 @@ namespace SpatialModeling
             if (loading) { reloadPending = true; return; }
             if (!OVRPlugin.initialized || !OpenXRRuntime.IsExtensionEnabled("XR_FB_scene"))
             { message = "Room data unavailable · use a level"; retryAt = Time.realtimeSinceStartup + 15; attempts++; return; }
-            loading = true; reloadPending = false; attempts++; retryAt = Time.realtimeSinceStartup + 15;
+            loading = true; reloadPending = false; attempts++;
+            retryAt = Time.realtimeSinceStartup + RoomRetryDelay(attempts);
             int version = ++generation;
-            ClearAnchors(); roomCount = 0;
+            // Stage a replacement. Empty queries are a demonstrated Link session
+            // failure, not proof that the user's saved room was deleted.
             var owned = new List<OVRAnchor>();
             var rooms = new List<OVRAnchor>();
             var next = new List<RoomAnchor>();
@@ -196,7 +200,6 @@ namespace SpatialModeling
                     if (!Current()) return;
                     Debug.Log("WORKSPACE_SURFACES compatibility rooms="+rooms.Count+" success="+legacy);
                 }
-                roomCount = rooms.Count;
                 if (rooms.Count == 0)
                 {
                     // Some runtimes expose labelled elements without a RoomLayout root.
@@ -220,15 +223,17 @@ namespace SpatialModeling
                     foreach (var anchor in elements)
                     {
                         if (!anchor.TryGetComponent<OVRLocatable>(out var locatable)) continue;
-                        await locatable.SetEnabledAsync(true);
+                        await locatable.SetEnabledAsync(true,timeout:RoomLocalizationTimeoutSeconds);
                         if (!Current()) return;
                         if (locatable.IsEnabled && !next.Exists(a=>a.Anchor.Uuid==anchor.Uuid))
                             next.Add(new RoomAnchor { Anchor=anchor,Locatable=locatable });
                     }
                     if (!Current()) return;
-                    anchors.AddRange(next);
-                    ReadScanGeometry();
-                    message = anchors.Count > 0 ? "Saved surfaces loaded" : "No room data received · adjust/add a level";
+                    await RecoverSavedRoomAnchors(next,owned,Current);
+                    if (!Current()) return;
+                    await WaitForRoomReplacement(next,Current);
+                    if (!Current()) return;
+                    ApplyRoomLoadForGeneration(next,rooms,version);
                     return;
                 }
                 foreach (var room in rooms)
@@ -261,7 +266,7 @@ namespace SpatialModeling
                         foreach (var anchor in children)
                         {
                             if (!anchor.TryGetComponent<OVRLocatable>(out var locatable)) continue;
-                            await locatable.SetEnabledAsync(true);
+                            await locatable.SetEnabledAsync(true,timeout:RoomLocalizationTimeoutSeconds);
                             if (!Current()) return;
                             if (!locatable.IsEnabled || next.Exists(a => a.Anchor.Uuid == anchor.Uuid)) continue;
                             kinds.TryGetValue(anchor.Uuid, out var kind);
@@ -292,17 +297,18 @@ namespace SpatialModeling
                 foreach (var mesh in meshes)
                 {
                     if (next.Exists(a => a.Anchor.Uuid == mesh.Uuid) || !mesh.TryGetComponent<OVRLocatable>(out var local)) continue;
-                    await local.SetEnabledAsync(true);
+                    await local.SetEnabledAsync(true,timeout:RoomLocalizationTimeoutSeconds);
                     if (!Current()) return;
                     if (local.IsEnabled) next.Add(new RoomAnchor { Anchor = mesh, Locatable = local });
                 }
                 }
                 catch(Exception error) {Debug.LogWarning("WORKSPACE_SCAN optional mesh query unavailable " + error.GetType().Name);}
                 if (!Current()) return;
-                anchors.AddRange(next);
-                foreach(var room in rooms) knownRooms.Add(room.Uuid);
-                ReadScanGeometry();
-                message = anchors.Count == 0 ? "Room found · surfaces unavailable · use a level" : "Saved room loaded";
+                if(next.Count==0) await RecoverSavedRoomAnchors(next,owned,Current);
+                if (!Current()) return;
+                await WaitForRoomReplacement(next,Current);
+                if (!Current()) return;
+                ApplyRoomLoadForGeneration(next,rooms,version);
             }
             catch (Exception error)
             {
@@ -470,17 +476,18 @@ namespace SpatialModeling
                 DestroyObject(handle.GetComponent<Collider>()); handle.transform.SetParent(target,false);
                 handle.transform.localScale=Vector3.one*.065f; handle.GetComponent<Renderer>().sharedMaterial=levelMaterial;
                 level.Handle=handle.transform;
-                var label = new GameObject("Level label backing",typeof(RectTransform),typeof(Canvas),typeof(Image));
+                var label = new GameObject("Level label backing",typeof(RectTransform),typeof(Canvas),typeof(RoundedGlassImage));
                 label.transform.SetParent(target,false); label.transform.localScale=Vector3.one*.001f;
                 label.GetComponent<Canvas>().renderMode=RenderMode.WorldSpace;
                 label.GetComponent<RectTransform>().sizeDelta=new Vector2(620,125);
-                label.GetComponent<Image>().color=new Color(.015f,.02f,.025f,.96f); label.GetComponent<Image>().raycastTarget=false;
+                GlassTheme.StylePanel(label.GetComponent<Image>());label.GetComponent<Image>().color=new Color(.015f,.02f,.025f,.96f);
                 level.LabelRoot=label.transform;
                 var text=new GameObject("Level instructions",typeof(RectTransform),typeof(Text)); text.transform.SetParent(label.transform,false);
                 var rect=text.GetComponent<RectTransform>(); rect.sizeDelta=new Vector2(600,115);
                 level.Label=text.GetComponent<Text>(); level.Label.font=Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
                 level.Label.fontSize=32; level.Label.fontStyle=FontStyle.Bold; level.Label.alignment=TextAnchor.MiddleCenter; level.Label.color=Color.white;
                 level.Label.raycastTarget = false;
+                GlassTheme.StyleText(level.Label);
             }
             level.Replaces=replaces;
             level.IndependentPlane=multiple;
@@ -562,8 +569,7 @@ namespace SpatialModeling
                 var labelPlane=new Plane(level.LabelRoot.forward,level.LabelRoot.position);
                 if(labelPlane.Raycast(ray,out float labelHit) && labelHit<distance)
                 {
-                    var localLabel=level.LabelRoot.InverseTransformPoint(ray.GetPoint(labelHit));
-                    if(Mathf.Abs(localLabel.x)<=310 && Mathf.Abs(localLabel.y)<=62.5f)
+                    if(GlassTheme.ContainsWorld(level.LabelRoot,ray.GetPoint(labelHit)))
                     { distance=labelHit; target=level.Target; }
                 }
                 var plane = new Plane(level.Target.forward, center);
@@ -625,15 +631,16 @@ namespace SpatialModeling
                     if (surface.Size.x <= .01f || surface.Size.y <= .01f) continue;
                     candidates.Add((item.Room,surface));
                     if(kind=="Floor") floors.Add(new WorkspaceRoomLocalization.FloorCandidate {
-                        Room=item.Room,WorldPose=surface.Pose,Boundary=surface.Boundary,Tracked=true,SampleTime=now });
+                        Room=item.Room,Anchor=item.Anchor.Uuid,WorldPose=surface.Pose,Boundary=surface.Boundary,Tracked=true,SampleTime=now });
                 }
                 catch (Exception error) { if(invalidLogged.Add(item.Anchor.Uuid)) Debug.LogWarning("WORKSPACE_SURFACES invalid surface " + error.GetType().Name); }
             }
-            bool localized=WorkspaceRoomLocalization.TrySelectRoom(floors,
+            bool localized=SelectCurrentRoom(floors,
                 Camera.main!=null?new Pose(Camera.main.transform.position,Camera.main.transform.rotation):Pose.identity,
                 roomHeadReady,now,out Guid currentRoom,out string eligibility);
             if(eligibility!=lastRoomEligibility)
             {lastRoomEligibility=eligibility;Debug.Log("WORKSPACE_ROOM_ELIGIBILITY "+eligibility);}
+            if(localized&&Camera.main!=null)RememberVerifiedRoom(currentRoom,floors,new Pose(Camera.main.transform.position,Camera.main.transform.rotation),now);
             foreach (var item in candidates)
             {
                 if(!localized || !WorkspaceRoomLocalization.BelongsToRoom(item.room,currentRoom,Guid.Empty)) continue;
@@ -731,7 +738,7 @@ namespace SpatialModeling
             level.LabelRoot.position=level.Target.position+Vector3.up*.17f;
             float scale=Mathf.Max(.001f,Mathf.Abs(level.Target.lossyScale.x));
             level.Handle.localScale=Vector3.one*(.065f/scale);
-            level.LabelRoot.localScale=Vector3.one*(.001f/scale);
+            level.LabelRoot.localScale=Vector3.one*(.001f*GlassTheme.TextScale/scale);
             level.LabelRoot.rotation=Camera.main!=null ? Quaternion.LookRotation(level.LabelRoot.position-Camera.main.transform.position,Vector3.up) : Quaternion.identity;
         }
         public static Surface DeskTop(Pose world, Bounds bounds)

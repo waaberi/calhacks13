@@ -1,5 +1,26 @@
 # Far-ray dragging: failures, current fix and regression gates
 
+## Current visual pointer/depth correction, 2026-10-25
+
+The wearer rejected pointer lag behind the cylinders, then physically rejected
+the v10 raw-pointer replacement as very shaky/skipping while grabbed objects
+remained smooth. That raw visual behavior is a retained failure. The current
+correction uses the existing stabilized aim for logical UI hits and the displayed
+cylinder/ray together. After the unchanged held-object pose update, the pointer
+ends at the exact held local contact; unrelated surfaces cannot shorten or
+redirect it. The cylinder is derived from that same displayed ray after filtering,
+preventing a one-frame mismatch. Free pointers use stabilized nearest intersections
+with moved colliders synchronized. No extra world filter or object-motion change
+is introduced. The raw same-device sample remains the stabilizer input; pickup,
+origin conversion, aim-based position and preserved model orientation remain.
+
+Holding the depth stick integrates continuously in either direction without the
+old -0.5..2 metre offset cap. Dead zone and explicit surface-contact behavior
+remain. Production routing tests cover already extended positive/negative holds,
+and extended integration verifies continued movement without release/reselect.
+Both concrete pose formats, both hands, recenter and loss-release are exercised;
+the new physical behavior still needs confirmation on the replacement binary.
+
 ## Required behavior
 
 Grip selects the live screen or model at a distance. While held, changing controller aim must move the item through the environment, as with a desktop panel in Meta Link. Physical hand translation and stick depth/size also remain available. Release leaves the item where shown. The same behavior applies to the screen, whole build and individual parts without editing native Blender objects.

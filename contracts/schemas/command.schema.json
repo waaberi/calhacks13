@@ -42,7 +42,8 @@
         { "if": { "properties": { "op": { "const": "sketch.add_circle" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/sketch_circle" } } } },
         { "if": { "properties": { "op": { "const": "sketch.constrain" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/sketch_constrain" } } } },
         { "if": { "properties": { "op": { "const": "sketch.set_dimension" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/sketch_set_dimension" } } } },
-        { "if": { "properties": { "op": { "const": "voice.run" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/voice_run" } } } }
+        { "if": { "properties": { "op": { "const": "voice.run" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/voice_run" } } } },
+        { "if": { "properties": { "op": { "const": "object.spatial_edit" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/spatial_edit" } } } }
       ],
       "unevaluatedProperties": false
     }
@@ -64,7 +65,212 @@
         "sketch.add_circle",
         "sketch.constrain",
         "sketch.set_dimension",
-        "voice.run"
+        "voice.run",
+        "object.spatial_edit"
+      ]
+    },
+    "spatial_edit": {
+      "description": "Commit one frozen native toolbar gesture to an object or exact base-mesh component. One release, one native Undo. Never an executable Blender operator.",
+      "type": "object",
+      "required": [
+        "native_tool",
+        "mode",
+        "component",
+        "indices",
+        "topology_token",
+        "delta"
+      ],
+      "properties": {
+        "native_tool": {
+          "enum": [
+            "builtin.move",
+            "builtin.rotate",
+            "builtin.scale",
+            "builtin.extrude_region",
+            "builtin.extrude_region_move"
+          ]
+        },
+        "mode": {
+          "enum": [
+            "OBJECT",
+            "EDIT_MESH"
+          ]
+        },
+        "component": {
+          "enum": [
+            "object",
+            "vertex",
+            "edge",
+            "face"
+          ]
+        },
+        "indices": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 16383
+          },
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "topology_token": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "delta": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 1,
+          "properties": {
+            "translation": {
+              "$ref": "envelope.schema.json#/$defs/coordinate3"
+            },
+            "rotation": {
+              "$ref": "envelope.schema.json#/$defs/quat"
+            },
+            "scale": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": -1000,
+                    "maximum": -0.001
+                  },
+                  {
+                    "type": "number",
+                    "minimum": 0.001,
+                    "maximum": 1000
+                  }
+                ]
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "OBJECT"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "component": {
+                "const": "object"
+              },
+              "indices": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "component": {
+                "enum": [
+                  "vertex",
+                  "edge",
+                  "face"
+                ]
+              },
+              "indices": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "native_tool": {
+                "enum": [
+                  "builtin.extrude_region",
+                  "builtin.extrude_region_move"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mode": {
+                "const": "EDIT_MESH"
+              },
+              "component": {
+                "const": "face"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "native_tool": {
+                "enum": [
+                  "builtin.move",
+                  "builtin.extrude_region",
+                  "builtin.extrude_region_move"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "delta": {
+                "required": [
+                  "translation"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "native_tool": {
+                "enum": [
+                  "builtin.rotate"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "delta": {
+                "required": [
+                  "rotation"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "native_tool": {
+                "enum": [
+                  "builtin.scale"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "delta": {
+                "required": [
+                  "scale"
+                ]
+              }
+            }
+          }
+        }
       ]
     },
     "voice_run": {

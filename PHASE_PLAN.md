@@ -1,3 +1,5 @@
+> Human P3 revision, 2026-10-24: [P3_BLENDER_ONLY_PLAN](docs/product-workflow/P3_BLENDER_ONLY_PLAN.md) governs P3A/B/C over the historical separate VR editing-menu requirements below. Blender is the only editing menu; retain native-context direct VR drawing. See [coverage and handoff](docs/product-workflow/P3_BLENDER_ONLY_HANDOFF.md) for actual software/integration/physical status. This introduces no other-phase or main-merge authorization.
+
 # Collaborative Blender VR product and team build plan
 
 We are building a new Windows application that lets people create and edit a real Blender project in virtual reality. A Quest 3S connects wirelessly to Talia's PC. The user chooses where a virtual worktable goes, sees Blender objects on it, and edits them with controllers, a hand-held or placed menu, exact numeric values, CAD sketch constraints and voice commands. A separate panel shows the live Blender window and can be hidden or shown.

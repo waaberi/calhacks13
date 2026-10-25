@@ -174,9 +174,11 @@ namespace SpatialModeling.VoiceCore.Whisper
         /// <summary>Snap the transcript onto the grammar's phrases. False sends Whisper's own words (normalized) at
         /// confidence 1, for the host resolver to read.</summary>
         public bool SnapToGrammar { get; set; } = true;
+        bool compositionGrammar;
 
         public void SetGrammar(IReadOnlyList<string> phrases)
         {
+            compositionGrammar = phrases != null && new List<string>(phrases).Contains("then");
             snapper = phrases == null || !SnapToGrammar ? null : new PhraseSnapper(phrases, threshold);
             prompt = promptWithGrammar ? PromptFor(basePrompt, phrases) : basePrompt;
         }
@@ -266,6 +268,13 @@ namespace SpatialModeling.VoiceCore.Whisper
                     NoResult?.Invoke(NoResultReason.NotUnderstood);
                 else
                     Recognized?.Invoke(new RecognitionResult(words, 1f));
+                return;
+            }
+            // Never drop unknown words or the second half of a compound request while snapping.
+            // The capability-advertised host planner validates every clause before anything runs.
+            if (compositionGrammar && VoiceSession.IsCompositionRequest(LastTranscript))
+            {
+                Recognized?.Invoke(new RecognitionResult(LastTranscript, 1f));
                 return;
             }
             LastSnap = snapper.Snap(LastTranscript);

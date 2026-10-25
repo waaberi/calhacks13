@@ -1,0 +1,520 @@
+{
+  "schema": 1,
+  "state": "SOFTWARE_VERIFIED_CANDIDATE_UNLAUNCHED_PHYSICAL_PENDING",
+  "at": "2026-10-25T06:26:05.062225+00:00",
+  "branch": "codex/talia-direct-edit-voice-integration",
+  "application_source": "0fe6dadc47462004dca51648e621540226d00c59",
+  "combined_base": "ef74f0f0a76fa0674be7203eb1e9d6eeedf543db",
+  "voice_feature": "182033e0871b6d003e93f2e7e57a1b3a0139d19c",
+  "assembly_sha256": "17209f3c19640549ddb0ac3dd0eb205060d3162ab0131a106de43e31bc6ea403",
+  "mandatory_markers": [
+    "P25_MAPPING_CHECK PASS",
+    "P25_TRANSPORT_CHECK PASS",
+    "P25_INPUT_PROTOCOL_CHECK PASS",
+    "P25_WINDOW_CHECK PASS",
+    "P25_OBJECT_TOOLS_CHECK PASS",
+    "P25_SHORTCUT_CATALOG_CHECK PASS",
+    "P25_NUMERIC_CHECK PASS",
+    "P25_SPATIAL_TARGET_CHECK PASS",
+    "P25_SPATIAL_MAPPING_CHECK PASS",
+    "P25_PREVIEW_OCCLUSION_CHECK PASS",
+    "P25_WINDOW_UI_CHECK PASS",
+    "P2_PLACEMENT_LIFECYCLE_CHECK PASS",
+    "P2_LEFT_HAND_MENU_CHECK PASS",
+    "P2_CHECKS PASS",
+    "ARRANGEMENT_CHECKS PASS",
+    "CAPTURE_FRESHNESS_CHECK PASS",
+    "STARTUP_FACING_CHECK PASS",
+    "HEADSET_PLACEMENT_READINESS_CHECK PASS",
+    "CONTROLLER_POSE_FORMAT_CHECK PASS format=Current",
+    "CONTROLLER_POSE_FORMAT_CHECK PASS format=Legacy",
+    "WORKSPACE_CHECKS PASS",
+    "P1_VISUAL_BASELINE PASS",
+    "P1_BUILD_RESULT Succeeded errors=0",
+    "P2_BUILD_RESULT Succeeded errors=0",
+    "P25_KEYBOARD_ISOLATION_CHECK PASS",
+    "P25_BUILD_RESULT Succeeded errors=0",
+    "PHYSICAL_SCALE_CHECKS PASS",
+    "INDEPENDENT_PLANE_CHECK PASS",
+    "VERTICAL_PLANE_FRONT_CHECK PASS",
+    "SETTINGS_MENU_CHECKS PASS",
+    "ROOM_SPACE_REPLAY_CHECKS PASS",
+    "P225_CONTROLLER_OWNERSHIP_CHECK PASS",
+    "P225_XR_BASELINE_CHECK PASS exact_accepted_P2_standalone_flags=34",
+    "P225_CONTROLLER_UI_CHECK PASS",
+    "P225_CAPTURE_CLARITY_CHECK PASS",
+    "P225_P3_ROUTING_CHECK PASS",
+    "P3_BLENDER_ONLY_CHECK PASS",
+    "VOICE_OBJECT_SELECTION_CHECKS PASS",
+    "CONTROLLER_PAIR_CHECKS PASS",
+    "ROOM_LOCALIZATION_CHECKS PASS",
+    "P3_GLASS_ACCESSIBILITY_CHECK PASS",
+    "P3_GLASS_GEOMETRY_CHECK PASS",
+    "P3_GLASS_CONTROLLER_CHECK PASS",
+    "P3_GLASS_CURVE_CHECK PASS",
+    "P3_GLASS_OPTICS_CHECK PASS",
+    "P3_GLASS_CHECK PASS",
+    "P3_GLASS_RENDER_AIM_CHECK PASS",
+    "COMBINED_GLASS_CHECK PASS",
+    "P3_GLASS_BUILD_RESULT Succeeded",
+    "GLASS_EVENT_RAYCAST_CHECK PASS",
+    "GLASS_IDLE_GEOMETRY_CHECK PASS",
+    "GLASS_GRID_CHECK PASS",
+    "GLASS_STEREO_GPU_CHECK PASS",
+    "ROOM_RECOVERY_CHECKS PASS",
+    "P25_QUICK_ACTION_CHECK PASS",
+    "P25_DRAWING_MODE_CHECK PASS",
+    "LEFT_HAND_MENU_COMPACT_CHECK PASS",
+    "GLASS_HELD_POINT_JITTER_CHECK PASS",
+    "HANDHELD_MENU_CHECK PASS",
+    "BLENDER_VIEW_APPEARANCE_CHECK PASS",
+    "KEYBOARD_PASSTHROUGH_CHECK PASS",
+    "P25_EDIT_WORKFLOW_CHECK PASS",
+    "VOICE_COMPOSITION_CHECK PASS",
+    "VOICE_RESOLVE_HANDOFF_CHECK PASS",
+    "VOICE_DIRECT_CANCEL_CHECK PASS",
+    "DIRECT_MODEL_EDIT_CHECK PASS",
+    "DIRECT_EDIT_VOICE_INTEGRATION_BUILD PASS"
+  ],
+  "compiler_inputs_verified": 418,
+  "frozen_xr_flags": 34,
+  "backend_p25_summary": "1380 passed, 37 skipped in 49.65s",
+  "voice_summary": "Passed!  - Failed:     0, Passed:   484, Skipped:    11, Total:   495, Duration: 5 s - VoiceCore.Tests.dll (net10.0)",
+  "real_blender_direct_checks": [
+    "object_move_native_commit_and_receipt_selection",
+    "one_object_gesture_native_undo_redo",
+    "signed_object_mirror",
+    "world_controller_object_rotation",
+    "acknowledged_native_preview_release_and_fresh_editmode_handoff",
+    "base_vertex_edit_live_mesh_sync_preserves_prior_native_work",
+    "one_mesh_gesture_native_undo_redo_preserves_prior_editmode_work",
+    "edge_component_moves_exact_base_endpoints",
+    "face_controller_rotation_world_pivot",
+    "signed_face_scale",
+    "native_face_region_extrusion_topology_and_sync",
+    "changed_native_toolbar_refuses_frozen_gesture",
+    "changed_topology_token_refuses_without_mutation",
+    "invalid_component_rolls_back_without_partial_edit",
+    "post_live_write_failure_exact_rollback_no_revision_or_undo_step",
+    "millimeter_units_rotated_scaled_parent_world_delta_once",
+    "unrepresentable_parent_shear_refused",
+    "shared_mesh_data_refused_no_silent_linked_mutation"
+  ],
+  "real_blender_voice": "meter/mm chains, clarification, target changes, mirroring/rotation, material/data isolation, independent duplication, dimensions/resets, post-delete rollback, one Undo/Redo; 45 curated chains plus one expected geometry-budget refusal",
+  "fresh_http_cases": [
+    8,
+    2,
+    9
+  ],
+  "helper_tests": 159,
+  "private_packaged_bootstrap": {
+    "passed": true,
+    "exit": 0,
+    "host_port": 9349,
+    "cad_available": true,
+    "private_ui_scale": 1.5,
+    "glass_properties": 96,
+    "package_unchanged": true,
+    "no_interactive_runtime": true,
+    "private_process_exited": true
+  },
+  "packaged_native": {
+    "direct": {
+      "exit": 0,
+      "package_unchanged": true,
+      "fresh_background_process": true,
+      "fixture_source": "tests/p25/native_direct_model_gate.py",
+      "modified_only_import_path_and_bytecode_setting": true
+    },
+    "voice": {
+      "exit": 0,
+      "package_unchanged": true,
+      "fresh_background_process": true,
+      "fixture_source": "tests/backend/voice_sequence_blender_check.py",
+      "modified_only_import_path_and_bytecode_setting": true
+    }
+  },
+  "contracts": [
+    "object.spatial_edit with frozen native tool/mode/component/topology/generation",
+    "preview.state.model_edit exact base geometry and tool context",
+    "complete capability-gated voice composition/clarification/selection contracts"
+  ],
+  "runtime_launched": false,
+  "candidate_launch_authorized": false,
+  "physical_acceptance": false,
+  "current_runtime_preserved": {
+    "player": 43252,
+    "native": 6820,
+    "helper": 74716,
+    "application_source": "ef74f0f0a76fa0674be7203eb1e9d6eeedf543db",
+    "personal_previous_blender_lifetimes_verified": [
+      50136,
+      88192,
+      3048,
+      21596,
+      84668,
+      44560,
+      93524,
+      6820
+    ]
+  },
+  "limits": [
+    "Direct controller tools: Object Move/Rotate/Scale; mesh vertex/edge/face transforms and face Extrude Region; one component per gesture, uniform gesture scale",
+    "Other native tools, modifiers, shape keys, shared meshes, multi-object Edit Mode and unsupported options use preserved controller 2D editing",
+    "Voice Object Mode modeling requires leaving mesh Edit Mode; maximum 24 steps/500 transcript characters",
+    "37 Python skips retain bpy/GUI, openssl and SpacetimeDB environment limits; native direct/voice fixtures run separately",
+    "11 voice skips retain actual Whisper/GPU and platform-specific process coverage limits; supplied Vosk offline model/native DLL checks passed",
+    "Physical speech/controller usability, latest controller appearance and new room fit await human confirmation; no phase/two-PC/#87-RC16 acceptance inferred"
+  ],
+  "failures_preserved": [
+    "Build-a direct ghost Destroy in Edit Mode fixed with play/edit lifetime handling",
+    "Native initial signed rotation and extrusion internal-cap defects fixed with matrix/channel and real topology/material regressions",
+    "Final audit thin-solid rear-component occlusion fixed with per-candidate visibility regression",
+    "Final audit Escape/Cancel local draft path fixed without cancelling submitted transactions",
+    "Final audit unknown and-clause routing fixed; raw speech/legacy resolver cannot execute a valid prefix"
+  ],
+  "evidence_directory": "evidence/direct-edit-voice-v1 (external local evidence)",
+  "pr_actions": false,
+  "main_changes": false,
+  "push_performed": false,
+  "fps_work": false,
+  "package": {
+    "application_source": "0fe6dadc47462004dca51648e621540226d00c59",
+    "assembly_sha256": "17209f3c19640549ddb0ac3dd0eb205060d3162ab0131a106de43e31bc6ea403",
+    "manifest_sha256": "08663736458f8f5df2dc5c9e801ef512712d353b26676a5d31c75f60e6674b3a",
+    "files": 1991,
+    "bytes": 2515125615,
+    "validation_exit": 0,
+    "runtime_launched": false,
+    "physical_acceptance": false,
+    "published": false
+  },
+  "package_directory": "artifacts/direct-edit-voice-v1-c (external local output)",
+  "evidence_hashes": {
+    "build-c-unity.log": "b1f3be392911a0fa8eab2b69d3fbd5400e8a5719b9f5247afd8c40586c3a0cd4",
+    "build-c-exit.json": "14956f95a89cf4ce05045728b2c779e1756bf3a774dbe9b5580f5543ff50748b",
+    "backend-p25-c.log": "e776697a3bd57614cf886152902890687ba602fb4047f26752391eaf8547d145",
+    "voice-dotnet-c.log": "414774a7c36d7e4798cbaf16d1e530d206cfde444443669f547a1a2fb7cb5eb1",
+    "voice-backend-c.log": "9b13273fd3a48dcbbef2340cbe11b105976f5991d79f2b29d2688f37bc9a3b21",
+    "voice-native-c.log": "1428f553bdb21358a9e49b74024c1b678d6617170f702a36e51d20ecb62ed121",
+    "voice-native-c-exit.json": "6b1a753bc42d570067ef17bd7cd629bfd21f4c4ee3d2b59589f53f07856a1e65",
+    "helper-tests.log": "ed0d7e0003ec7c4f2fcbb21c2bfaf35e86dc71b752ad246243fb85ab9e1237cd",
+    "helper-tests-exit.json": "2aec46bf10331b62604a1ec773cc470a4b0889c1143aa96860b91f5e26c5dbd7",
+    "window-http8-c.json": "a87f1580406432e626c5818caee4b4cf56038adc0b71b38427ef6a29e30713b7",
+    "release-http2-c.json": "e4824dbf6d7ac11b25a5fa7d8f48de3daf4a9164401a9090879bbcc5654b9192",
+    "http9-c.json": "8e8b28cbf2233f0acfe74f859188d2e33db63a22896152f1157378d492e789db",
+    "packaged-c/packaged-bootstrap-result.json": "4b2aa48131f95998d4831103d1db07f575e28ac758e84041e76643fee8008061",
+    "packaged-c/packaged-native-result.json": "837c337292d53902c50d7d07fef402b2d350d48060b890e21d7e9787b8ac35f7",
+    "packaged-c/packaged-direct-result.json": "f1040d80f59175305b0656693bcc4739d78b6f392592971991e9a3698ddff78d",
+    "packaged-c/packaged-direct-native.log": "996414389c12b55af40abf4c250e8df44d4be358af6df96a43e1c1fa5024dcbc",
+    "packaged-c/packaged-voice-native.log": "808c7b06423f923f798cb823f5651eaed2de8690d7b8bbee6056f4f565f11932",
+    "exact-compiled-source-hashes.json": "81cae701e871ee2d3bcc4fd3a05af2e97af9993bd65bfdd7f2d879379d12a835",
+    "voice-feature-provenance.json": "cf882540f8a8a0c7bd5f10e93f8b9023a6627fa4461e6969929eebc8a35d1177",
+    "ruff-c.log": "a4443afdcfb6d7363adb285762515ccf7cf50473b1a05c20c1a50f6bed4d26b0",
+    "ui-audit-c.log": "f77fa2d91361ed1384c36750c9eca6e430e5ca8df063d55ce7ec3e82204f9118",
+    "intentional-audio-metadata-whitespace.json": "554cf0c02cb6dcf0b9985fc877eef368d86846d234654776ea1872f60926909b",
+    "package-validation-c.log": "88710896963edfbefe40849bd96fd7753a671c313c04bac866adec3ae609112e"
+  },
+  "voice_provenance": {
+    "voice_base": "db0dc2489f9d3757d55c65c3971f403e0aa23c36",
+    "voice_tip": "182033e0871b6d003e93f2e7e57a1b3a0139d19c",
+    "combined_base": "ef74f0f0a76fa0674be7203eb1e9d6eeedf543db",
+    "integration_branch": "codex/talia-direct-edit-voice-integration",
+    "source_feature_paths": 36,
+    "integrated_paths": 35,
+    "excluded_historical_manifests": 1,
+    "counts": {
+      "exact_source_blob": 20,
+      "historical_manifest_not_imported_as_current_evidence": 1,
+      "semantic_merge_preserves_newer_combined_behavior": 15
+    },
+    "paths": [
+      {
+        "path": "acceptance/voice-command-chaining/software-manifest.json",
+        "source_git_blob": "beb66cab530932a8a677451d0f6736928f0a74e7",
+        "status": "historical_manifest_not_imported_as_current_evidence",
+        "reason": "Original branch/manifest preserved; final combined evidence belongs to the new delivery."
+      },
+      {
+        "path": "app/Assets/Editor/VoiceCompositionChecks.cs",
+        "source_git_blob": "1036cdfd2394d71d103c2687a6f6041c5cd1ea32",
+        "candidate_git_blob": "a8f9f4c0fcd22c867af52d61db75884456d90933",
+        "candidate_sha256": "be441b8dcc65d23c70ecdebc7fd2520805e2cae17d360d0c98483b78b8013e34",
+        "status": "semantic_merge_preserves_newer_combined_behavior"
+      },
+      {
+        "path": "app/Assets/Editor/VoiceCompositionChecks.cs.meta",
+        "source_git_blob": "9e047b6d68e7983b90906b725e5522bb5a0582e1",
+        "candidate_git_blob": "9e047b6d68e7983b90906b725e5522bb5a0582e1",
+        "candidate_sha256": "87a511cfa2615139af34e3ebeb99419079a804f95ff9252f82b1fb8e6341f725",
+        "status": "exact_source_blob"
+      },
+      {
+        "path": "app/Assets/Editor/VoiceSelectionChecks.cs",
+        "source_git_blob": "87d703c47cc9122ae6d67e8b1ecabbd720a6599e",
+        "candidate_git_blob": "c0d92cf00f5ede9712dfb96aa280f0a3bdcd12d7",
+        "candidate_sha256": "90c132bce9dd290569a9b05c4ba7dfde5e53a318d2e7776c70a2b6aeec429e12",
+        "status": "semantic_merge_preserves_newer_combined_behavior"
+      },
+      {
+        "path": "app/Assets/SpatialModeling/Scripts/HostLink.cs",
+        "source_git_blob": "09279c6324358b5e8aa366aa978cdc77ccdadd6a",
+        "candidate_git_blob": "09279c6324358b5e8aa366aa978cdc77ccdadd6a",
+        "candidate_sha256": "4dc5a650ff53a276636c89fded7ef45d97e12589273203382623ae96c52de187",
+        "status": "exact_source_blob"
+      },
+      {
+        "path": "app/Assets/SpatialModeling/Scripts/HostScene.Commands.cs",
+        "source_git_blob": "f18617b70caeff8752ad7da3bb6c8d8bad787a30",
+        "candidate_git_blob": "b4949349e4eacdf2496a07ea8ef286a4860df96c",
+        "candidate_sha256": "1d9c64351aa1c2ff68da01648ce26557c52485dc7fe45d8b54b4b5d91dc57824",
+        "status": "semantic_merge_preserves_newer_combined_behavior"
+      },
+      {
+        "path": "app/Assets/SpatialModeling/Scripts/PendingCommandPanel.cs",
+        "source_git_blob": "7f68094a9b4ee885c2d2a0f968b605cdfab3ad1e",
+        "candidate_git_blob": "7f68094a9b4ee885c2d2a0f968b605cdfab3ad1e",
+        "candidate_sha256": "57dd01d29aa3cbdbe5be2dffd2a6d979d854cad2671264cf9f9eaa53db0f66ae",
+        "status": "exact_source_blob"
+      },
+      {
+        "path": "app/Assets/SpatialModeling/Scripts/VoiceUiAdapter.cs",
+        "source_git_blob": "68e49491995a014d8f4012d6a2306df8c1337d85",
+        "candidate_git_blob": "7ec9d4f4034ad8fcbea0e23a4ee3e7e015b4b2dc",
+        "candidate_sha256": "1b5084dd80f8a250c3225c254ad06a5fab40bff04a92d0d5a6610f0d9a7bbdc7",
+        "status": "semantic_merge_preserves_newer_combined_behavior"
+      },
+      {
+        "path": "blender_addon/spatial_modeling/commands.py",
+        "source_git_blob": "d03ba9e758e7d80b5d187dce8601d2728956f1c7",
+        "candidate_git_blob": "3ad90569aa993bb71d6ee9f40e3e93ff794363c4",
+        "candidate_sha256": "cf9bf1a7cd8afeb6a339b6fc313e9507b07f6d15cdeeacfce47a56953028c5ba",
+        "status": "semantic_merge_preserves_newer_combined_behavior"
+      },
+      {
+        "path": "blender_addon/spatial_modeling/edits.py",
+        "source_git_blob": "2123e3a790581cdc15884e6b56c13ce20980e8c9",
+        "candidate_git_blob": "79e60fda56008039d1d5294f2421dcc217d7046e",
+        "candidate_sha256": "bc686926aee07400a7fb5fc924521d4a5562895df0b86f32fb7a17917eedc481",
+        "status": "semantic_merge_preserves_newer_combined_behavior"
+      },
+      {
+        "path": "blender_addon/spatial_modeling/sync.py",
+        "source_git_blob": "445526a990c175d8f5a8333699ec73e3b42b4ed8",
+        "candidate_git_blob": "3b16f47ad58d9d257184d3b475b53cf36322bfb9",
+        "candidate_sha256": "4db3b30d550e0061c33484a5beac0a39f67ec92e26525d901af38e9e83d543ba",
+        "status": "semantic_merge_preserves_newer_combined_behavior"
+      },
+      {
+        "path": "blender_addon/spatial_modeling/voice_composer.py",
+        "source_git_blob": "aac2e8d819b2d68d11570da5b211b3757efc5ed2",
+        "candidate_git_blob": "ae4701fcbcbc365bdef4f49d2ec1c32ae90e3a9a",
+        "candidate_sha256": "dc579006e7c7f017e4eb3c516f93885e4b3af76b71851ce0faa741c5bc435143",
+        "status": "semantic_merge_preserves_newer_combined_behavior"
+      },
+      {
+        "path": "blender_addon/spatial_modeling/voice_ops.py",
+        "source_git_blob": "d651eed0edf060af3e038e00dcc8afb0a06dac34",
+        "candidate_git_blob": "a2b1f499f2981beb63b7877531a6f53bbc47a1cd",
+        "candidate_sha256": "8b144bc37d3296076bc8dfe8f12706b6caca50914b137101e22407a2e77740ba",
+        "status": "semantic_merge_preserves_newer_combined_behavior"
+      },
+      {
+        "path": "blender_addon/spatial_modeling/voice_sequence.py",
+        "source_git_blob": "d27bcfbeeb6dab38d795661cc3172dd5a9d5b42b",
+        "candidate_git_blob": "d27bcfbeeb6dab38d795661cc3172dd5a9d5b42b",
+        "candidate_sha256": "a244ab6b1f273f3cfa877231141d5604f11e80ebcb0aa55665ae217cb8611668",
+        "status": "exact_source_blob"
+      },
+      {
+        "path": "contracts/examples/voice.grammar.json",
+        "source_git_blob": "fc4e08190cbba0cae7be4d8376444307f2624252",
+        "candidate_git_blob": "fc4e08190cbba0cae7be4d8376444307f2624252",
+        "candidate_sha256": "2607e8b976557a93e7e4b93c69f2ad1e73f31195d85e6163df981bd5aca887b3",
+        "status": "exact_source_blob"
+      },
+      {
+        "path": "contracts/schemas/result.schema.json",
+        "source_git_blob": "8aca18587f4f89a36b09fe50aa9901356a54cb9e",
+        "candidate_git_blob": "8aca18587f4f89a36b09fe50aa9901356a54cb9e",
+        "candidate_sha256": "fbcaceb9fded6994f2734eec3bd45e2a0901cd14052eafb1a9e7063af1702d95",
+        "status": "exact_source_blob"
+      },
+      {
+        "path": "contracts/schemas/voice.candidates.schema.json",
+        "source_git_blob": "5afbe8b1feed5f8fb990218cda2e0e6ecb6cb78c",
+        "candidate_git_blob": "5afbe8b1feed5f8fb990218cda2e0e6ecb6cb78c",
+        "candidate_sha256": "61614b65f156d7074459a4ea00f4096434fa833db5cd676b7ad832da053cd4eb",
+        "status": "exact_source_blob"
+      },
+      {
+        "path": "contracts/schemas/voice.grammar.schema.json",
+        "source_git_blob": "449e9f1d364d36fc1b943f810204bc068d4d6acc",
+        "candidate_git_blob": "449e9f1d364d36fc1b943f810204bc068d4d6acc",
+        "candidate_sha256": "3e91fae2cb5f6b336cd165b345f65cf19c0e2162ceb832c0da126f3f76c8345c",
+        "status": "exact_source_blob"
+      },
+      {
+        "path": "contracts/schemas/voice.resolve.schema.json",
+        "source_git_blob": "1dda9fcfec7aa369255ccd99c21f95619268bb80",
+        "candidate_git_blob": "1dda9fcfec7aa369255ccd99c21f95619268bb80",
+        "candidate_sha256": "742bdc361bdd828e2210b86727def16baa86650275ca4c447b9ee9fcc5c2acbe",
+        "status": "exact_source_blob"
+      },
+      {
+        "path": "docs/product-workflow/VOICE_COMMAND_CHAINS.md",
+        "source_git_blob": "f3e2830bb21c5977e351a99ccb14ea955998129d",
+        "candidate_git_blob": "475a2ab526e112239b885a440c2f0dee2fd85188",
+        "candidate_sha256": "22997defcd63a1739f348657a8b7c1eef43f26e09ae16f652de4056d3b2d5950",
+        "status": "semantic_merge_preserves_newer_combined_behavior"
+      },
+      {
+        "path": "tests/backend/test_voice_composer.py",
+        "source_git_blob": "a0cdc47ac7c5deb7de94258dfe143d3ace103831",
+        "candidate_git_blob": "8f0c980988394da52aa102093019b5a81ce1978f",
+        "candidate_sha256": "716c8a4d7f1e78b1f42e13408c44ada1fae8c719843903c6866551a40b2ecd2a",
+        "status": "semantic_merge_preserves_newer_combined_behavior"
+      },
+      {
+        "path": "tests/backend/test_voice_ops.py",
+        "source_git_blob": "797af5ebcfb4f6f3a009f5d73afdd1e4197af4f5",
+        "candidate_git_blob": "797af5ebcfb4f6f3a009f5d73afdd1e4197af4f5",
+        "candidate_sha256": "eb363e1cd41246be3594fd78827047261a3a1a50019035e3e2221836b936d50e",
+        "status": "exact_source_blob"
+      },
+      {
+        "path": "tests/backend/voice_sequence_blender_check.py",
+        "source_git_blob": "d3846dfad007e66b222ac32161671790e3b31889",
+        "candidate_git_blob": "37543232d99aff399567d5ceecccb4111b4a2e29",
+        "candidate_sha256": "51a3f28800a546990bd7d8bbb4fdc7c046124a84bc12bd40502019c2884b62ef",
+        "status": "semantic_merge_preserves_newer_combined_behavior"
+      },
+      {
+        "path": "tests/voice/CompositionTests.cs",
+        "source_git_blob": "750fd88cd1a5ba3c8ca282549b153fd0504b7097",
+        "candidate_git_blob": "441e07ba54645a257bf82524b3afa045dfb64ce8",
+        "candidate_sha256": "9d526287554a07347480eb65f60164af4d8dfca84fae0fafbc6002e0ca3a2ad6",
+        "status": "semantic_merge_preserves_newer_combined_behavior"
+      },
+      {
+        "path": "tests/voice/WhisperServerTests.cs",
+        "source_git_blob": "a5aaaaeea87fcf5e303cce4bfca18805198dd719",
+        "candidate_git_blob": "12ab3cb30e5ade6866c3a605478a2f98f552383f",
+        "candidate_sha256": "954e941d517bc11d2fd8d5b76f9db0541fdbe966244c5e42e3e073e6cf84ab93",
+        "status": "semantic_merge_preserves_newer_combined_behavior"
+      },
+      {
+        "path": "voice/VoiceCore/Prompts/Resources/VoiceCorePrompts/ask_details.ogg",
+        "source_git_blob": "dad22e6194dee68270c7ad45b36fdcd82deb522d",
+        "candidate_git_blob": "dad22e6194dee68270c7ad45b36fdcd82deb522d",
+        "candidate_sha256": "4b6e4eeeeab8c2021ab49226dd8434255574b1a557a9fac74b62de52a4d9905e",
+        "status": "exact_source_blob"
+      },
+      {
+        "path": "voice/VoiceCore/Prompts/Resources/VoiceCorePrompts/ask_details.ogg.meta",
+        "source_git_blob": "932f5fb42dc460c729e0424bf8cc5183f1785230",
+        "candidate_git_blob": "932f5fb42dc460c729e0424bf8cc5183f1785230",
+        "candidate_sha256": "1a8607efe3f399188d485bdb9116d42cd843fa2e66cb304e7ff554bda48bb97a",
+        "status": "exact_source_blob"
+      },
+      {
+        "path": "voice/VoiceCore/Prompts/Resources/VoiceCorePrompts/confirm_sequence.ogg",
+        "source_git_blob": "4e8d1d0b1ac6c9b22212fab91af45ddc83df55b6",
+        "candidate_git_blob": "4e8d1d0b1ac6c9b22212fab91af45ddc83df55b6",
+        "candidate_sha256": "11f43430cfea082dcebdeb8662246795e563e33eb6b3c2cd6bbb64ff1e6219ed",
+        "status": "exact_source_blob"
+      },
+      {
+        "path": "voice/VoiceCore/Prompts/Resources/VoiceCorePrompts/confirm_sequence.ogg.meta",
+        "source_git_blob": "362d9ebd333accf78b566c7c06916cd8e7286fcd",
+        "candidate_git_blob": "362d9ebd333accf78b566c7c06916cd8e7286fcd",
+        "candidate_sha256": "817a244daaea2dfc91957e61bca0be3c05b4db39d9b042c2473d6f915f8469b9",
+        "status": "exact_source_blob"
+      },
+      {
+        "path": "voice/VoiceCore/Runtime/HostVoice.cs",
+        "source_git_blob": "aab82e02b5735ef58bba322024a3b5a8b9427aef",
+        "candidate_git_blob": "aab82e02b5735ef58bba322024a3b5a8b9427aef",
+        "candidate_sha256": "e02ea4ea2a87b6d006ac43fec122da658fd69ad2baa22ade4f5ccb0c48fac58f",
+        "status": "exact_source_blob"
+      },
+      {
+        "path": "voice/VoiceCore/Runtime/Prompt.cs",
+        "source_git_blob": "b0ef8e3b5438dffe33da77883005977b42f12e60",
+        "candidate_git_blob": "b0ef8e3b5438dffe33da77883005977b42f12e60",
+        "candidate_sha256": "6d3624932167b689526e5cffafc65130eacdbde3af6aab5b8e650bee7fb0df59",
+        "status": "exact_source_blob"
+      },
+      {
+        "path": "voice/VoiceCore/Runtime/VoiceCommand.cs",
+        "source_git_blob": "f6b07e9f5bf4cc2fa62ceb3748b25981efea36e5",
+        "candidate_git_blob": "f6b07e9f5bf4cc2fa62ceb3748b25981efea36e5",
+        "candidate_sha256": "9980f0d4490cfaaa114c63a93be74ae20ca1113ec00f5a9f96e0e354be3507ee",
+        "status": "exact_source_blob"
+      },
+      {
+        "path": "voice/VoiceCore/Runtime/VoiceSession.Composition.cs",
+        "source_git_blob": "d088357f5f259de721772269fc7864e0df8a95c6",
+        "candidate_git_blob": "ba4aeed2f1502b8f2828d2d45b2a5e6e1e6dafe2",
+        "candidate_sha256": "d32a407527353de9428158352fc0e11e567b07a990ea431f8a35636703c71dac",
+        "status": "semantic_merge_preserves_newer_combined_behavior"
+      },
+      {
+        "path": "voice/VoiceCore/Runtime/VoiceSession.Composition.cs.meta",
+        "source_git_blob": "93fe0b1c0c6e7eec1a3cb4f88be18b19016a3c85",
+        "candidate_git_blob": "93fe0b1c0c6e7eec1a3cb4f88be18b19016a3c85",
+        "candidate_sha256": "5bbb3fb6afa9319bc34dd2ffb87fbdb728a20344262adb4b2489f5ee67a418f0",
+        "status": "exact_source_blob"
+      },
+      {
+        "path": "voice/VoiceCore/Runtime/VoiceSession.cs",
+        "source_git_blob": "00ec9cd5327c2ea6868e19bda16b203bc6ddb7ed",
+        "candidate_git_blob": "00ec9cd5327c2ea6868e19bda16b203bc6ddb7ed",
+        "candidate_sha256": "cd7c79f8bfe93581fc5f107e3b8a2ac405ee30f5465ec9b3d8dac1966834a286",
+        "status": "exact_source_blob"
+      },
+      {
+        "path": "voice/VoiceCore/Whisper/WhisperServerRecognizer.cs",
+        "source_git_blob": "ef866d610910f4d26be866a2e5a2aef7e3f95d9b",
+        "candidate_git_blob": "ef866d610910f4d26be866a2e5a2aef7e3f95d9b",
+        "candidate_sha256": "574ad08b2c5fbdead941c299fa66910c69c4f195445b52c21f8c0ebdf87fbbd3",
+        "status": "exact_source_blob"
+      }
+    ],
+    "integration_repairs": [
+      {
+        "scope": "unknown plain-and tails",
+        "files": [
+          "voice/VoiceCore/Runtime/VoiceSession.Composition.cs",
+          "blender_addon/spatial_modeling/voice_composer.py",
+          "blender_addon/spatial_modeling/voice_ops.py"
+        ],
+        "behavior": "Any standalone and remains in raw Whisper/opted-in plan; unsupported whole clause refuses without legacy prefix fallback. Legacy requests reject compound editing, while apply rotation and scale remains one supported semantic phrase. Regressions cover actual Whisper HTTP, conversation transport failure/timeout, host socket refusal and native semantic phrase."
+      },
+      {
+        "scope": "voice/Escape cancellation of direct drafts",
+        "files": [
+          "app/Assets/SpatialModeling/Scripts/VoiceUiAdapter.cs",
+          "app/Assets/SpatialModeling/Scripts/PreviewInteraction.cs",
+          "app/Assets/Editor/VoiceCompositionChecks.cs"
+        ],
+        "behavior": "Existing CancelPressed calls shared direct cancellation. Only queued direct callback is removed; late trigger/ACK cannot submit it, cleanup continues, unrelated pending voice ownership and executing native receipt remain preserved. Actual CancelPressed UI regression runs in VoiceCompositionChecks.Run."
+      }
+    ],
+    "final_voice_checks": {
+      "targeted_backend": {
+        "passed": 311,
+        "failed": 0,
+        "log": "voice-backend-c.log"
+      },
+      "voice_dotnet": {
+        "passed": 484,
+        "skipped": 11,
+        "failed": 0,
+        "log": "voice-dotnet-c.log"
+      },
+      "unity_required_new_marker": "VOICE_DIRECT_CANCEL_CHECK PASS"
+    }
+  },
+  "metadata_note": "Incoming audio .meta files preserve six Unity-generated trailing spaces on empty serialization fields, byte-identical after standard Git Windows line-ending normalization to source182033e. All other source diff checks pass."
+}

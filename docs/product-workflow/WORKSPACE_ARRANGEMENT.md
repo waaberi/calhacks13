@@ -105,7 +105,22 @@ cannot initiate that scan. On the PC, **Spatial Data over Meta Horizon Link** mu
 be enabled in the Link app's Developer settings. The app does not change this
 privacy setting. Empty results can mean missing scan OR unavailable spatial-data
 access, so never diagnose them as proof of no scan. Reload retries after setup;
-focus/wear transitions also retry, with bounded retries when no surfaces localize.
+focus/wear transitions also retry when no surfaces localize.
+Reload is transactional: a temporary empty Link response cannot clear the current
+saved anchors or their actual geometry. A replacement for an existing room must
+first localize a fresh SDK floor polygon around the worn, focused headset. Partial
+replies retain other still-tracked anchors in that room. Recovery continues at a
+bounded 15–60 second interval, including after the first three attempts.
+
+The app privately retains only saved anchor UUIDs and room membership, so a new
+session can retry those references when component enumeration temporarily returns
+zero. Every recovered anchor still requires fresh SDK localization; the current
+headset must be inside its actual current floor boundary. Saved world coordinates,
+old polygons and old reconstruction meshes are never rendered as a recovery
+fallback. An optional local migration can import UUIDs from a previous single-room
+diagnostic through `CALHACKS_ROOM_RECOVERY_EVIDENCE`; that diagnostic stays private
+and is never packaged or committed. Zero SDK results remain an availability issue,
+not evidence that the user's saved scan was deleted.
 See Meta's [scene-anchor flow](https://developers.meta.com/vr/documentation/unity/unity-scene-ovranchor/)
 and [Link spatial-data permission](https://developers.meta.com/vr/documentation/unity/unity-spatial-data-perm/).
 
@@ -178,6 +193,46 @@ physical-room anchoring/persistence is not silently approximated with saved raw
 world coordinates. New-document/epoch changes clear placement undo history.
 
 ## Verification and limits
+
+Saved room **loaded**, **currently usable**, and **physically accepted** are separate
+states. Discovery can return overlapping saved room definitions. The app keeps
+their references and handles; it does not select an arbitrary first room or erase
+the last successful room when a replacement cannot localize.
+
+A private UUID-only verified-room checkpoint records the last room and exact floor
+anchor that passed fresh tracked headset containment. Across reloads and build
+upgrades, an overlapping second room may retain that verified identity only when
+the same floor has a new tracked pose and still contains the worn, focused headset.
+Stale, removed, moved-outside or different-floor identities cannot qualify. Without
+verified continuity, overlapping matches remain unresolved. Saved world poses and
+room geometry are never replayed as tracking evidence.
+
+The checkpoint is persisted atomically before discovery may rewrite legacy recovery
+references; the previous durable checkpoint is kept as a backup. Discovery merges
+UUID references rather than replacing the last room's index. A malformed or partial
+checkpoint fails closed as a whole. Legacy reference-row filtering is only a
+compatibility recovery aid and never itself establishes verified continuity.
+Replacement geometry is staged separately: a failed or superseded generation
+releases its own temporary resources and cannot clear current planes or a newer
+owner's room meshes/materials. Retained data is only displayed through current
+headset/floor eligibility and current anchor tracking.
+
+An explicitly supplied `CALHACKS_VERIFIED_ROOM_CHECKPOINT` may import private,
+independently proven identity metadata for a pre-checkpoint build upgrade. It is
+not a default room choice and still requires current SDK containment. Private
+checkpoint/evidence files must stay outside source and public packages. These
+software checks do not establish physical scan alignment.
+
+The current saved-room recovery uses an explicit five-second localization timeout
+on every SDK path. The installed OpenXR shim converts the SDK's default zero to
+zero nanoseconds, so a default value cannot be relied on to wait for localization.
+Recovery keeps fetched handles for up to twelve seconds in parallel, allowing at
+most two complete five-second attempts and fresh tracking frames. An empty or
+unlocalized reply cannot replace the existing valid room. Valid imported UUID
+references are written privately and atomically before localization, so ordinary
+app restarts retain the recovery index. Saved world poses and geometry are never
+used as a substitute for current SDK tracking. Exact final live readback remains
+separate from software timeout/retention/retry checks and physical room fit.
 
 ArrangementChecks covers no-attraction/no-forced-rotation contact, non-centred
 geometry, finite surfaces, fast wall crossing, escape from an existing penetration,

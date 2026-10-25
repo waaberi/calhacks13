@@ -1,0 +1,288 @@
+{
+  "state": "GLASS_REQUESTED_CORRECTIONS_SOFTWARE_VERIFIED",
+  "checked_at_utc": "2026-10-25T05:10:28.062558+00:00",
+  "branch": "codex/talia-combined-glass-ui",
+  "application_source": "26fd8a1beebfc776efb4a73b779dc8d3e0783d53",
+  "package_source": "26fd8a1beebfc776efb4a73b779dc8d3e0783d53",
+  "assembly_sha256": "a972b1f20fbd1ddbd60cc68f566a1c3685f7829121576b57d94762160263ef51",
+  "mandatory_markers": [
+    "P25_MAPPING_CHECK PASS",
+    "P25_TRANSPORT_CHECK PASS",
+    "P25_INPUT_PROTOCOL_CHECK PASS",
+    "P25_WINDOW_CHECK PASS",
+    "P25_OBJECT_TOOLS_CHECK PASS",
+    "P25_SHORTCUT_CATALOG_CHECK PASS",
+    "P25_NUMERIC_CHECK PASS",
+    "P25_SPATIAL_TARGET_CHECK PASS",
+    "P25_SPATIAL_MAPPING_CHECK PASS",
+    "P25_PREVIEW_OCCLUSION_CHECK PASS",
+    "P25_WINDOW_UI_CHECK PASS",
+    "P2_PLACEMENT_LIFECYCLE_CHECK PASS",
+    "P2_LEFT_HAND_MENU_CHECK PASS",
+    "P2_CHECKS PASS",
+    "ARRANGEMENT_CHECKS PASS",
+    "CAPTURE_FRESHNESS_CHECK PASS",
+    "STARTUP_FACING_CHECK PASS",
+    "HEADSET_PLACEMENT_READINESS_CHECK PASS",
+    "CONTROLLER_POSE_FORMAT_CHECK PASS format=Current",
+    "CONTROLLER_POSE_FORMAT_CHECK PASS format=Legacy",
+    "WORKSPACE_CHECKS PASS",
+    "P1_VISUAL_BASELINE PASS",
+    "P1_BUILD_RESULT Succeeded errors=0",
+    "P2_BUILD_RESULT Succeeded errors=0",
+    "P25_KEYBOARD_ISOLATION_CHECK PASS",
+    "P25_BUILD_RESULT Succeeded errors=0",
+    "PHYSICAL_SCALE_CHECKS PASS",
+    "INDEPENDENT_PLANE_CHECK PASS",
+    "VERTICAL_PLANE_FRONT_CHECK PASS",
+    "SETTINGS_MENU_CHECKS PASS",
+    "ROOM_SPACE_REPLAY_CHECKS PASS",
+    "P225_CONTROLLER_OWNERSHIP_CHECK PASS",
+    "P225_XR_BASELINE_CHECK PASS exact_accepted_P2_standalone_flags=34",
+    "P225_CONTROLLER_UI_CHECK PASS",
+    "P225_CAPTURE_CLARITY_CHECK PASS",
+    "P225_P3_ROUTING_CHECK PASS",
+    "P3_BLENDER_ONLY_CHECK PASS",
+    "VOICE_OBJECT_SELECTION_CHECKS PASS",
+    "CONTROLLER_PAIR_CHECKS PASS",
+    "ROOM_LOCALIZATION_CHECKS PASS",
+    "P3_GLASS_ACCESSIBILITY_CHECK PASS",
+    "P3_GLASS_GEOMETRY_CHECK PASS",
+    "P3_GLASS_CONTROLLER_CHECK PASS",
+    "P3_GLASS_CURVE_CHECK PASS",
+    "P3_GLASS_OPTICS_CHECK PASS",
+    "P3_GLASS_CHECK PASS",
+    "P3_GLASS_RENDER_AIM_CHECK PASS",
+    "COMBINED_GLASS_CHECK PASS",
+    "P3_GLASS_BUILD_RESULT Succeeded",
+    "GLASS_EVENT_RAYCAST_CHECK PASS",
+    "GLASS_IDLE_GEOMETRY_CHECK PASS",
+    "GLASS_GRID_CHECK PASS",
+    "GLASS_STEREO_GPU_CHECK PASS",
+    "ROOM_RECOVERY_CHECKS PASS",
+    "P25_QUICK_ACTION_CHECK PASS",
+    "P25_DRAWING_MODE_CHECK PASS",
+    "LEFT_HAND_MENU_COMPACT_CHECK PASS",
+    "GLASS_HELD_POINT_JITTER_CHECK PASS"
+  ],
+  "http_cases": [
+    8,
+    2,
+    9
+  ],
+  "http_and_helper_evidence_reused_from": "9af9909 v8; room, left-menu and visual-controller paths changed; preview HTTP protocol/transport unchanged, actual HTTP8+2+9 and159capture-helper passes retained",
+  "helper_tests": 159,
+  "compiler_inputs_verified": 360,
+  "matching_packaged_python_sources": 41,
+  "private_bootstrap": {
+    "passed": true,
+    "exit": 0,
+    "host_port": 8999,
+    "cad_available": true,
+    "private_ui_scale": 1.5,
+    "glass_properties": 96,
+    "package_unchanged": true,
+    "no_interactive_runtime": true,
+    "private_process_exited": true
+  },
+  "sample_reference": {
+    "passed": true,
+    "fresh_background_reopen": true,
+    "blender": "5.2.2 LTS",
+    "source_sha256": "1abb70f7a64ee460fdaafd211332e504ea116ed1dbb32c25d0a70492f610154f",
+    "source_unchanged": true,
+    "output_sha256": "0b0e1def6aed08380da781c065d10edffb3ebc46612d7d61b20fe00748797bb9",
+    "scale_factor": 10.0,
+    "units": {
+      "system": "METRIC",
+      "length": "MILLIMETERS",
+      "meters_per_blender_unit": 1.0
+    },
+    "objects": [
+      {
+        "name": "Test_Cube_200mm",
+        "fixture_id": "test-cube-200mm",
+        "dimensions_m": [
+          0.19999998807907104,
+          0.19999998807907104,
+          0.19999998807907104
+        ],
+        "location_m": [
+          -0.19999998807907104,
+          0.0,
+          0.09999999403953552
+        ],
+        "applied_scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "expected_dimensions_mm": [
+          200.0,
+          200.0,
+          200.0
+        ]
+      },
+      {
+        "name": "Test_Cylinder_D100_H300mm",
+        "fixture_id": "test-cylinder-d100-h300mm",
+        "dimensions_m": [
+          0.09999999403953552,
+          0.09999999403953552,
+          0.29999998211860657
+        ],
+        "location_m": [
+          0.19999998807907104,
+          0.0,
+          0.14999999105930328
+        ],
+        "applied_scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "expected_dimensions_mm": [
+          100.0,
+          100.0,
+          300.0
+        ]
+      }
+    ],
+    "viewports": [
+      {
+        "distance_m": 1.399999976158142,
+        "grid_m": 0.10000000149011612,
+        "clip_start_m": 0.0010000000474974513,
+        "clip_end_m": 100.0
+      },
+      {
+        "distance_m": 1.399999976158142,
+        "grid_m": 0.10000000149011612,
+        "clip_start_m": 0.0010000000474974513,
+        "clip_end_m": 100.0
+      },
+      {
+        "distance_m": 1.399999976158142,
+        "grid_m": 0.10000000149011612,
+        "clip_start_m": 0.0010000000474974513,
+        "clip_end_m": 100.0
+      },
+      {
+        "distance_m": 1.399999976158142,
+        "grid_m": 0.10000000149011612,
+        "clip_start_m": 0.0010000000474974513,
+        "clip_end_m": 100.0
+      },
+      {
+        "distance_m": 1.399999976158142,
+        "grid_m": 0.10000000149011612,
+        "clip_start_m": 0.0010000000474974513,
+        "clip_end_m": 100.0
+      },
+      {
+        "distance_m": 1.399999976158142,
+        "grid_m": 0.10000000149011612,
+        "clip_start_m": 0.0010000000474974513,
+        "clip_end_m": 100.0
+      },
+      {
+        "distance_m": 1.399999976158142,
+        "grid_m": 0.10000000149011612,
+        "clip_start_m": 0.0010000000474974513,
+        "clip_end_m": 100.0
+      },
+      {
+        "distance_m": 1.399999976158142,
+        "grid_m": 0.10000000149011612,
+        "clip_start_m": 0.0010000000474974513,
+        "clip_end_m": 100.0
+      },
+      {
+        "distance_m": 1.399999976158142,
+        "grid_m": 0.10000000149011612,
+        "clip_start_m": 0.0010000000474974513,
+        "clip_end_m": 100.0
+      },
+      {
+        "distance_m": 1.399999976158142,
+        "grid_m": 0.10000000149011612,
+        "clip_start_m": 0.0010000000474974513,
+        "clip_end_m": 100.0
+      }
+    ]
+  },
+  "unchanged_trees": {
+    "blender_addon": {
+      "git_tree": "51f5a04dbdaa879c0e84ed8bfc7a7dea43d5029c",
+      "unchanged_from": "f59f7ae"
+    },
+    "contracts": {
+      "git_tree": "bdb123942a03685bce7202c8dd435d4fdb08c4df",
+      "unchanged_from": "f59f7ae"
+    },
+    "voice": {
+      "git_tree": "af4b45403b11543faa248b4acc3d1c3c3cc4f570",
+      "unchanged_from": "f59f7ae"
+    }
+  },
+  "reused_baseline_evidence": {
+    "backend_passed": 1279,
+    "backend_skipped": 37,
+    "native_groups": 11,
+    "bounded_authority_assertions": 20,
+    "rerun_this_revision": false,
+    "reason": "backend/contracts/VoiceCore trees byte-identical to verified combined base; affected Unity/input/controller/room and capture/helper tests freshly rerun"
+  },
+  "corrections": [
+    "cylinder, visual and logical free ray share existing stabilized aim; held endpoint is exact actual smooth contact, unrelated nearer surfaces ignored; manipulation path unchanged",
+    "unbounded positive/negative joystick depth without reselect",
+    "compact captions-only input panel with shared exact screen curve; Select object/Pin menu here/Recover workspace removed from one-third sized docked left-hand menu",
+    "requested frame removals and near-view position lock",
+    "quick-action native ownership retained; same-window occlusion release ACK and no rejected-action replay",
+    "direct VR drawing mode wording and independent native ownership",
+    "selection title popups OFF by default with persisted Settings toggle; actionable prompts retained",
+    "10x truthful disposable test models; original fixture and rollback preserved",
+    "transactional room reload and continued retries; private UUID recovery requires fresh Meta localization"
+  ],
+  "voice_transcription_default": false,
+  "selection_popup_default": false,
+  "xr_frozen_flags_verified": 34,
+  "runtime_launched": false,
+  "physical_acceptance": false,
+  "room_live_recovery": "PENDING live SDK UUID fetch and localization; no saved pose replay",
+  "production_strict_authority": "FAIL #87/RC16; separate bounded prototype limitation",
+  "pr_actions": false,
+  "main_changes": false,
+  "fps_work": false,
+  "pending": [
+    "exact replacement headset visual/controller/depth/input/drawing acceptance",
+    "live Meta saved-room recovery and physical fit",
+    "two-PC/concurrent-owner acceptance",
+    "strict production native UI authority architecture"
+  ],
+  "failures_preserved": [
+    "v3 EventSystem IndexedSet enumeration failure",
+    "v4 physical choppy/glitching/unaligned/controller rejection",
+    "v7 wearer pointer lag/input/room/depth/layout feedback",
+    "first v8 controller-tip test stopped at one-micrometre transform tolerance; corrected to ten-micrometre tolerance with explicit error reporting and full rerun",
+    "initial helper rerun used Python3.13 without Pillow; retained failure, rerun with actual capture Python3.12 environment159PASS",
+    "v10 raw pointer physically rejected as very shaky/skipping while held objects smooth; replaced with exact held contact and synchronized stabilized visuals",
+    "v10-a editor fixture missed normal GlassRoot lifecycle; fixed fixture with strict active/hidden accessibility checks",
+    "v10-b RuntimeActionBindings existing-output collision; original retained and full build succeeded into fresh output"
+  ],
+  "object_movement_preservation": {
+    "held_object_update_block_byte_identical_to_v10": true,
+    "StabilizeRay_byte_identical_to_v10": true
+  },
+  "visual_regression": {
+    "physically_rejected_raw_v10": true,
+    "actual_RenderHand_noisy_samples": 1080,
+    "formats": 2,
+    "hands": 2,
+    "exact_held_contact_error_m": 0,
+    "nearer_mesh_and_menu_cannot_steal_held_endpoint": true,
+    "body_and_ray_same_stabilized_pose": true,
+    "object_follower_and_stabilizer_byte_unchanged": true,
+    "physical_acceptance": false
+  }
+}

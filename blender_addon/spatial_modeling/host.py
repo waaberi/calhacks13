@@ -45,7 +45,19 @@ import uuid
 import bpy
 from bpy.app.handlers import persistent
 
-from . import commands, document, edits, gate, lan, leases, server, session, session_store
+from . import (
+    commands,
+    document,
+    edits,
+    gate,
+    lan,
+    leases,
+    preview_spatial,
+    server,
+    session,
+    session_store,
+    sketch,
+)
 from . import sync as scene_sync  # host.sync() is the role switch below
 
 DRAIN_INTERVAL = 0.02  # seconds between queue drains
@@ -92,6 +104,12 @@ def participants():
 def current_leases():
     """Every lease (contract `lease` dicts, the host's own included), for ownership display."""
     return _session.store.leases() if _session is not None else []
+
+
+def displayed_leases():
+    """Ownership labels identify the preview writer; admission keeps native ownership."""
+    ui = getattr(_server, "preview_ui", None)
+    return ui.display_leases() if ui is not None else current_leases()
 
 
 def may_write(objects=(), whole=False):
@@ -211,6 +229,10 @@ def _drain():
     _document.tick()
     _server.drain()
     _session.store.poll()  # lease decisions SpacetimeDB made since the last drain
+    if hasattr(_server, "preview_ui"):
+        _server.preview_ui.poll()
+    if hasattr(_server, "live_edit"):
+        _server.live_edit.poll()
     scene_sync.poll()  # direct edits in this Blender reach clients as scene.update
     gate.poll()  # after an ungated edit of leased data, stop writes (#77)
     _commands.poll()  # after an unknown outcome, retry the fresh snapshot until it goes out
@@ -305,6 +327,9 @@ def _start_server(extra, sess, cmds, lses):
     if cmds.editor.voice is not None:
         cmds.editor.voice.attach(srv)  # voice.resolve and voice.grammar_query
     srv = lses.attach(cmds.attach(sess.attach(srv)))
+    srv = preview_spatial.attach(srv, sess, lses)
+    from .live_edit import LiveEdits
+    srv = LiveEdits(sess, cmds.editor, lses, undoable).attach(srv)
     srv.start()
     return srv
 
@@ -323,6 +348,8 @@ def start():
         name=prefs.host_name if prefs else None,
         client_can_edit=bool(prefs and prefs.client_edits),
         store=_store(prefs),
+        capabilities=lambda: {"sketch": sketch.dependency_status()["available"], "preview_spatial": True,
+                              "live_edit": True},
     )
     editor = edits.Editor(scene_sync, undoable, doc, voice=_voice())
     lses = leases.Leases(sess, editor)
@@ -359,6 +386,8 @@ def stop():
     global _server, _session, _document, _commands, _leases, _shown, status, lan_status
     if bpy.app.timers.is_registered(_drain):
         bpy.app.timers.unregister(_drain)
+    if _server is not None and hasattr(_server, "live_edit"):
+        _server.live_edit.stop()
     scene_sync.stop()
     if _server is not None:
         _server.stop()

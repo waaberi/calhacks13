@@ -44,6 +44,11 @@ Every message has this envelope:
 | `lease.acquire` | client → host | request fields, `mode` (`exclusive` or `shared`), `targets` | P3B |
 | `lease.granted` | host → client, answers `lease.acquire` | the `lease` | P3B |
 | `lease.release` | client → host | `lease_id`; no reply on success | P3B |
+| `live.edit.begin` | VR → host | request fields, exclusive `lease`, frozen `targets`, `base_revision`, typed `operation` | Live native editing |
+| `live.edit.update` | VR → host | request fields, `edit_session_id`, next `sequence`, cumulative `parameters` | Live native editing |
+| `live.edit.commit` | VR → host | request fields, `edit_session_id`, latest acknowledged `sequence` | Live native editing |
+| `live.edit.cancel` | VR → host | request fields, `edit_session_id`, optional reason | Live native editing |
+| `live.edit.state` | host → VR | identity, edit session, phase, sequence, revision, generations, selection, notice | Live native editing |
 | `session.update` | host → every client | every participant and every lease | P1, P3B, P5 |
 | `voice.resolve` | client → host | `text` heard, recognizer `confidence`, optional `target` | P4 |
 | `voice.candidates` | host → client, answers `voice.resolve` | `resolution`, `decision` (`run`, `ask` or `reject`), `reason`, `expires_in`, up to 3 `candidates` | P4 |
@@ -51,6 +56,17 @@ Every message has this envelope:
 | `voice.grammar` | host → client, answers `voice.grammar_query` | `version` and `phrases` for the recognizer | P4 |
 
 Voice commands themselves are ordinary `command`s (see [Voice](#voice)). There is no frame message type; see [Blender screen](#blender-screen).
+
+Live gestures reserve the ordinary exclusive lease after acknowledged native input
+release. Each update changes real Blender data, recomputed from an immutable
+starting snapshot; parameters never accumulate against an earlier preview.
+`scene.update.live_edit` identifies the owning actor, session, sequence and phase.
+Native generations remain monotonic through preview and Cancel. Commit reconstructs
+the starting snapshot before one ordinary final undoable edit, so Undo returns to
+the gesture's start, not an intermediate preview. Cancel restores that start
+without adding history. Typed selection-only operations synchronize native
+selection without changing the document step marker or adding Undo. An external
+native geometry change causes a conflict and is never silently overwritten.
 
 ### LAN port
 
@@ -301,6 +317,10 @@ VoiceCore runs inside the Unity app. Every voice command is an ordinary `command
 | `text` | The transcript, 1 to 500 characters. |
 | `confidence` | The recognizer's, 0 to 1 (Vosk: its lowest word's). Below 0.5 the host only asks, never runs. |
 | `target` | Optional `{id, generation}`: the object the user means (selected or pointed at). |
+| `composition` | `true` enables complete deterministic chains and reviewed typed recipes. |
+| `recipe`, `context` | Optional complete typed AI draft and captured document/tool/component context. Both require `composition: true`; see the [recipe workflow](../docs/product-workflow/GEMINI_MODELING_RECIPES.md). |
+
+**Reviewed modeling recipes.** A host advertising `recipe_version: 1` and a `tools` catalog in `voice.grammar` accepts the shared definitions in `modeling.recipe.schema.json` inside `voice.resolve`; there is no separate recipe message. The host validates every step and stages the whole plan before returning `recipe_plan` with the ordered steps and preview information. Every recipe candidate requires explicit confirmation, expires after 120 seconds, belongs to its connection/document/generations and can be consumed once. A missing detail returns `clarify`; an unsupported tail rejects the whole request. Recipe execution uses the same catalog kernels as direct controllers, within one atomic Undo transaction. Native Edit Mode recipes preserve the captured component selection and never substitute Select All. Native live gestures and acknowledged preview input must finish before command execution. Old basic voice and composition keep their existing routes and expiry behavior.
 
 The host answers `voice.candidates` (with `re`) and changes nothing:
 
@@ -409,3 +429,18 @@ python3 contracts/fakes/fake_client.py "move Shaft 10mm 0 0" "undo" --exit
 Shortcuts include `move OBJ DX DY DZ`, `rotate OBJ Z 90deg`, `scale OBJ 1 1 1.5`, `add cube X Y Z DX DY DZ`, `delete OBJ`, `undo`, `redo`, `save`, `lease OBJ...` (shared), `lease all` (exclusive), `release [LEASE]` and `again` (resend the last command with the same ID). It prints "… started editing …" when someone else's lease appears. For [Reconnecting](#reconnecting): `lose COMMAND` sends the command and drops the connection before its `result`, reconnects and asks for it with `receipt.query`; `query [ID ...]` asks about the last command or the given IDs. JSON gives any command or message. Bare numbers are meters and radians, as on the wire; `--help` lists everything. `--reconnect` reconnects every 2 s, `--role blender-client` acts like the Client role, and `--check` validates every message against [`schemas/`](schemas/) (needs `pip install jsonschema`). It speaks plain TCP only: the [LAN port](#lan-port)'s TLS and token aren't in it yet, so it reaches the host's port 8765 or a fake host.
 
 **Check:** `pytest tests/backend/test_fakes.py` runs the two fakes against each other through a recording proxy and validates every message they send against the schemas.
+
+## Optional P2.5 native preview extension
+
+The extension uses hierarchical type names and requires a current welcome/document identity. Missing capabilities disable spatial CAD tools. Native UI reservations use the ordinary host-desktop exclusive lease; they do not establish universal script locking.
+
+| Type | Direction | Purpose |
+| --- | --- | --- |
+| `preview.state.query` | VR to host | Read actual native tool, sketch, unsupported options, modal and UI reservation state. |
+| `preview.state` | Host to VR | Current process/document identity and read-only native state. |
+| `preview.ui.begin` | VR to host | Reserve native desktop input, with permission and identity checks. |
+| `preview.ui.granted` | Host to VR | Connection-owned native UI reservation. |
+| `preview.ui.end` | VR to host | Stop accepting input; retain reservation until native modal operations finish. |
+| `preview.ui.ended` | Host to VR | Input stopped, with explicit modal/ending state; does not alone prove reservation release. |
+
+Release all owned synthetic input and await its acknowledgement before requesting end. A disconnect also stops admission, but a running native modal operation retains the host lease until native confirmation/cancellation. Restore/cancel it in Blender before another writer starts. One unsupported sketch is omitted from the spatial sketch records and identified in `unsupported_sketches`; unrelated objects/sketches continue syncing. No geometry is fabricated for unsupported entities.

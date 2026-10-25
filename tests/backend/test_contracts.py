@@ -20,7 +20,7 @@ REGISTRY = Registry().with_resources(
 )
 EXAMPLES = sorted((CONTRACTS / "examples").glob("*.json"))
 HTTP_BODIES = {"capture.status"}  # served by the capture helper, no envelope
-MESSAGE_TYPES = set(SCHEMAS) - HTTP_BODIES - {"envelope"}
+MESSAGE_TYPES = set(SCHEMAS) - HTTP_BODIES - {"envelope", "modeling.recipe"}  # shared definitions, not messages
 DELETE = object()
 
 

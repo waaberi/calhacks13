@@ -13,7 +13,8 @@ namespace SpatialModeling
 {
     // Connects VoiceCore to HostScene: mic -> recognizer -> VoiceSession -> command -> host, plus prompts and feedback.
     // Voice off (no model/mic) never blocks controller or menu editing.
-    public class VoiceUiAdapter : MonoBehaviour
+    [DefaultExecutionOrder(200)]
+    public partial class VoiceUiAdapter : MonoBehaviour
     {
         public HostScene host;
         [Tooltip("Microphone to use, matched by name (case-insensitive, part of the name is enough). Empty: the default " +
@@ -32,22 +33,12 @@ namespace SpatialModeling
             var mr = go.GetComponent<MeshRenderer>();
             if (mr == null) mr = go.AddComponent<MeshRenderer>();
             mr.sharedMaterial = OverlayTextMaterial(font);
+            mr.sortingOrder = 4001; // World-space glass sorts at 4000; text must remain above its backing.
 
-            var back = new GameObject(BackingName);
-            back.transform.SetParent(go.transform, false);
-            back.AddComponent<MeshFilter>().sharedMesh = BackingMesh();
-            var br = back.AddComponent<MeshRenderer>();
-            br.sharedMaterial = overlayBacking;
-            br.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            back.SetActive(false);
+            GlassVoiceText.Create(tm);
         }
 
-        const string BackingName = "VoiceTextBacking";
-        static Material overlayText, overlayBacking;
-        static Mesh backingMesh;
-
-        // A copy of the font's material (GUI/Text Shader) that ignores depth and draws after the scene's transparents,
-        // and a dark translucent backing drawn just before it. The font's own material stays as it was.
+        static Material overlayText;
         static Material OverlayTextMaterial(Font font)
         {
             if (overlayText != null) return overlayText;
@@ -57,35 +48,32 @@ namespace SpatialModeling
             overlayText.renderQueue = 4001;
             if (font != null)
                 Font.textureRebuilt += f => { if (f == font && overlayText != null) overlayText.mainTexture = f.material.mainTexture; };
-            overlayBacking = new Material(overlayText) { mainTexture = Texture2D.whiteTexture, color = new Color(0.04f, 0.05f, 0.08f, 0.82f) };
-            overlayBacking.renderQueue = 4000;
             return overlayText;
         }
 
-        static Mesh BackingMesh()
-        {
-            if (backingMesh != null) return backingMesh;
-            backingMesh = new Mesh { name = BackingName };
-            backingMesh.SetVertices(new[] { new Vector3(-0.5f, -0.5f, 0), new Vector3(0.5f, -0.5f, 0), new Vector3(0.5f, 0.5f, 0), new Vector3(-0.5f, 0.5f, 0) });
-            backingMesh.SetColors(new[] { Color.white, Color.white, Color.white, Color.white });
-            backingMesh.SetUVs(0, new[] { Vector2.zero, Vector2.right, Vector2.one, Vector2.up });
-            backingMesh.SetTriangles(new[] { 0, 2, 1, 0, 3, 2 }, 0);
-            return backingMesh;
-        }
+        public static void FitBacking(TextMesh tm) => tm.GetComponent<GlassVoiceText>()?.Fit();
 
-        // Sizes the backing to the text (with a margin); hides it when there is no text.
-        public static void FitBacking(TextMesh tm)
+        public const string TranscriptionPreference = "SpatialModeling.Voice.ShowTranscription";
+        public bool ShowTranscription { get; private set; }
+        public const string SelectionPopupPreference = "SpatialModeling.UI.SelectionPopups";
+        public bool SelectionPopups { get; private set; }
+        public void SetSelectionPopups(bool show)
         {
-            Transform back = tm.transform.Find(BackingName);
-            if (back == null) return;
-            Bounds b = tm.GetComponent<MeshRenderer>().localBounds;
-            bool show = tm.gameObject.activeInHierarchy && !string.IsNullOrEmpty(tm.text) && b.size.x > 0f && b.size.y > 0f;
-            if (back.gameObject.activeSelf != show) back.gameObject.SetActive(show);
-            if (!show) return;
-            float margin = tm.characterSize * tm.fontSize * 0.02f;
-            back.localPosition = new Vector3(b.center.x, b.center.y, 0f);
-            back.localRotation = Quaternion.identity;
-            back.localScale = new Vector3(b.size.x + 2 * margin, b.size.y + 2 * margin, 1f);
+            SelectionPopups = show;
+            PlayerPrefs.SetInt(SelectionPopupPreference, show ? 1 : 0);
+            PlayerPrefs.Save();
+            if (!show && feedback != null && IsSelectionPopup(feedback.text)) feedback.gameObject.SetActive(false);
+        }
+        static bool IsSelectionPopup(string message) => message != null &&
+            (message.StartsWith("Selected:", StringComparison.Ordinal) || message.StartsWith("Deselected:", StringComparison.Ordinal));
+        public void SetShowTranscription(bool show)
+        {
+            ShowTranscription = show;
+            PlayerPrefs.SetInt(TranscriptionPreference, show ? 1 : 0);
+            PlayerPrefs.Save();
+            if (!show && feedback != null && feedback.text.StartsWith("Heard:", StringComparison.Ordinal))
+                feedback.gameObject.SetActive(false);
+            if (status != null) PlaceStatus();
         }
 
         // The microphone to record from (null: the system default). A configured name wins (part of it, any case) and
@@ -140,6 +128,8 @@ namespace SpatialModeling
 
         void Awake()
         {
+            ShowTranscription = PlayerPrefs.GetInt(TranscriptionPreference, 0) == 1;
+            SelectionPopups = PlayerPrefs.GetInt(SelectionPopupPreference, 0) == 1;
             if (host == null) host = FindAnyObjectByType<HostScene>();
 
             var p = new GameObject("PendingCommandPanel");
@@ -155,6 +145,7 @@ namespace SpatialModeling
             status.fontSize = 48; status.characterSize = 0.009f; status.anchor = TextAnchor.UpperLeft;
             status.color = new Color(0.6f, 1f, 0.7f);
             SetupText(status, st);
+            st.SetActive(ShowTranscription);
 
             speaker = gameObject.AddComponent<AudioSource>();
             speaker.spatialBlend = 0f;
@@ -192,18 +183,30 @@ namespace SpatialModeling
             confirm.started += _ => { if (!leftGrip.IsPressed()) ConfirmDelete(); };
             cancel.started += _ => CancelPressed();
             talk.Enable(); confirm.Enable(); cancel.Enable(); leftGrip.Enable();
+            InitializeAi();
         }
 
         void Start()
         {
+            BindHost();
+            StartCoroutine(PlayLoop());
+            StartVoice();
+            OnScene();
+            OVRManager.VrFocusLost += SuspendObjectTargeting;
+            OVRManager.HMDUnmounted += SuspendObjectTargeting;
+        }
+
+        void BindHost()
+        {
             host.SceneChanged += OnScene;
-            host.ConnectionLost += () => { DropDelete(Prompt.ConnectionLost); Handle(session.ConnectionLost()); };
+            host.ConnectionLost += () => { InvalidateAi(); ResetObjectTargeting(); DropDelete(Prompt.ConnectionLost); Handle(session.ConnectionLost()); };
             host.DocumentChanged += () =>
             {
+                InvalidateAi();
                 // contracts/README.md, Wrong document: drop everything held for the old document. Object IDs survive
                 // a reopen, so a waiting delete would otherwise hit the same object in the reopened file.
                 DropDelete(Prompt.DocumentChanged);
-                pointerId = null;   // the session forgets its pointer; report it again even if the gaze stays put
+                ResetObjectTargeting();
                 Handle(session.DocumentChanged());
             };
             host.CommandAnswered += OnAnswered;
@@ -211,11 +214,14 @@ namespace SpatialModeling
             host.VoiceGrammarReceived += (re, json) =>
             {
                 session.SetHostGrammar(VoiceGrammar.FromJson(json));
+                session.EnableComposition((bool?)JObject.Parse(json)["composition"] == true);
+                AcceptAiCatalog(JObject.Parse(json));
                 input?.SetGrammar(session.GrammarPhrases());
                 Debug.Log("VOICE grammar: " + session.GrammarPhrases().Count + " phrases with the host's");
             };
             host.VoiceCandidatesReceived += (re, json) =>
             {
+                if (AcceptAiCandidates(re, JObject.Parse(json))) return;
                 VoiceCandidates answer = VoiceCandidates.FromJson(json);
                 Debug.Log($"VOICE candidates {answer.Decision} after {Since()} ms: {string.Join(" | ", answer.Candidates)}" +
                           (answer.Reason != null ? " (" + answer.Reason + ")" : ""));
@@ -223,12 +229,12 @@ namespace SpatialModeling
             };
             host.RequestFailed += (re, code) =>
             {
+                Debug.Log("VOICE host request refused " + re + ": " + code);
                 if (re == grammarQuery) { if (code == "unknown_type") session.HostHasNoVoice(); }
+                else if (re == aiRecipeRequest)
+                { InvalidateAi(); Note("Blender could not prepare the AI review (" + code + "). Nothing was run."); }
                 else Handle(session.HostError(re, code));
             };
-            StartCoroutine(PlayLoop());
-            StartVoice();
-            OnScene();
         }
 
         void StartVoice()
@@ -264,6 +270,8 @@ namespace SpatialModeling
 
         void OnDestroy()
         {
+            InvalidateAi();
+            DisposeObjectTargeting();
             talk?.Dispose(); confirm?.Dispose(); cancel?.Dispose(); leftGrip?.Dispose();
             if (mic != null) Microphone.End(micDevice);
             input?.Dispose();
@@ -273,6 +281,7 @@ namespace SpatialModeling
 
         void Update()
         {
+            TickAi();
             PumpMic();
             if (input != null)
             {
@@ -301,7 +310,7 @@ namespace SpatialModeling
                     }
                     heardLine = $"Heard: \"{result.Text}\" ({result.Confidence:0.00})";
                     if (prompts.Count == 0 && !playing) Note("Heard: " + result.Text);   // don't cover a prompt that is playing
-                    Handle(session.Hear(result));
+                    HearOrInterpret(result, true);
                 }
                 // A press that gave no result at all (#146): silence, or speech that matched no phrase.
                 while (input.TryGetNoResult(out NoResultReason why))
@@ -313,7 +322,7 @@ namespace SpatialModeling
                     // Silence says nothing (VoiceSession), so show why; speech that matched nothing says "Sorry, I
                     // didn't catch that" (Prompt.LowConfidence), which the prompt loop shows.
                     if (why == NoResultReason.Silence) Note(DidntHear);
-                    Handle(session.NothingRecognized(why));
+                    if (!TryInterpretUnmatched(why)) Handle(session.NothingRecognized(why));
                 }
             }
             if (talking) noteUntil = Time.time + 1f;   // keep "Listening..." up while the button is held
@@ -330,14 +339,16 @@ namespace SpatialModeling
                     ? ": " + f.LastOutcome + (f.Slow is WhisperServerRecognizer ws ? " whisper '" + ws.LastTranscript + "'" : "") : ""));
             }
             Handle(session.Tick());
-            UpdatePointer();
 
             if (deleteWaiting != null && DateTime.UtcNow >= deleteExpiresAt) DropDelete(Prompt.TimedOut);
             PendingCommand pending = session.Pending;
             PendingChoice choice = session.Choice;
             if (choice != null) panel.ShowChoice(choice);
             else if (pending != null) panel.Show(pending);
+            else if (session.CompositionQuestion != null) panel.ShowComposition(session.CompositionQuestion, session.CompositionExpiresAt);
+            else if (deleteWaiting != null && ShowAiReview()) { }
             else if (deleteWaiting != null) panel.ShowDelete(deleteWaiting.ToString(), deleteExpiresAt);
+            else if (aiQuestion != null) panel.ShowComposition(aiQuestion, aiQuestionUntil);
             else if (panel.Visible) panel.Hide();
 
             if (feedback.gameObject.activeSelf && Time.time > noteUntil && prompts.Count == 0)
@@ -349,9 +360,9 @@ namespace SpatialModeling
         void PlaceStatus()
         {
             var cam = Camera.main;
-            string text = micLine + (heardLine.Length > 0 ? "\n" + heardLine : "") +
+            string text = micLine + "\n" + ObjectTargetLabel + (heardLine.Length > 0 ? "\n" + heardLine : "") +
                           (session.WaitingForHost ? "\nthinking..." : resultLine.Length > 0 ? "\n" + resultLine : "");
-            status.gameObject.SetActive(cam != null);
+            status.gameObject.SetActive(ShowTranscription && cam != null);
             if (!status.gameObject.activeSelf) return;
             status.text = text;
             var t = status.transform;
@@ -404,20 +415,6 @@ namespace SpatialModeling
             }
         }
 
-        void UpdatePointer()
-        {
-            var cam = Camera.main;
-            if (cam == null) return;
-            var ray = new Ray(cam.transform.position, cam.transform.forward);
-            var shown = new List<KeyValuePair<string, string>>();
-            host.GetShownObjects(shown);
-            string best = null; float bestDist = float.MaxValue;
-            foreach (var o in shown)
-                if (host.TryGetBounds(o.Key, out Bounds b) && b.IntersectRay(ray, out float d) && d < bestDist)
-                { best = o.Key; bestDist = d; }
-            if (best != pointerId) { pointerId = best; Handle(session.SetPointerTarget(best)); }
-        }
-
         // Mac testing without a mic: type a phrase (e.g. "rotate this ninety degrees around z") and press Enter.
         void OnGUI()
         {
@@ -430,11 +427,11 @@ namespace SpatialModeling
                 string phrase = typed;
                 typed = "";
                 e.Use();
-                Handle(session.Hear(new RecognitionResult(phrase, 1f)));
+                HearOrInterpret(new RecognitionResult(phrase, 1f), false);
                 return;
             }
             GUI.SetNextControlName("voicebox");
-            typed = GUI.TextField(new Rect(Screen.width - 430, Screen.height - 36, 420, 26), typed);
+            typed = GlassDesktopStatus.TextEntry(new Rect(Screen.width - 430, Screen.height - 42, 420, 32), typed);
         }
 
         // ---------- scene ----------
@@ -444,6 +441,12 @@ namespace SpatialModeling
 
         void OnScene()
         {
+            if (!host.HasCurrentScene)
+            {
+                ResetObjectTargeting();
+                Handle(session.SetObjects(Array.Empty<SceneObject>()));
+                return;
+            }
             var shown = new List<KeyValuePair<string, string>>();
             host.GetShownObjects(shown);
             var list = new List<SceneObject>();
@@ -455,8 +458,15 @@ namespace SpatialModeling
                 names.Add(o.Value);
                 if (deleteWaiting != null && o.Key == deleteWaiting.TargetId) deleteTargetShown = true;
             }
-            if (deleteWaiting != null && !deleteTargetShown) DropDelete(Prompt.TargetDeleted);
+            if(AiConfirmationWaiting&&deleteWaiting.TargetId!=null)
+            {
+                var nativeTargets=new List<KeyValuePair<string,string>>();host.GetVisibleNativeObjects(nativeTargets);
+                deleteTargetShown=nativeTargets.Exists(obj=>obj.Key==deleteWaiting.TargetId);
+            }
+            if (deleteWaiting?.TargetId != null && !deleteTargetShown) DropDelete(Prompt.TargetDeleted);
             Handle(session.SetObjects(list));
+            if (SelectedObjectId != null && !list.Exists(o => o.Id == SelectedObjectId)) ClearObjectSelection();
+            if (pointerId != null && !list.Exists(o => o.Id == pointerId)) SetControllerPointer(null);
             // Only when the names change (voice/README.md): a host drag sends up to 20 updates a second, and every
             // new grammar makes Vosk build a new recognizer.
             string key = string.Join("\n", names);
@@ -484,8 +494,12 @@ namespace SpatialModeling
             if (turn.Resolve != null)
             {
                 long? g = turn.Resolve.TargetId != null && host.TryGetGeneration(turn.Resolve.TargetId, out long gen) ? gen : (long?)null;
-                string id = host.SendVoice(VoiceResolve.Type, JObject.FromObject(turn.Resolve.Payload(g)));
-                Debug.Log($"VOICE resolve '{turn.Resolve.Text}' target {turn.Resolve.TargetId ?? "-"} sent {id ?? "(not sent)"}");
+                var voicePayload = JObject.FromObject(turn.Resolve.Payload(g));
+                if (aiPendingDraft != null)
+                { voicePayload["recipe"] = aiPendingDraft; voicePayload["context"] = aiExpectedContext; aiPendingDraft = null; }
+                string id = host.SendVoice(VoiceResolve.Type, voicePayload);
+                if (voicePayload["recipe"] != null) { aiRecipeRequest = id; aiFingerprint = CaptureAiContext().ToString(Newtonsoft.Json.Formatting.None); }
+                Debug.Log($"VOICE resolve '{turn.Resolve.Text}' target {turn.Resolve.TargetId ?? "-"} sent {id ?? "(not sent)"} route={(voicePayload["recipe"] != null ? "gemini-recipe" : "basic-host")}");
                 Handle(session.ResolveSent(turn.Resolve, id));
             }
             if (vc == null) return;
@@ -494,7 +508,7 @@ namespace SpatialModeling
             if (command == null)
             {
                 if (vc.Kind == CommandKind.Select && vc.TargetId != null)
-                    Handle(session.SetSelection(new[] { vc.TargetId }));
+                    SelectObject(vc.TargetId);
                 else if (vc.Kind == CommandKind.Cancel)
                     CancelPressed();
                 else if (vc.Kind != CommandKind.Select)
@@ -504,8 +518,8 @@ namespace SpatialModeling
             if (vc.RequiresConfirmation)
             {
                 deleteWaiting = vc;
-                deleteExpiresAt = DateTime.UtcNow.AddSeconds(15);
-                Enqueue(Prompt.ConfirmDelete, null);
+                deleteExpiresAt = DateTime.UtcNow.AddSeconds(aiReview != null ? 120 : 15);
+                Enqueue(vc.Kind == CommandKind.Run ? Prompt.ConfirmSequence : Prompt.ConfirmDelete, vc.Say);
                 return;
             }
             Send(command);
@@ -514,8 +528,15 @@ namespace SpatialModeling
         // Esc or "cancel": drops the delete waiting for its confirmation and the pending command.
         void CancelPressed()
         {
+            bool sentAiStillPending=InvalidateAi();
+            PreviewInteraction.Current?.CancelDirectModelDraft("Voice / Escape cancelled the local direct edit");
             DropDelete(Prompt.Cancelled);
             Handle(session.Cancel());
+            if(sentAiStillPending)
+            {
+                resultLine="AI edit was already sent. Waiting for Blender's actual receipt; check the model before another edit.";
+                Enqueue(Prompt.Busy,resultLine);
+            }
         }
 
         void DropDelete(Prompt why)
@@ -528,6 +549,7 @@ namespace SpatialModeling
         void ConfirmDelete()
         {
             if (deleteWaiting == null) return;
+            if (!CanConfirmAiReview()) return;
             HostCommand command = HostCommand.From(deleteWaiting);
             deleteWaiting = null;
             if (command != null) Send(command);
@@ -536,7 +558,9 @@ namespace SpatialModeling
         void Send(HostCommand c)
         {
             if (!host.CanSend) { Enqueue(Prompt.NotConnected, null); return; }
-            string id = host.SendCommand(c.Op, c.TargetId, JObject.FromObject(c.Args), HostCommand.Source);
+            bool aiOwned=IsAiRun(c);
+            string id = aiOwned ? host.SendAiCommand(c.Op,c.TargetId,JObject.FromObject(c.Args),HostCommand.Source,AiContextCurrent)
+                : host.SendCommand(c.Op, c.TargetId, JObject.FromObject(c.Args), HostCommand.Source);
             if (id == null)
             {
                 // Connected but not sent: the target is no longer in the scene, or the socket just failed.
@@ -544,13 +568,21 @@ namespace SpatialModeling
                 return;
             }
             voiceRequests.Add(id);
+            if(aiOwned)TrackAiCommand(id);
             Debug.Log($"VOICE command {c.Op} target {c.TargetId ?? "-"} args {JObject.FromObject(c.Args).ToString(Newtonsoft.Json.Formatting.None)} sent {id} after {Since()} ms");
-            session.SetSelection(Array.Empty<string>());   // "this" goes back to the gaze target after a command
+            // Explicit selection stays latched until cleared, replaced, deleted or the document/session changes.
         }
 
         void OnAnswered(CommandAnswer a)
         {
+            CompleteAiCommand(a.RequestId);
             if (!voiceRequests.Remove(a.RequestId)) return;   // controller/menu commands speak for themselves
+            if(a.Outcome=="cancelled"&&a.ErrorCode=="cancelled_before_send")
+            {resultLine="Cancelled: "+a.Message;Enqueue(Prompt.Cancelled,a.Message);return;}
+            if (a.Outcome == "applied" && a.SelectionSpecified)
+            {
+                if (a.SelectedId == null || !SelectObject(a.SelectedId)) ClearObjectSelection();
+            }
             Debug.Log($"VOICE result {a.Op} {a.Outcome} \"{a.Message}\" {a.ErrorCode} release_to_applied_ms={Since()}");
             resultLine = a.Outcome + ": " + (string.IsNullOrEmpty(a.Message) ? a.Op : a.Message);
             Enqueue(HostCommand.PromptFor(a.Op, a.Outcome, a.ErrorCode), a.Message);
@@ -562,9 +594,17 @@ namespace SpatialModeling
 
         void Note(string text)
         {
-            feedback.text = text;
+            if (!SelectionPopups && IsSelectionPopup(text)) return;
+            if (!ShowTranscription && text.StartsWith("Heard:", StringComparison.Ordinal)) return;
+            feedback.text = string.Join("\n", VoiceDialogPages.Build(text,64,100));
             feedback.gameObject.SetActive(true);
-            noteUntil = Time.time + 4f;
+            var cam = Camera.main;
+            if (cam != null)
+            {
+                feedback.transform.position = cam.transform.TransformPoint(new Vector3(0f, -.43f, 1.25f));
+                feedback.transform.rotation = cam.transform.rotation;
+            }
+            noteUntil = Time.time + Mathf.Clamp(text.Length / 18f,4f,15f);
         }
 
         IEnumerator PlayLoop()
@@ -593,11 +633,9 @@ namespace SpatialModeling
         {
             var cam = Camera.main;
             if (cam == null || !feedback.gameObject.activeSelf) return;
-            var t = feedback.transform;
-            // Below the status line (up to 3 lines from y = -0.1), so the two backings don't overlap.
-            t.position = cam.transform.TransformPoint(new Vector3(-0.35f, -0.3f, 1.1f));
-            t.rotation = cam.transform.rotation;
             FitBacking(feedback);
+            var bounds = feedback.GetComponent<MeshRenderer>().localBounds;
+            feedback.transform.localScale = Vector3.one * Mathf.Min(1f,.95f/Mathf.Max(.001f,bounds.size.x),.35f/Mathf.Max(.001f,bounds.size.y));
         }
     }
 }

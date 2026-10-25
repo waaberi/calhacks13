@@ -23,7 +23,7 @@ from capture_helper import (
     owned_capture_pixels,
     secondary_blender_window,
 )
-from PIL import Image
+from PIL import Image, ImageChops, ImageDraw, ImageStat
 
 try:
     import cv2
@@ -33,6 +33,24 @@ except ImportError:
 
 
 class CaptureContractTests(unittest.TestCase):
+    def test_clear_text_retains_native_pixels_and_reduces_text_encoding_error(self):
+        image = Image.new("RGB", (256, 96), (37, 37, 37))
+        draw = ImageDraw.Draw(image)
+        for y in range(3, 85, 13):
+            draw.text((7, y), "Blender Location X 20.000 mm", fill=(218, 222, 231))
+        errors = []
+        for clear in (False, True):
+            latest = LatestFrame(clear_text=clear)
+            latest.select({"hwnd": 100, "pid": 200, "title": "Blender"})
+            latest.publish(latest.generation, image, "Blender", 1, int(time.time() * 1000))
+            decoded = Image.open(io.BytesIO(latest.jpeg))
+            self.assertEqual(decoded.size, image.size)
+            self.assertEqual(decoded.layer[0][1:3], (1, 1), "native UI retains 4:4:4 chroma")
+            errors.append(sum(ImageStat.Stat(ImageChops.difference(image, decoded)).mean))
+            if clear:
+                self.assertTrue(all(value == 1 for table in decoded.quantization.values() for value in table))
+        self.assertLess(errors[1], errors[0], "maximum-quality text must reduce reconstruction error")
+
     def setUp(self):
         self.latest = LatestFrame()
         self.server = make_server(self.latest, 0)
@@ -73,8 +91,66 @@ class CaptureContractTests(unittest.TestCase):
         self.assertEqual(headers["Content-Type"], "image/jpeg")
         self.assertEqual(headers["X-Size"], "64x48")
         self.assertTrue(body.startswith(b"\xff\xd8"))
-        code, _, body = self.get("/frame", {"If-None-Match": headers["ETag"]})
+        self.assertEqual(headers["X-Selection-Generation"], "0")
+        self.assertEqual(headers["X-Capture-Instance"], self.latest.capture_instance)
+        code, cached_headers, body = self.get("/frame", {"If-None-Match": headers["ETag"]})
         self.assertEqual((code, body), (304, b""))
+        self.assertEqual(cached_headers["X-Capture-Instance"], headers["X-Capture-Instance"])
+        self.assertEqual(cached_headers["X-Selection-Generation"], "0")
+
+    def test_http_frame_identity_stays_bound_to_pixels_during_selection_race(self):
+        self.publish()
+        old_jpeg = self.latest.snapshot()[1]
+        original = self.latest.snapshot_with_input_identity
+
+        def snapshot_then_change_selection():
+            old = original()
+            self.latest.select({"hwnd": 123, "pid": 456, "title": "New Blender window"})
+            return old
+
+        with patch.object(self.latest, "snapshot_with_input_identity", snapshot_then_change_selection):
+            code, headers, body = self.get("/frame")
+        self.assertEqual((code, body), (200, old_jpeg))
+        self.assertEqual(headers["X-Selection-Generation"], "0")
+        self.assertEqual(self.latest.generation, 1)
+        self.publish()
+        code, new_headers, _ = self.get("/frame")
+        self.assertEqual(code, 200)
+        self.assertEqual(new_headers["X-Selection-Generation"], "1")
+        self.assertEqual(new_headers["X-Capture-Instance"], headers["X-Capture-Instance"])
+
+    def test_new_helper_instance_cannot_match_old_display_even_at_same_generation(self):
+        self.assertEqual(self.latest.generation, LatestFrame().generation)
+        self.assertNotEqual(self.latest.capture_instance, LatestFrame().capture_instance)
+
+    def test_geometry_identity_changes_only_with_captured_geometry_and_stays_bound_to_reply(self):
+        geometry = {"left": 10, "top": 20, "width": 64, "height": 48, "dpi": 144,
+                    "process_started": 12345}
+
+        def publish(g):
+            self.latest.publish_jpeg(self.latest.generation, b"jpeg", 64, 48, "Blender", 10,
+                                     self.latest.captured_ms + 1, g)
+
+        publish(geometry)
+        code, first, _ = self.get("/frame")
+        self.assertEqual(code, 200)
+        self.assertEqual(len(first["X-Capture-Geometry"]), 64)
+        publish(dict(reversed(list(geometry.items()))))
+        _, stable, _ = self.get("/frame")
+        self.assertEqual(stable["X-Capture-Geometry"], first["X-Capture-Geometry"])
+        original = self.latest.snapshot_with_input_identity
+
+        def snapshot_then_resize():
+            old = original()
+            publish({**geometry, "width": 128})
+            return old
+
+        with patch.object(self.latest, "snapshot_with_input_identity", snapshot_then_resize):
+            _, old_reply, _ = self.get("/frame")
+        self.assertEqual(old_reply["X-Capture-Geometry"], first["X-Capture-Geometry"])
+        _, resized, _ = self.get("/frame")
+        self.assertNotEqual(resized["X-Capture-Geometry"], first["X-Capture-Geometry"])
+        self.assertEqual(resized["X-Selection-Generation"], first["X-Selection-Generation"])
 
     def test_failure_invalidates_previous_image(self):
         self.publish()
@@ -188,7 +264,7 @@ class CaptureContractTests(unittest.TestCase):
         self.assertAlmostEqual(measured_frame_rate([100, 100.025, 100.05], 100.05), 40)
 
     @contextmanager
-    def actual_graphics_workers(self):
+    def actual_graphics_workers(self, fail_stop=False):
         captures = []
         refresh = threading.Event()
         reached_publication = threading.Event()
@@ -214,7 +290,13 @@ class CaptureContractTests(unittest.TestCase):
                 return handler
 
             def start_free_threaded(self):
-                return SimpleNamespace(stop=lambda: None, is_finished=lambda: False)
+                self.finished = False
+
+                def stop_control():
+                    if fail_stop:
+                        raise Exception("private native capture join failure")  # noqa: TRY002 -- exact native library behavior.
+
+                return SimpleNamespace(stop=stop_control, is_finished=lambda: self.finished)
 
         def refresh_due(*_):
             if refresh.is_set():
@@ -250,6 +332,14 @@ class CaptureContractTests(unittest.TestCase):
         while not predicate() and time.monotonic() < until:
             time.sleep(0.005)
         self.assertTrue(predicate(), "Actual graphics workers did not reach the expected state")
+
+    @unittest.skipUnless(os.name == "nt", "Windows capture binding")
+    def test_finished_capture_join_error_is_logged_and_recovers(self):
+        output = io.StringIO()
+        with redirect_stdout(output), self.actual_graphics_workers(fail_stop=True) as run:
+            run.captures[0].finished = True
+            self.wait_until(lambda: len(run.captures) >= 2)
+            self.assertIn("CAPTURE_STOP_ERROR", output.getvalue())
 
     @unittest.skipUnless(os.name == "nt", "Windows capture binding")
     def test_empty_callback_reports_unavailable_then_valid_pixels_recover(self):

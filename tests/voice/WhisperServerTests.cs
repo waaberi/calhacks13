@@ -163,6 +163,24 @@ namespace SpatialModeling.VoiceCore.Tests
 
         static readonly string[] Commands = { "add a cone", "undo", "you", "[unk]" };
 
+        [Theory]
+        [InlineData("Add cube then move it 20 centimeters along X.")]
+        [InlineData("Add cube then teleport it.")]
+        [InlineData("Add cube and teleport it.")]
+        [InlineData("Add cube and sing.")]
+        [InlineData("Apply rotation and scale.")]
+        [InlineData("Colour it red nonsense.")]
+        public void CompositionPreservesEveryTranscriptWordIncludingUnsupportedTails(string transcript)
+        {
+            using (var server = new FakeHttpServer { Respond = _ => (200, Reply(transcript)) })
+            {
+                var whisper = new WhisperServerRecognizer(server.Port);
+                whisper.SetGrammar(new[] { "add a cube", "then", "colour", "red", "move", "centimeters", "x", "[unk]" });
+                RecognitionResult result = Assert.Single(Utter(whisper));
+                Assert.Equal(transcript, result.Text);
+            }
+        }
+
         [Fact]
         public void ASilentPressIsNotSentAndRaisesNothing()
         {

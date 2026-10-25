@@ -2,9 +2,11 @@
 
 import argparse
 import ctypes as C
+import hashlib
 import io
 import json
 import os
+import secrets
 import socket
 import threading
 import time
@@ -22,7 +24,38 @@ class WindowUnavailable(RuntimeError):
         self.state = state
 
 
+def selected_window_identity(api, selected):
+    """Revalidate the selected family/lifetimes before accepting any pixels."""
+    current = api.identity(selected["hwnd"])
+    if not current or current["pid"] != selected["pid"]:
+        return None
+    for key in ("window_class", "owner_hwnd", "parent_hwnd", "menu_owner_hwnd", "blender_hwnd", "blender_pid"):
+        if key in selected and selected[key] != current.get(key):
+            return None
+    bridge = getattr(api, "input_bridge", None)
+    if bridge and bridge.enabled:
+        from input_bridge import InputRejected
+
+        try:
+            live = bridge.native.inspect(selected)
+            with bridge.latest.lock:
+                same_scope = bridge.latest.window_scope == bridge.bound_scope
+            if (same_scope and bridge.process_binding
+                    and (live.get("blender_pid", selected["pid"]),
+                         live.get("blender_process_started", live["process_started"])) != bridge.process_binding[1:]):
+                return None
+        except (InputRejected, OSError):
+            return None
+    return current
+
+
 class Windows:
+    class GUIThreadInfo(C.Structure):
+        _fields_ = [("cbSize", W.DWORD), ("flags", W.DWORD),
+                    ("hwndActive", W.HWND), ("hwndFocus", W.HWND),
+                    ("hwndCapture", W.HWND), ("hwndMenuOwner", W.HWND),
+                    ("hwndMoveSize", W.HWND), ("hwndCaret", W.HWND), ("rcCaret", W.RECT)]
+
     def __init__(self):
         if os.name != "nt":
             raise RuntimeError("Window capture requires Windows.")
@@ -38,6 +71,9 @@ class Windows:
             (self.u, "GetWindowTextW", [W.HWND, W.LPWSTR, C.c_int], C.c_int),
             (self.u, "GetClassNameW", [W.HWND, W.LPWSTR, C.c_int], C.c_int),
             (self.u, "GetWindowThreadProcessId", [W.HWND, C.POINTER(W.DWORD)], W.DWORD),
+            (self.u, "GetWindow", [W.HWND, W.UINT], W.HWND),
+            (self.u, "GetParent", [W.HWND], W.HWND),
+            (self.u, "GetGUIThreadInfo", [W.DWORD, C.POINTER(self.GUIThreadInfo)], W.BOOL),
             (self.u, "GetWindowRect", [W.HWND, C.POINTER(W.RECT)], W.BOOL),
             (self.u, "GetWindowDC", [W.HWND], W.HDC),
             (self.u, "ReleaseDC", [W.HWND, W.HDC], C.c_int),
@@ -70,38 +106,83 @@ class Windows:
         except (AttributeError, OSError):
             pass
 
-    def identity(self, hwnd):
-        pid = W.DWORD()
-        self.u.GetWindowThreadProcessId(hwnd, C.byref(pid))
-        handle = self.k.OpenProcess(0x1000, False, pid.value)
-        if not handle:
+    def raw_window(self, hwnd):
+        """Read one native window without admitting it to Blender's UI family."""
+        if not hwnd or not self.u.IsWindow(hwnd):
             return None
-        try:
-            name, length = C.create_unicode_buffer(32768), W.DWORD(32768)
-            if not self.k.QueryFullProcessImageNameW(handle, 0, name, C.byref(length)):
+        pid = W.DWORD()
+        thread_id = self.u.GetWindowThreadProcessId(hwnd, C.byref(pid))
+        if not thread_id or not pid.value:
+            return None
+        title = C.create_unicode_buffer(1024)
+        self.u.GetWindowTextW(hwnd, title, len(title))
+        cls = C.create_unicode_buffer(128)
+        if not self.u.GetClassNameW(hwnd, cls, len(cls)):
+            return None
+        owner = int(self.u.GetWindow(hwnd, 4) or 0)  # GW_OWNER, never GetParent.
+        parent = int(self.u.GetParent(hwnd) or 0) if not owner else 0
+        menu_owner = 0
+        if cls.value == "#32768":
+            info = self.GUIThreadInfo()
+            info.cbSize = C.sizeof(info)
+            if self.u.GetGUIThreadInfo(thread_id, C.byref(info)):
+                menu_owner = int(info.hwndMenuOwner or 0)
+        executable = None
+        handle = self.k.OpenProcess(0x1000, False, pid.value)
+        if handle:
+            try:
+                name, length = C.create_unicode_buffer(32768), W.DWORD(32768)
+                if self.k.QueryFullProcessImageNameW(handle, 0, name, C.byref(length)):
+                    executable = name.value
+            finally:
+                self.k.CloseHandle(handle)
+        # Reject destruction/recycling/reparenting during this metadata read.
+        confirmed = W.DWORD()
+        if (not self.u.IsWindow(hwnd)
+                or self.u.GetWindowThreadProcessId(hwnd, C.byref(confirmed)) != thread_id):
+            return None
+        if confirmed.value != pid.value or int(self.u.GetWindow(hwnd, 4) or 0) != owner:
+            return None
+        if not owner and int(self.u.GetParent(hwnd) or 0) != parent:
+            return None
+        if cls.value == "#32768":
+            confirmed_menu = self.GUIThreadInfo()
+            confirmed_menu.cbSize = C.sizeof(confirmed_menu)
+            confirmed_owner = (int(confirmed_menu.hwndMenuOwner or 0)
+                               if self.u.GetGUIThreadInfo(thread_id, C.byref(confirmed_menu)) else 0)
+            if confirmed_owner != menu_owner:
                 return None
-            if os.path.basename(name.value).lower() != "blender.exe":
-                return None
-            title = C.create_unicode_buffer(1024)
-            self.u.GetWindowTextW(hwnd, title, len(title))
-            cls = C.create_unicode_buffer(128)
-            self.u.GetClassNameW(hwnd, cls, len(cls))
-            if cls.value != "GHOST_WindowClass":
-                return (
-                    None  # Never the console or an unrelated process with 'Blender' in its title.
-                )
-            return {"hwnd": int(hwnd), "pid": pid.value, "title": title.value}
-        finally:
-            self.k.CloseHandle(handle)
+        return {"hwnd": int(hwnd), "pid": pid.value, "title": title.value,
+                "window_class": cls.value, "owner_hwnd": owner, "parent_hwnd": parent,
+                "menu_owner_hwnd": menu_owner, "executable": executable}
 
-    def windows(self):
+    def _family_identity(self, hwnd, include_owned):
+        import ntpath
+
+        from window_family import resolve_window
+
+        # Preserve the legacy picker/capture identity shape when P2.5 is off.
+        if not include_owned:
+            item = self.raw_window(hwnd)
+            if (not item or item["window_class"] != "GHOST_WindowClass"
+                    or ntpath.basename(item.get("executable") or "").lower() != "blender.exe"):
+                return None
+            return {key: item[key] for key in ("hwnd", "pid", "title")}
+        return resolve_window(hwnd, self.raw_window)
+
+    def identity(self, hwnd):
+        bridge = getattr(self, "input_bridge", None)
+        return self._family_identity(hwnd, bool(bridge and bridge.enabled))
+
+    def windows(self, include_owned=False):
         result = []
+        bridge = getattr(self, "input_bridge", None)
+        include_owned = bool(include_owned and bridge and bridge.enabled)
 
         @self.callback
         def visit(hwnd, _):
-            item = self.identity(hwnd) if self.u.IsWindowVisible(hwnd) else None
-            # Offer only main windows: Preferences and the like are never the model view.
-            if item and not secondary_blender_window(item["title"]):
+            item = self._family_identity(hwnd, include_owned) if self.u.IsWindowVisible(hwnd) else None
+            if item:
                 result.append(item)
             return True
 
@@ -110,8 +191,11 @@ class Windows:
 
     def capture(self, selected):
         hwnd = selected["hwnd"]
-        current = self.identity(hwnd) if self.u.IsWindow(hwnd) else None
-        if not current or current["pid"] != selected["pid"]:
+        current = selected_window_identity(self, selected) if self.u.IsWindow(hwnd) else None
+        if (not current or current["pid"] != selected["pid"]
+                or any(key in selected and current.get(key) != selected[key] for key in
+                       ("window_class", "owner_hwnd", "parent_hwnd", "menu_owner_hwnd",
+                        "blender_hwnd", "blender_pid"))):
             raise WindowUnavailable(
                 "no_window",
                 "Selected Blender window closed. Reopen Blender and select its window again.",
@@ -128,6 +212,8 @@ class Windows:
             raise WindowUnavailable(
                 "error", "Selected window size is unsupported (maximum 8192 pixels per side)."
             )
+        bridge = getattr(self, "input_bridge", None)
+        input_geometry = bridge.frame_geometry(selected, width, height, "print") if bridge else None
         dc = self.u.GetWindowDC(hwnd)
         memory = self.g.CreateCompatibleDC(dc)
         bitmap = self.g.CreateCompatibleBitmap(dc, width, height)
@@ -153,6 +239,8 @@ class Windows:
             # Preserve native UI pixels on ordinary laptop displays. Text suffers when
             # a high-DPI window is reduced before it even reaches the headset.
             image.thumbnail((3840, 2400), Image.Resampling.LANCZOS)
+            if bridge:
+                image.info["input_geometry"] = input_geometry
             return image, current["title"]
         finally:
             self.g.SelectObject(memory, old)
@@ -162,7 +250,8 @@ class Windows:
 
 
 class LatestFrame:
-    def __init__(self):
+    def __init__(self, clear_text=False):
+        self.jpeg_quality = 100 if clear_text else 95
         self.lock = threading.Lock()
         self.selected = None
         self.generation = 0
@@ -170,6 +259,11 @@ class LatestFrame:
         self.jpeg = None
         self.captured_ms = 0
         self.last_success = 0
+        self.input_bridge = None  # P2.5 is explicit opt-in; capture behavior stays the default.
+        self.input_geometry = None
+        self.capture_instance = secrets.token_urlsafe(18)
+        self.capture_geometry = ""
+        self.window_scope = secrets.token_urlsafe(18)
         self.status = {
             "state": "no_window",
             "window": None,
@@ -180,13 +274,17 @@ class LatestFrame:
             "message": "Select a Blender window in the capture helper.",
         }
 
-    def select(self, window):
+    def select(self, window, *, preserve_scope=False):
         with self.lock:
+            if not preserve_scope:
+                self.window_scope = secrets.token_urlsafe(18)
             self.selected = window
             self.generation += 1
             self.jpeg = None
             self.captured_ms = 0
             self.last_success = 0
+            self.input_geometry = None
+            self.capture_geometry = ""
             self.status = {
                 "state": "no_window",
                 "window": window["title"] if window else None,
@@ -204,17 +302,22 @@ class LatestFrame:
             if generation != self.generation:
                 return
             self.jpeg = None
-            # Messages can carry exception text; the status schema allows 1024 characters.
+            self.input_geometry = None
+            self.capture_geometry = ""
             self.status.update(state=state, fps=0.0, message=message[:1024])
 
-    def publish(self, generation, image, title, fps, captured_ms):
+    def publish(self, generation, image, title, fps, captured_ms, input_geometry=None):
         output = io.BytesIO()
-        image.save(output, format="JPEG", quality=95, subsampling=0)
-        self.publish_jpeg(
-            generation, output.getvalue(), image.width, image.height, title, fps, captured_ms
+        image.save(output, format="JPEG", quality=self.jpeg_quality, subsampling=0)
+        return self.publish_jpeg(
+            generation, output.getvalue(), image.width, image.height, title, fps, captured_ms,
+            input_geometry
         )
 
-    def publish_jpeg(self, generation, jpeg, width, height, title, fps, captured_ms):
+    def publish_jpeg(self, generation, jpeg, width, height, title, fps, captured_ms,
+                     input_geometry=None):
+        geometry_id = (hashlib.sha256(json.dumps(input_geometry, sort_keys=True,
+                       separators=(",", ":")).encode()).hexdigest() if input_geometry else "")
         with self.lock:
             if generation != self.generation or captured_ms <= self.captured_ms:
                 return False  # A slow old encoder must never roll the newest image back.
@@ -222,6 +325,8 @@ class LatestFrame:
             self.jpeg = jpeg
             self.captured_ms = captured_ms
             self.last_success = time.monotonic()
+            self.input_geometry = input_geometry
+            self.capture_geometry = geometry_id
             self.status = {
                 "state": "capturing",
                 "window": title,
@@ -234,6 +339,13 @@ class LatestFrame:
             return True
 
     def snapshot(self):
+        return self.snapshot_with_input_identity()[:3]
+
+    def snapshot_with_identity(self):
+        return self.snapshot_with_input_identity()[:5]
+
+    def snapshot_with_input_identity(self):
+        """Identity and pixels must share one lock, including a queued HTTP reply."""
         with self.lock:
             status = dict(self.status)
             jpeg = self.jpeg
@@ -242,7 +354,8 @@ class LatestFrame:
                     state="error", fps=0.0, message="Capture stalled. Last frame is unavailable."
                 )
                 jpeg = None
-            return status, jpeg, self.captured_ms
+            return (status, jpeg, self.captured_ms, self.generation, self.capture_instance,
+                    self.capture_geometry)
 
 
 def capture_refresh_due(last_callback, now):
@@ -296,15 +409,6 @@ def measured_frame_rate(times, now):
     return (len(times) - 1) / span if len(times) > 1 and span > 0 else 0
 
 
-def stop_capture(control):
-    # windows-capture's stop() joins the native thread and re-raises whatever
-    # ended it as a plain Exception. That must not end the capture loop.
-    try:
-        control.stop()
-    except Exception as exc:  # noqa: BLE001
-        print(f"CAPTURE_STOP_ERROR {type(exc).__name__}: {exc}", flush=True)
-
-
 def capture_loop(api, latest, stop, fps):
     previous = None
     while not stop.is_set():
@@ -318,7 +422,8 @@ def capture_loop(api, latest, stop, fps):
                 finished = time.monotonic()
                 measured = 1 / (finished - previous) if previous and finished > previous else 0
                 previous = finished
-                latest.publish(generation, image, title, measured, captured_ms)
+                geometry = image.info.get("input_geometry") if latest.input_bridge else None
+                latest.publish(generation, image, title, measured, captured_ms, geometry)
             except WindowUnavailable as exc:
                 latest.fail(generation, exc.state, str(exc))
                 previous = None
@@ -326,6 +431,41 @@ def capture_loop(api, latest, stop, fps):
                 latest.fail(generation, "error", f"Capture failed: {type(exc).__name__}")
                 previous = None
         stop.wait(max(0.01, 1 / fps - (time.monotonic() - started)))
+
+
+def capture_dialog_snapshot(api, latest, selected, generation):
+    """Selected-window PrintWindow fallback; never reads desktop pixels."""
+    bridge = latest.input_bridge
+    if not bridge or not bridge.enabled or selected.get("kind") not in ("dialog", "popup"):
+        return False
+    if not selected_window_identity(api, selected):
+        raise WindowUnavailable("no_window", "Dialog ownership changed or its process ended.")
+    captured_ms = int(time.time() * 1000)
+    image, title = api.capture(selected)
+    # A dialog can close, move or change owners during PrintWindow/GetDIBits.
+    # Never renew freshness using pixels whose identity/geometry changed while
+    # they were read. Selection generation separately rejects a late old image.
+    geometry = image.info.get("input_geometry")
+    if not selected_window_identity(api, selected):
+        raise WindowUnavailable("no_window", "Dialog ownership changed while reading its frame.")
+    try:
+        live = bridge.native.inspect(selected)
+    except (OSError, RuntimeError) as exc:
+        raise WindowUnavailable("no_window", "Dialog identity became unavailable during capture.") from exc
+    if not geometry or any(live.get(key) != geometry.get(key) for key in
+                           ("window_rect", "visible_rect", "dpi", "process_started",
+                            "blender_pid", "blender_process_started")):
+        raise WindowUnavailable("error", "Dialog moved or changed during capture; waiting for a new frame.")
+    return latest.publish(generation, image, title, 0, captured_ms, geometry)
+
+
+def stop_capture(control):
+    # Reviewed P1 repair: the native thread's plain Exception is raised by join.
+    # Preserve diagnostics and recovery instead of terminating the capture loop.
+    try:
+        control.stop()
+    except Exception as exc:  # noqa: BLE001 -- windows-capture raises plain Exception.
+        print(f"CAPTURE_STOP_ERROR {type(exc).__name__}: {exc}", flush=True)
 
 
 def graphics_capture_loop(api, latest, stop, fps):
@@ -356,13 +496,11 @@ def graphics_capture_loop(api, latest, stop, fps):
             try:
                 encode_and_publish(*item)
             except Exception as exc:  # noqa: BLE001
-                # Without this one bad frame ends an encoder thread for good;
-                # with both gone /frame stays 503 until the helper restarts.
                 traceback.print_exc()
                 latest.fail(generation, "error", f"Capture encoder failed: {type(exc).__name__}")
             item = None
 
-    def encode_and_publish(generation, selected, pixels, captured_ms, item_session):
+    def encode_and_publish(generation, selected, pixels, captured_ms, item_session, geometry):
         with latest.lock:
             if generation != latest.generation or item_session != session[0]:
                 return
@@ -379,7 +517,7 @@ def graphics_capture_loop(api, latest, stop, fps):
                 pixels,
                 [
                     cv2.IMWRITE_JPEG_QUALITY,
-                    95,
+                    latest.jpeg_quality,
                     cv2.IMWRITE_JPEG_SAMPLING_FACTOR,
                     cv2.IMWRITE_JPEG_SAMPLING_FACTOR_444,
                 ],
@@ -387,7 +525,7 @@ def graphics_capture_loop(api, latest, stop, fps):
         except cv2.error as exc:
             latest.fail(generation, "error", f"JPEG encode failed: {exc}")
             return
-        current = api.identity(selected["hwnd"])
+        current = selected_window_identity(api, selected)
         if item_session != session[0] or not ok or not current or current["pid"] != selected["pid"]:
             return
         if api.u.IsIconic(selected["hwnd"]):
@@ -406,7 +544,8 @@ def graphics_capture_loop(api, latest, stop, fps):
                 encoded_times.popleft()
             measured = measured_frame_rate(encoded_times, now)
             if not latest.publish_jpeg(
-                generation, encoded.tobytes(), width, height, current["title"], measured, captured_ms
+                generation, encoded.tobytes(), width, height, current["title"], measured,
+                captured_ms, geometry
             ):
                 encoded_times.pop()
 
@@ -434,7 +573,7 @@ def graphics_capture_loop(api, latest, stop, fps):
             if stop.is_set() or this_session != session[0]:
                 capture_control.stop()
                 return
-            current = api.identity(selected["hwnd"])
+            current = selected_window_identity(api, selected)
             if not current or current["pid"] != selected["pid"]:
                 latest.fail(
                     generation,
@@ -462,8 +601,12 @@ def graphics_capture_loop(api, latest, stop, fps):
                     if this_session == session[0]:
                         latest.fail(generation, "error", "Capture returned an empty or unsupported pixel frame.")
                 return
+            geometry = (latest.input_bridge.frame_geometry(
+                selected, pixels.shape[1], pixels.shape[0], "graphics")
+                if latest.input_bridge else None)
             with raw_lock:
-                raw_slot[0] = (generation, selected, pixels, int(time.time() * 1000), this_session)
+                raw_slot[0] = (generation, selected, pixels, int(time.time() * 1000), this_session,
+                               geometry)
                 raw_ready.set()
 
         @capture.event
@@ -479,6 +622,7 @@ def graphics_capture_loop(api, latest, stop, fps):
         return capture, capture.start_free_threaded()
 
     _capture = None
+    print_generation = None
     try:
         while not stop.wait(0.1):
             with latest.lock:
@@ -488,15 +632,22 @@ def graphics_capture_loop(api, latest, stop, fps):
                     stop_capture(control)
                 control, _capture = None, None
                 active_generation = generation
+                print_generation = None
             if not selected:
                 continue
-            current = api.identity(selected["hwnd"])
+            current = selected_window_identity(api, selected)
             if not current or current["pid"] != selected["pid"]:
                 latest.fail(
                     generation,
                     "no_window",
                     "Selected Blender window closed. Reopen and select its window again.",
                 )
+                continue
+            if print_generation == generation:
+                try:
+                    capture_dialog_snapshot(api, latest, selected, generation)
+                except (WindowUnavailable, OSError, ValueError, RuntimeError) as exc:
+                    latest.fail(generation, "error", f"Selected dialog capture failed: {type(exc).__name__}")
                 continue
             if api.u.IsIconic(selected["hwnd"]):
                 latest.fail(
@@ -517,18 +668,28 @@ def graphics_capture_loop(api, latest, stop, fps):
                 # A quick static-window refresh must not blank/flicker the panel.
                 stop_capture(control)
                 control, _capture = None, None
+                try:
+                    if capture_dialog_snapshot(api, latest, selected, generation):
+                        print_generation = generation
+                        continue
+                except (WindowUnavailable, OSError, ValueError, RuntimeError):
+                    pass  # Try the selected-window graphics backend again.
                 message = recovery_log.note(time.monotonic())
                 if message:
                     print(message, flush=True)
             if control is not None and control.is_finished():
-                # The native thread ended by itself (an error in a frame callback, or the
-                # window closed). windows-capture keeps that error for the join; log it.
                 stop_capture(control)
                 control, _capture = None, None
             if control is None:
                 try:
                     _capture, control = start(selected, generation)
                 except Exception as exc:  # noqa: BLE001 -- windows-capture raises plain Exception.
+                    try:
+                        if capture_dialog_snapshot(api, latest, selected, generation):
+                            print_generation = generation
+                            continue
+                    except (WindowUnavailable, OSError, ValueError, RuntimeError):
+                        pass
                     latest.fail(generation, "error", f"Graphics capture failed: {exc}")
                     stop.wait(1)
                     continue
@@ -537,22 +698,29 @@ def graphics_capture_loop(api, latest, stop, fps):
             stop_capture(control)
 
 
-def make_server(latest, port):
+def make_server(latest, port, input_bridge=None):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
         def do_GET(self):
-            # No CORS, no control endpoints, no capture of anything but the local selection.
+            # No CORS and no capture of anything but the local selection.
             if self.headers.get("Host", "").split(":")[0] not in ("127.0.0.1", "localhost"):
                 self.send_error(403)
                 return
-            status, jpeg, captured = latest.snapshot()
+            status, jpeg, captured, generation, instance, geometry_id = latest.snapshot_with_input_identity()
             headers = {}
+            if self.path == "/input/state":
+                if not self.input_request_allowed():
+                    return
+                state = input_bridge.state() if input_bridge else {
+                    "enabled": False, "ready": False, "reason": "input_disabled"}
+                self.write_json(200, state)
+                return
             if self.path == "/status":
                 code, mime, body = 200, "application/json", json.dumps(status).encode()
             elif self.path == "/selection":
                 # Launcher identity check; separate from the fixed status schema.
-                # Read-only: changing selection still requires the local picker.
+                # Read-only; authenticated P2.5 input can select owned windows.
                 with latest.lock:
                     selected = dict(latest.selected) if latest.selected else None
                 code, mime, body = 200, "application/json", json.dumps(selected).encode()
@@ -567,6 +735,9 @@ def make_server(latest, port):
                         "ETag": etag,
                         "X-Captured-At": str(captured),
                         "X-Capture-Alive": str(int(time.time() * 1000)),
+                        "X-Selection-Generation": str(generation),
+                        "X-Capture-Instance": instance,
+                        "X-Capture-Geometry": geometry_id,
                         "X-Window": (status["window"] or "")
                         .encode("ascii", "replace")
                         .decode()
@@ -589,6 +760,65 @@ def make_server(latest, port):
             except (BrokenPipeError, ConnectionResetError):
                 pass
 
+        def input_request_allowed(self):
+            if (self.client_address[0] != "127.0.0.1"
+                    or self.headers.get("Host", "").split(":")[0] not in ("127.0.0.1", "localhost")
+                    or self.headers.get("Origin") is not None
+                    or self.headers.get("Sec-Fetch-Site") is not None):
+                self.send_error(403)
+                return False
+            return True
+
+        def write_json(self, code, value):
+            body = json.dumps(value).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+        def do_POST(self):
+            from input_bridge import InputRejected
+
+            if not self.input_request_allowed():
+                self.close_connection = True
+                return
+            if self.path != "/input":
+                self.send_error(404)
+                self.close_connection = True
+                return
+            if input_bridge is None:
+                self.write_json(403, {"ok": False, "reason": "input_disabled"})
+                self.close_connection = True
+                return
+            if self.headers.get("Transfer-Encoding") or self.headers.get(
+                    "Content-Type", "").split(";")[0].strip() != "application/json":
+                self.send_error(415)
+                self.close_connection = True
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if not 1 <= length <= 8192:
+                    raise ValueError("Invalid length")
+                raw = self.rfile.read(length)
+                if len(raw) != length:
+                    raise ValueError("Incomplete body")
+                payload = json.loads(raw)
+            except (ValueError, UnicodeError, OSError):
+                self.write_json(400, {"ok": False, "reason": "invalid_input_payload"})
+                self.close_connection = True
+                return
+            try:
+                self.write_json(200, input_bridge.dispatch(payload))
+            except InputRejected as exc:
+                self.write_json(exc.status, {"ok": False, "reason": exc.reason})
+            except OSError:
+                self.write_json(502, {"ok": False, "reason": "native_input_unavailable"})
+
         def log_message(self, *_):
             pass
 
@@ -596,6 +826,27 @@ def make_server(latest, port):
         daemon_threads = True
         request_queue_size = 8
         allow_reuse_address = False
+        # Input mutations never queue inside the bridge; bound connections as
+        # well when its authenticated control surface is explicitly enabled.
+        request_slots = threading.BoundedSemaphore(8) if input_bridge else None
+
+        def process_request(self, request, client_address):
+            if self.request_slots and not self.request_slots.acquire(blocking=False):
+                self.shutdown_request(request)
+                return
+            try:
+                super().process_request(request, client_address)
+            except BaseException:
+                if self.request_slots:
+                    self.request_slots.release()
+                raise
+
+        def process_request_thread(self, request, client_address):
+            try:
+                super().process_request_thread(request, client_address)
+            finally:
+                if self.request_slots:
+                    self.request_slots.release()
 
         def server_bind(self):
             if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
@@ -620,7 +871,10 @@ def picker(api, latest):
     root.geometry("720x290")
     ttk.Label(
         root,
-        text="Select the Blender window to show in VR. Only this window is captured.",
+        text=("Select the Blender window to show in VR. With P2.5 input enabled, "
+              "its owned dialogs and popup windows follow automatically. Other desktop windows are excluded."
+              if getattr(api, "input_bridge", None) and api.input_bridge.enabled else
+              "Select the Blender window to show in VR. Only this window is captured."),
         wraplength=680,
     ).pack(padx=16, pady=12)
     names = tk.StringVar()
@@ -667,6 +921,9 @@ def main():
         "--window", type=int, help="Explicit selected Blender HWND; otherwise opens a picker"
     )
     parser.add_argument("--list", action="store_true")
+    parser.add_argument("--enable-input", action="store_true",
+                        help="Explicitly enable P2.5 input for the selected Blender window")
+    parser.add_argument("--clear-text", action="store_true", help="Maximum JPEG quality for native UI text; retains full 4:4:4 capture")
     args = parser.parse_args()
     if not 1 <= args.fps <= 60:
         parser.error("--fps must be between 1 and 60")
@@ -674,14 +931,24 @@ def main():
     if args.list:
         print(json.dumps(api.windows(), ensure_ascii=False))
         return
-    latest = LatestFrame()
+    latest = LatestFrame(clear_text=args.clear_text)
     if args.window:
         selected = api.identity(args.window)
         if not selected:
             parser.error("--window must identify an actual Blender application window")
         latest.select(selected)
-    server = make_server(latest, args.port)
+    input_bridge = None
+    if args.enable_input:
+        from input_bridge import InputBridge, WindowsInput
+
+        input_bridge = InputBridge(latest, WindowsInput(api), enabled=True)
+        latest.input_bridge = input_bridge
+        api.input_bridge = input_bridge
+    server = make_server(latest, args.port, input_bridge)
     stop = threading.Event()
+    if input_bridge:
+        threading.Thread(target=input_bridge.run_watchdog, args=(stop,), daemon=True,
+                         name="Selected Blender input release watchdog").start()
     threading.Thread(target=server.serve_forever, daemon=True).start()
     loop = graphics_capture_loop if args.backend == "graphics" else capture_loop
     if args.backend == "graphics":

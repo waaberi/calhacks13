@@ -1,0 +1,466 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "preview.state.schema.json",
+  "title": "preview.state",
+  "$ref": "envelope.schema.json",
+  "properties": {
+    "type": {
+      "const": "preview.state"
+    },
+    "payload": {
+      "type": "object",
+      "required": [
+        "process_id",
+        "input_allowed",
+        "ui_session_id",
+        "ui_owner",
+        "ui_ending",
+        "modal_operators",
+        "modal_active",
+        "session_id",
+        "host_epoch",
+        "document_id",
+        "open_epoch",
+        "available",
+        "reason",
+        "tool",
+        "native_tool",
+        "sketch_id",
+        "mode",
+        "selected_entities",
+        "unsupported_options",
+        "unsupported_sketches"
+      ],
+      "properties": {
+        "process_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "input_allowed": {
+          "type": "boolean"
+        },
+        "ui_session_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ui_owner": {
+          "anyOf": [
+            {
+              "$ref": "envelope.schema.json#/$defs/actor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ui_ending": {
+          "type": "boolean"
+        },
+        "modal_operators": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "modal_active": {
+          "type": "boolean"
+        },
+        "session_id": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "host_epoch": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "document_id": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "open_epoch": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "native_tool": {
+          "type": "string"
+        },
+        "sketch_id": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "selected_entities": {
+          "type": "array",
+          "items": {
+            "$ref": "envelope.schema.json#/$defs/local_id"
+          }
+        },
+        "unsupported_options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unsupported_sketches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "reason"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "envelope.schema.json#/$defs/uuid"
+              },
+              "name": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "editing_mode": {
+          "type": "string",
+          "enum": [
+            "shared",
+            "exclusive"
+          ]
+        },
+        "model_edit": {
+          "$ref": "#/$defs/model_edit"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "re"
+  ],
+  "$defs": {
+    "model_edit": {
+      "type": "object",
+      "required": [
+        "available",
+        "reason",
+        "native_tool",
+        "mode",
+        "component",
+        "active_object_id",
+        "generation",
+        "topology_token",
+        "vertices",
+        "edges",
+        "faces",
+        "triangles"
+      ],
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "native_tool": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "active_object_id": {
+          "type": "string"
+        },
+        "generation": {
+          "$ref": "envelope.schema.json#/$defs/revision"
+        },
+        "topology_token": {
+          "type": "string"
+        },
+        "vertices": {
+          "type": "array",
+          "maxItems": 8192,
+          "items": {
+            "type": "object",
+            "required": [
+              "index",
+              "position"
+            ],
+            "properties": {
+              "index": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "position": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "edges": {
+          "type": "array",
+          "maxItems": 16384,
+          "items": {
+            "$ref": "#/$defs/component"
+          }
+        },
+        "faces": {
+          "type": "array",
+          "maxItems": 8192,
+          "items": {
+            "$ref": "#/$defs/component"
+          }
+        },
+        "triangles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "face",
+              "vertices"
+            ],
+            "properties": {
+              "face": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "vertices": {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 3,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "live_supported": {
+          "type": "boolean"
+        },
+        "tool": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "settings": {
+          "type": "object",
+          "maxProperties": 64
+        },
+        "selection": {
+          "type": "object",
+          "properties": {
+            "component": {
+              "enum": [
+                "object",
+                "vertex",
+                "edge",
+                "face"
+              ]
+            },
+            "indices": {
+              "type": "array",
+              "maxItems": 16384,
+              "uniqueItems": true,
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 16383
+              }
+            },
+            "objects": {
+              "type": "array",
+              "maxItems": 256,
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "generation"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "generation": {
+                    "$ref": "envelope.schema.json#/$defs/revision"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "active_id": {
+              "type": "string"
+            },
+            "selection_token": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "order_complete": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "selection_token": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "snap_geometry": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "generation",
+              "selected",
+              "in_edit_mode",
+              "selectable",
+              "vertices",
+              "edges"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "generation": {
+                "$ref": "envelope.schema.json#/$defs/revision"
+              },
+              "selected": {
+                "type": "boolean"
+              },
+              "in_edit_mode": {
+                "type": "boolean"
+              },
+              "selectable": {
+                "type": "boolean"
+              },
+              "vertices": {
+                "type": "array",
+                "maxItems": 8192,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "index",
+                    "position"
+                  ],
+                  "properties": {
+                    "index": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 16383
+                    },
+                    "position": {
+                      "type": "array",
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "items": {
+                        "type": "number",
+                        "minimum": -100000,
+                        "maximum": 100000
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "edges": {
+                "type": "array",
+                "maxItems": 16384,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "index",
+                    "vertices"
+                  ],
+                  "properties": {
+                    "index": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 16383
+                    },
+                    "vertices": {
+                      "type": "array",
+                      "minItems": 2,
+                      "maxItems": 2,
+                      "items": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 16383
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "snap_geometry_unavailable": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "reason"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "component": {
+      "type": "object",
+      "required": [
+        "index",
+        "vertices"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "vertices": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "minItems": 2
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

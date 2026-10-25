@@ -155,7 +155,7 @@ public static class ArrangementChecks
         {
             var arrangement=container.AddComponent<WorkspaceArrangement>();
             typeof(WorkspaceArrangement).GetMethod("Awake",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(arrangement,null);
-            Check(!arrangement.EditModelAvailable,"native Edit model is disabled until real P3 integration");
+            Check(arrangement.EditModelAvailable==(PreviewInteraction.Current!=null),"native Edit model availability follows the installed preview adapter");
             var viewObject=new GameObject("Current native part"); viewObject.transform.SetParent(container.transform);
             var view=viewObject.AddComponent<WorkspaceObjectView>();
             view.SetNativePose(new Vector3(.01f,.02f,0),Quaternion.identity,Vector3.one);
@@ -345,11 +345,12 @@ public static class ArrangementChecks
             Check(Quaternion.Angle(legacy.rotation,WorkspaceInteraction.FollowRay(changedAim,relative,0).rotation)<.001f,"legacy panel/menu orientation path is unchanged");
             var buttons=screen.Placement.GetComponentsInChildren<Button>(true);
             Check(buttons.Single(b=>b.name=="Arrange space mode").interactable,"Arrange space is available at top-left");
-            Check(!buttons.Single(b=>b.name=="Edit model mode").interactable,"Edit model is visibly disabled, not a no-op mode");
+            Check(buttons.Single(b=>b.name=="Edit model mode").interactable,"Edit model exposes the integrated native Blender editing entry point");
+            Check(!buttons.Any(b=>b.name=="Surface assistance"),"surface detection moved to the handheld menu");
             screen.Toggle();
             var top=buttons.Single(b=>b.name=="Arrange space mode").transform;
-            Check(screen.RaycastSurface(new Ray(top.position-top.forward*.3f,top.forward),out _),"mode strip remains reachable with Blender preview hidden");
-            Debug.Log("ARRANGEMENT_CHECKS PASS contact stops/no forced snap/explicit align/bounds/tunnelling/visible grabbable level/auto-off fallback/desk volume top/room UUID batches/rotated origin/two-hand rotation/native-safe undo/disabled Edit/hidden-preview mode strip/model grip orientation/aim position/stick rotation/heading-preserving align/rebase handoff/unlit contrast");
+            Check(screen.RaycastSurface(CombinedGlassChecks.ControlRay(top.GetComponent<RectTransform>(),.3f),out _),"mode strip remains reachable with Blender preview hidden");
+            Debug.Log("ARRANGEMENT_CHECKS PASS contact stops/no forced snap/explicit align/bounds/tunnelling/visible grabbable level/auto-off fallback/desk volume top/room UUID batches/rotated origin/two-hand rotation/native-safe undo/enabled native Edit entry/hidden-preview mode strip/model grip orientation/aim position/stick rotation/heading-preserving align/rebase handoff/unlit contrast");
         }
         finally
         {

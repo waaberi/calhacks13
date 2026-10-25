@@ -1,0 +1,208 @@
+{
+  "schema": 1,
+  "at": "2026-10-25T11:02:12.123671+00:00",
+  "application_source": "dd0a3fe888a4bc73cf0813a0f70e2cc3ab272d2e",
+  "branch": "codex/talia-live-modeling-ai",
+  "assembly_sha256": "9c1bae9bf917122ff2e29b448d18b50a4242482c81c7166c39ffb0f35c1a8b49",
+  "mandatory_markers": [
+    "P25_MAPPING_CHECK PASS",
+    "P25_TRANSPORT_CHECK PASS",
+    "P25_INPUT_PROTOCOL_CHECK PASS",
+    "P25_WINDOW_CHECK PASS",
+    "P25_OBJECT_TOOLS_CHECK PASS",
+    "P25_SHORTCUT_CATALOG_CHECK PASS",
+    "P25_NUMERIC_CHECK PASS",
+    "P25_SPATIAL_TARGET_CHECK PASS",
+    "P25_SPATIAL_MAPPING_CHECK PASS",
+    "P25_PREVIEW_OCCLUSION_CHECK PASS",
+    "P25_WINDOW_UI_CHECK PASS",
+    "P2_PLACEMENT_LIFECYCLE_CHECK PASS",
+    "P2_LEFT_HAND_MENU_CHECK PASS",
+    "P2_CHECKS PASS",
+    "ARRANGEMENT_CHECKS PASS",
+    "CAPTURE_FRESHNESS_CHECK PASS",
+    "STARTUP_FACING_CHECK PASS",
+    "HEADSET_PLACEMENT_READINESS_CHECK PASS",
+    "CONTROLLER_POSE_FORMAT_CHECK PASS format=Current",
+    "CONTROLLER_POSE_FORMAT_CHECK PASS format=Legacy",
+    "WORKSPACE_CHECKS PASS",
+    "P1_VISUAL_BASELINE PASS",
+    "P1_BUILD_RESULT Succeeded errors=0",
+    "P2_BUILD_RESULT Succeeded errors=0",
+    "P25_KEYBOARD_ISOLATION_CHECK PASS",
+    "P25_BUILD_RESULT Succeeded errors=0",
+    "PHYSICAL_SCALE_CHECKS PASS",
+    "INDEPENDENT_PLANE_CHECK PASS",
+    "VERTICAL_PLANE_FRONT_CHECK PASS",
+    "SETTINGS_MENU_CHECKS PASS",
+    "ROOM_SPACE_REPLAY_CHECKS PASS",
+    "P225_CONTROLLER_OWNERSHIP_CHECK PASS",
+    "P225_XR_BASELINE_CHECK PASS exact_accepted_P2_standalone_flags=34",
+    "P225_CONTROLLER_UI_CHECK PASS",
+    "P225_CAPTURE_CLARITY_CHECK PASS",
+    "P225_P3_ROUTING_CHECK PASS",
+    "P3_BLENDER_ONLY_CHECK PASS",
+    "VOICE_OBJECT_SELECTION_CHECKS PASS",
+    "CONTROLLER_PAIR_CHECKS PASS",
+    "ROOM_LOCALIZATION_CHECKS PASS",
+    "P3_GLASS_ACCESSIBILITY_CHECK PASS",
+    "P3_GLASS_GEOMETRY_CHECK PASS",
+    "P3_GLASS_CONTROLLER_CHECK PASS",
+    "P3_GLASS_CURVE_CHECK PASS",
+    "P3_GLASS_OPTICS_CHECK PASS",
+    "P3_GLASS_CHECK PASS",
+    "P3_GLASS_RENDER_AIM_CHECK PASS",
+    "COMBINED_GLASS_CHECK PASS",
+    "P3_GLASS_BUILD_RESULT Succeeded",
+    "GLASS_EVENT_RAYCAST_CHECK PASS",
+    "GLASS_IDLE_GEOMETRY_CHECK PASS",
+    "GLASS_GRID_CHECK PASS",
+    "GLASS_STEREO_GPU_CHECK PASS",
+    "ROOM_RECOVERY_CHECKS PASS",
+    "P25_QUICK_ACTION_CHECK PASS",
+    "P25_DRAWING_MODE_CHECK PASS",
+    "LEFT_HAND_MENU_COMPACT_CHECK PASS",
+    "GLASS_HELD_POINT_JITTER_CHECK PASS",
+    "HANDHELD_MENU_CHECK PASS",
+    "BLENDER_VIEW_APPEARANCE_CHECK PASS",
+    "P25_EDIT_WORKFLOW_CHECK PASS",
+    "VOICE_COMPOSITION_CHECK PASS",
+    "VOICE_RESOLVE_HANDOFF_CHECK PASS",
+    "VOICE_DIRECT_CANCEL_CHECK PASS",
+    "DIRECT_MODEL_EDIT_CHECK PASS",
+    "DIRECT_EDIT_VOICE_INTEGRATION_BUILD PASS",
+    "LIVE_MODEL_SESSION_CHECK PASS",
+    "LIVE_CONTROLLER_CHECK PASS",
+    "AI_NATIVE_CONTEXT_CHECK PASS",
+    "AI_CANCELLATION_CHECK PASS",
+    "P25_DIRECT_MODE_INTENT_CHECK PASS",
+    "P25_NATIVE_MENU_RETURN_CHECK PASS",
+    "P25_STALE_DIRECT_MODE_RECOVERY_CHECK PASS",
+    "DIRECT_ROTATION_HANDLES_CHECK PASS",
+    "SURFACE_SCALE_CHECK PASS",
+    "VOICE_DIALOG_CHECK PASS",
+    "DIRECT_MANIPULATION_FEEDBACK_CHECK PASS",
+    "ROOM_CONTINUITY_CHECK PASS"
+  ],
+  "intentionally_retired_markers": [
+    "KEYBOARD_PASSTHROUGH_CHECK PASS"
+  ],
+  "retirement_reason": "Human explicitly deleted the manual real-keyboard window/outline; absence and preserved virtual typing are checked in HANDHELD_MENU_CHECK.",
+  "compiler_inputs_verified": 446,
+  "frozen_xr_flags": 34,
+  "byte_audit": {
+    "addon/spatial_modeling": {
+      "matched": 43,
+      "mismatches": 0
+    },
+    "support": {
+      "matched": 10,
+      "mismatches": 0
+    },
+    "contracts": {
+      "matched": 96,
+      "mismatches": 0
+    }
+  },
+  "previous_unchanged_backend_voice_evidence": "C:\\Users\\talia\\Documents\\Codex\\calhacks13-p0\\artifacts\\live-modeling-v3-b\\SOFTWARE-RESULTS.json",
+  "gemini_service_source": "41703d4767f8567f7f3922ef558260ba2f204443",
+  "gemini_voice_dialog_source": "4080eb1a73380fd5dc02e8f171e9a55150f1d1d6",
+  "gemini_service_results": "GEMINI-SERVICE-RESULTS.json",
+  "helper_tests": {
+    "passed": 170,
+    "failed": 0,
+    "reused_from": "C:\\Users\\talia\\Documents\\Codex\\calhacks13-p0\\artifacts\\live-modeling-v3-b\\SOFTWARE-RESULTS.json",
+    "reason": "Production helper files remain byte-identical; no helper code change in this candidate"
+  },
+  "fresh_native_checks": [
+    "native_live_selection_gate-baseline-a.json",
+    "native_surface_scale_gate-baseline-a.json"
+  ],
+  "changes": [
+    "Requested handheld Arrange-space and Actual-size heading/actions removed with existing APIs preserved",
+    "RGB native Move arrows with selected-mesh-only picking exception and nearer foreign fence",
+    "Native-acknowledged scale multiplier plus separate two-hand display-scale ratio",
+    "Durable verified-room identity continuity and non-destructive transactional loading with fresh containment",
+    "Gemini owner4080eb1 basic creation and bounded world-anchored full-text review pagination"
+  ],
+  "legacy_room_continuity": {
+    "private_identity_seed_required_for_this_PC": true,
+    "seed_shipped": false,
+    "active_persistent_data_mutated": false,
+    "fresh_live_containment_required": true,
+    "old_poses_replayed": false
+  },
+  "limitations": [
+    "Physical rotation/menu/cursor-drag usability remains unaccepted; exact original widget hit is inferred, not observed.",
+    "Held-button cursor-wrap regression is simulated; no actual native GUI input reproduction performed.",
+    "Keyboard-only G/R/S modal pointer movement is a separately assigned followup; nonzero motion retains a possible OS cursor-wrap-between-read-and-send race.",
+    "Frozen scale pivot preserves the original support point; arbitrary anisotropic/global-axis scaling of a rotated face may change the lowest vertex.",
+    "Contact admission is conservative at finite plane edges; arrangement contact pinning bypasses nonrepresentable parent shear and deliberate rotation.",
+    "Existing native cube displacement is preserved and not automatically repaired."
+  ],
+  "runtime_launched": false,
+  "physical_acceptance": false,
+  "no_pr_main_push_fps": true,
+  "fresh_http_cases": [
+    9,
+    2,
+    9
+  ],
+  "fresh_native": {
+    "native_live_selection_gate": {
+      "passed": true,
+      "headset_acceptance": false,
+      "checks": [
+        {
+          "tool": "object.translate",
+          "deselect_reselect_cycles": 2,
+          "no_active_object_recovery": true,
+          "geometry_preserved": true,
+          "native_undo_redo_preserved": true
+        },
+        {
+          "tool": "object.rotate",
+          "deselect_reselect_cycles": 2,
+          "no_active_object_recovery": true,
+          "geometry_preserved": true,
+          "native_undo_redo_preserved": true
+        },
+        {
+          "tool": "object.scale",
+          "deselect_reselect_cycles": 2,
+          "no_active_object_recovery": true,
+          "geometry_preserved": true,
+          "native_undo_redo_preserved": true
+        }
+      ],
+      "blender": "5.2.2 LTS"
+    },
+    "native_surface_scale_gate": {
+      "passed": true,
+      "headset_acceptance": false,
+      "checks": [
+        "successive cumulative native axis updates keep desk contact and commit one Undo/Redo",
+        "uniform scale live preview and Cancel preserve exact starting native geometry/history",
+        "signed tangent-axis mirror plus height scaling retain native contact/Undo/Redo and leave unselected floating object untouched"
+      ],
+      "blender": "5.2.2 LTS"
+    }
+  },
+  "package": "C:\\Users\\talia\\Documents\\Codex\\calhacks13-p0\\artifacts\\live-modeling-v4-c",
+  "manifest_sha256": "5c2cccdef3f941532c1fdb522190ed6342d59fd864935f6960cedbb1b8df8af0",
+  "package_validation_passed": true,
+  "preserved_blender_lifetimes": 9,
+  "running_runtime_unchanged": {
+    "player_pid": 17812,
+    "native_pid": 6820,
+    "helper_pid": 492
+  },
+  "legacy_room_identity_proof_verified": true,
+  "legacy_seed_shipped": false,
+  "old_room_poses_replayed": false,
+  "gemini_managed_checks": {
+    "passed": 35,
+    "owner_source": "4080eb1"
+  },
+  "no_pr_push_main_fps": true
+}

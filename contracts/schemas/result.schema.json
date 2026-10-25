@@ -4,47 +4,159 @@
   "title": "result",
   "description": "Host to the client that sent a command; `re` is the command's id. The payload is the command's receipt.",
   "$ref": "envelope.schema.json",
-  "required": ["re"],
+  "required": [
+    "re"
+  ],
   "properties": {
-    "type": { "const": "result" },
+    "type": {
+      "const": "result"
+    },
     "payload": {
       "$ref": "#/$defs/receipt",
-      "properties": { "outcome": { "enum": ["applied", "rejected", "unknown"] } }
+      "properties": {
+        "outcome": {
+          "enum": [
+            "applied",
+            "rejected",
+            "unknown"
+          ]
+        }
+      }
     }
   },
   "$defs": {
     "receipt": {
       "description": "The recorded outcome of one command.",
       "type": "object",
-      "required": ["request_id", "op", "actor", "source", "outcome", "revision", "at"],
+      "required": [
+        "request_id",
+        "op",
+        "actor",
+        "source",
+        "outcome",
+        "revision",
+        "at"
+      ],
       "properties": {
-        "request_id": { "$ref": "envelope.schema.json#/$defs/uuid" },
-        "op": { "$ref": "command.schema.json#/$defs/op" },
-        "target": { "description": "The command's target id, if it had one.", "$ref": "envelope.schema.json#/$defs/uuid" },
-        "actor": { "$ref": "envelope.schema.json#/$defs/actor" },
-        "source": { "enum": ["ui", "voice"] },
-        "outcome": { "enum": ["pending", "applied", "rejected", "unknown"] },
-        "revision": { "description": "Document revision after the change if applied, otherwise the current one.", "$ref": "envelope.schema.json#/$defs/revision" },
+        "request_id": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "op": {
+          "$ref": "command.schema.json#/$defs/op"
+        },
+        "target": {
+          "description": "The command's target id, if it had one.",
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "actor": {
+          "$ref": "envelope.schema.json#/$defs/actor"
+        },
+        "source": {
+          "enum": [
+            "ui",
+            "voice"
+          ]
+        },
+        "outcome": {
+          "enum": [
+            "pending",
+            "applied",
+            "rejected",
+            "unknown"
+          ]
+        },
+        "revision": {
+          "description": "Document revision after the change if applied, otherwise the current one.",
+          "$ref": "envelope.schema.json#/$defs/revision"
+        },
         "created": {
           "description": "IDs the command created: an object or sketch, or sketch entities and constraints.",
           "type": "array",
-          "items": { "$ref": "envelope.schema.json#/$defs/local_id" },
+          "items": {
+            "$ref": "envelope.schema.json#/$defs/local_id"
+          },
           "uniqueItems": true
         },
-        "solver": { "description": "Sketch commands: the solver state after the command, or of the refused attempt.", "$ref": "envelope.schema.json#/$defs/solver" },
-        "summary": { "description": "What happened, for activity lists, for example \"Moved Shaft 10 mm along X\".", "$ref": "envelope.schema.json#/$defs/text" },
-        "error": { "$ref": "envelope.schema.json#/$defs/error" },
-        "at": { "$ref": "envelope.schema.json#/$defs/timestamp" }
+        "solver": {
+          "description": "Sketch commands: the solver state after the command, or of the refused attempt.",
+          "$ref": "envelope.schema.json#/$defs/solver"
+        },
+        "summary": {
+          "description": "What happened, for activity lists, for example \"Moved Shaft 10 mm along X\".",
+          "$ref": "envelope.schema.json#/$defs/text"
+        },
+        "error": {
+          "$ref": "envelope.schema.json#/$defs/error"
+        },
+        "at": {
+          "$ref": "envelope.schema.json#/$defs/timestamp"
+        },
+        "selection": {
+          "description": "Final acknowledged object and optional native component selection.",
+          "type": "object",
+          "required": [
+            "id"
+          ],
+          "properties": {
+            "component": {"enum": ["object", "vertex", "edge", "face"]},
+            "indices": {"type": "array", "maxItems": 16384, "uniqueItems": true,
+                        "items": {"type": "integer", "minimum": 0, "maximum": 16383}},
+            "objects": {"type": "array", "maxItems": 256,
+                        "items": {"$ref": "envelope.schema.json#/$defs/uuid"}},
+            "id": {
+              "anyOf": [
+                {
+                  "$ref": "envelope.schema.json#/$defs/uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false,
       "allOf": [
         {
-          "if": { "properties": { "outcome": { "const": "rejected" } }, "required": ["outcome"] },
-          "then": { "required": ["error"] }
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "rejected"
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "required": [
+              "error"
+            ]
+          }
         },
         {
-          "if": { "properties": { "outcome": { "enum": ["pending", "applied"] } }, "required": ["outcome"] },
-          "then": { "not": { "required": ["error"] } }
+          "if": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "pending",
+                  "applied"
+                ]
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "error"
+              ]
+            }
+          }
         }
       ]
     }

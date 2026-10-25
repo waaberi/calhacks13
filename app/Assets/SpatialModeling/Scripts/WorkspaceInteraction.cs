@@ -22,9 +22,16 @@ namespace SpatialModeling
         HostScene scene;
         BlenderScreen screen;
         WorkspaceArrangement arrangement;
+        VoiceUiAdapter voice;
+        PendingCommandPanel[] guideVoicePanels=Array.Empty<PendingCommandPanel>();
+        VoiceUiAdapter guideVoiceOwner;
+        bool guideHadVoiceOwner;
+        public string PointedObjectId => right?.pointed?.ObjectId ?? left?.pointed?.ObjectId;
         Transform pairTarget;
         Vector3 pairVector, pairMidpoint, pairScale, pairOffset;
         Quaternion pairFrame, pairRotation;
+        readonly LiveScaleFeedback pairScaleFeedback=new LiveScaleFeedback();
+        Vector3 pairFeedbackBaseline;
         bool loggedTracking;
         Transform trackingOrigin;
         int renderedFrame = -1;
@@ -34,7 +41,7 @@ namespace SpatialModeling
             public XRNode node;
             public GameObject visual;
             public LineRenderer ray;
-            public Transform tip;
+            public Transform tip,body;
             public InputAction gripPose, aimPose;
             public string poseSource;
             public InputControl previousGripControl;
@@ -42,8 +49,10 @@ namespace SpatialModeling
             public bool hasHit;
             public float pointerDistance;
             public bool gripDown, triggerDown, armed;
+            public bool guideTriggerOwned;
             public Transform target;
             public WorkspaceObjectView part;
+            public WorkspaceObjectView pointed;
             public Pose rayRelative;
             public Transform rawAim, stableAim;
             public bool aimInitialized;
@@ -73,11 +82,12 @@ namespace SpatialModeling
             var shader = Shader.Find("Universal Render Pipeline/Unlit");
             if (shader == null) shader = Shader.Find("UI/Default");
             material = new Material(shader);
-            left = CreateHand(XRNode.LeftHand, "LeftHand", new Color(0.22f, 0.75f, 1f));
-            right = CreateHand(XRNode.RightHand, "RightHand", new Color(1f, 0.65f, 0.22f));
+            left = CreateHand(XRNode.LeftHand, "LeftHand", GlassTheme.LeftMetal);
+            right = CreateHand(XRNode.RightHand, "RightHand", GlassTheme.RightMetal);
             scene = FindFirstObjectByType<HostScene>();
             screen = FindFirstObjectByType<BlenderScreen>();
             arrangement = FindFirstObjectByType<WorkspaceArrangement>();
+            voice = FindFirstObjectByType<VoiceUiAdapter>();
             renderedFrame = -1;
             Application.onBeforeRender += BeforeRender;
         }
@@ -87,19 +97,8 @@ namespace SpatialModeling
             var h = new Hand { node = node, color = color };
             h.visual = new GameObject(usage + " tracked controller");
             h.visual.transform.SetParent(transform, false);
-            // A neutral tracking marker, not an inaccurately offset hand/controller model.
-            var handle = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-            handle.name = "Grip tracking marker";
-            Destroy(handle.GetComponent<Collider>());
-            handle.transform.SetParent(h.visual.transform, false);
-            handle.transform.localPosition = Vector3.zero;
-            handle.transform.localScale = Vector3.one * 0.025f;
-            var renderer = handle.GetComponent<Renderer>();
-            renderer.sharedMaterial = material;
-            var block = new MaterialPropertyBlock();
-            block.SetColor("_BaseColor", color);
-            block.SetColor("_Color", color);
-            renderer.SetPropertyBlock(block);
+            h.body=GlassController.Create(h.visual.transform,node).transform;
+            var block=new MaterialPropertyBlock();block.SetColor("_BaseColor",color);block.SetColor("_Color",color);
             var rayObject = new GameObject(usage + " aim ray", typeof(LineRenderer));
             rayObject.transform.SetParent(h.visual.transform, false);
             h.ray = rayObject.GetComponent<LineRenderer>();
@@ -111,7 +110,8 @@ namespace SpatialModeling
             h.ray.startColor = h.ray.endColor = color;
             var tip = GameObject.CreatePrimitive(PrimitiveType.Sphere);
             tip.name = "Pointer target";
-            Destroy(tip.GetComponent<Collider>());
+            var tipCollider=tip.GetComponent<Collider>();tipCollider.enabled=false;
+            if(Application.isPlaying)Destroy(tipCollider);else DestroyImmediate(tipCollider);
             h.tip = tip.transform;
             h.tip.SetParent(h.visual.transform, false);
             h.tip.localScale = Vector3.one * 0.012f;
@@ -133,6 +133,7 @@ namespace SpatialModeling
 
         void OnDisable()
         {
+            pairScaleFeedback.Dispose();
             Application.onBeforeRender -= BeforeRender;
             Release(left);
             Release(right);
@@ -141,6 +142,9 @@ namespace SpatialModeling
             if (right?.visual != null) Destroy(right.visual);
             if (material != null) Destroy(material);
             HasTrackedHands = false;
+            if (left != null) left.pointed = null;
+            if (right != null) right.pointed = null;
+            voice?.SetControllerPointer(null);
         }
 
         void LateUpdate()
@@ -153,6 +157,8 @@ namespace SpatialModeling
             Physics.SyncTransforms();
             Instruction = arrangement!=null ? arrangement.Instruction : "Point at screen or build · grip: move · trigger: select";
             HasTrackedHands = UpdateHand(left, right) | UpdateHand(right, left);
+            if (voice == null) voice = FindFirstObjectByType<VoiceUiAdapter>();
+            voice?.SetControllerPointer(PointedObjectId);
             if(!IsHolding) arrangement?.HideGuide();
             if (HasTrackedHands != loggedTracking)
             {
@@ -167,11 +173,15 @@ namespace SpatialModeling
             var device = InputDevices.GetDeviceAtXRNode(h.node);
             if (!TryReadHand(h, out var hand, out var aim))
             {
+                pairScaleFeedback.Hide();
+                PreviewInteraction.Current?.TrackingLost(h.node);
                 Release(h);
                 h.visual.SetActive(false);
                 h.armed = false;
                 h.gripDown = h.triggerDown = false;
                 h.aimInitialized = false;
+                h.guideTriggerOwned = false;
+                h.pointed = null;
                 return false;
             }
             if (!h.aimInitialized)
@@ -179,6 +189,8 @@ namespace SpatialModeling
                 h.stableAim.SetPositionAndRotation(aim.position, aim.rotation);
                 h.aimInitialized = true;
             }
+            // Hit the same stabilized ray the wearer sees. Raw input is retained
+            // only as the existing manipulation stabilizer's input.
             aim = new Pose(h.stableAim.position, h.stableAim.rotation);
             var ray = new Ray(aim.position, aim.rotation * Vector3.forward);
             device.TryGetFeatureValue(UnityEngine.XR.CommonUsages.grip, out float grip);
@@ -192,6 +204,29 @@ namespace SpatialModeling
             h.gripDown = gripNow; h.triggerDown = triggerNow;
             device.TryGetFeatureValue(UnityEngine.XR.CommonUsages.primary2DAxisClick,out bool stickNow);
             bool stickPressed=stickNow&&!h.stickDown; h.stickDown=stickNow;
+            return RouteHand(h, other, aim, ray, gripNow, triggerNow, gripPressed, triggerPressed, axis, stickPressed);
+        }
+
+        // One ray/input owner: tests exercise this same routing used by both live hands.
+        bool RouteHand(Hand h, Hand other, Pose aim, Ray ray, bool gripNow, bool triggerNow,
+            bool gripPressed, bool triggerPressed, Vector2 axis, bool stickPressed)
+        {
+            h.pointed = null;
+            var guide=scene.Table?.Guide;
+            if(guide?.Visible==true&&(!GuideVoiceLifetimeCurrent()||VoiceReviewVisible()))
+            {
+                guide.Close();
+                if(left!=null)left.guideTriggerOwned|=left.triggerDown;
+                if(right!=null)right.guideTriggerOwned|=right.triggerDown;
+            }
+            if(h.guideTriggerOwned)
+            {
+                // A search/rebuild/close press owns its entire trigger cycle.
+                // Never feed its held or release edge into an underlying editor.
+                if(!triggerNow){h.guideTriggerOwned=false;PreviewInteraction.Current?.ObserveLocalUiTriggerRelease(h.node);}
+                h.hasHit=guide?.Raycast(ray,out _)==true;h.pointerDistance=4f;
+                Instruction="Guide · release trigger before another action";return true;
+            }
             float distance = 4f;
             var hitPart = scene.PickObject(ray, out float partDistance);
             bool hitScreen = screen.RaycastSurface(ray, out float screenDistance);
@@ -209,9 +244,38 @@ namespace SpatialModeling
             bool levelFirst=level!=null && levelDistance<distance;
             if(levelFirst) distance=levelDistance;
 
+            var preview = PreviewInteraction.Current;
+            bool editingHandOwned=h.node==(preview?.PrimaryHand??XRNode.RightHand)
+                &&(preview?.NativeGestureOwned==true||preview?.NativeTransitionPending==true||preview?.DirectEditing?.Gesturing==true||preview?.DirectEditing?.LiveBusy==true
+                    ||preview?.Drawing?.HasDraft==true||preview?.Drawing?.NativeModalActive==true||preview?.Drawing?.Session.Busy==true||preview?.Drawing?.Session.ExternalEditBusy==true);
+            if(h.target==null&&!editingHandOwned&&guide!=null&&guide.Raycast(ray,out float guideDistance)&&guideDistance<distance-.0005f
+                &&(preview==null||!preview.RaycastVisual(ray,out float foreignDistance)||guideDistance<foreignDistance-.0005f))
+            {
+                bool helpReady=!GuideEditingBusy();
+                guide.Hover(ray,triggerPressed&&!gripNow&&helpReady);
+                h.guideTriggerOwned=triggerNow;h.hasHit=true;h.pointerDistance=guideDistance;
+                if(helpReady)Instruction="Guide · local search keys only · trigger: read · no edits run";
+                return true;
+            }
+
+            // Optional P2.5 consumes only UI/drawing gestures. Existing held aim
+            // mapping and P2 placement controls keep their original writers.
+            float previewDistance = 0;
+            bool previewRouted = preview != null && h.target == null && !(table != null && table.IsPointing)
+                && preview.RouteControllerHand(h.node, ray, h.armed && triggerNow,
+                gripNow || h.target != null || (table != null && table.IsPointing), axis,
+                Mathf.Min(Mathf.Min(hitPart != null ? partDistance : 4f, tableHit ? tableDistance : 4f),
+                    level != null ? levelDistance : 4f), out previewDistance, h.stickDown);
+            if (previewRouted)
+            {
+                distance = previewDistance;
+                if (!tableHit || previewDistance < tableDistance) tableFirst = false;
+                if (level != null && previewDistance < levelDistance) levelFirst = false;
+            }
+
             if (h.target != null)
             {
-                if (!gripNow || (h.target == screen.Placement && !screen.Visible)
+                if (!gripNow || (h.target == screen.Placement && (!screen.Visible || !BlenderScreen.CanGrabScreen(screen.PositionLocked)))
                     || (table != null && h.target == table.Menu && !table.Menu.gameObject.activeInHierarchy)) Release(h);
                 else
                 {
@@ -223,10 +287,10 @@ namespace SpatialModeling
                         h.turnLatched=true;
                         h.rotationOffset=Quaternion.AngleAxis(Mathf.Sign(axis.x)*15,h.rotationAxis)*h.rotationOffset;
                     }
-                    if (Mathf.Abs(axis.y) > 0.2f) h.depth = Mathf.Clamp(h.depth + axis.y * Time.unscaledDeltaTime, -0.5f, 2f);
+                    h.depth = AdvanceDepth(h.depth, axis.y, Time.unscaledDeltaTime);
                     if (arrangement==null && h.target == screen.Placement && Mathf.Abs(axis.x) > 0.2f)
                         screen.Resize(Mathf.Exp(axis.x * Time.unscaledDeltaTime * 0.65f));
-                    distance = Mathf.Clamp(Vector3.Distance(aim.position, h.target.position), 0.15f, 4f);
+                    distance = Mathf.Max(Vector3.Distance(aim.position, h.target.position), 0.15f);
                     Instruction = h.part != null ? "Aim to move " + h.part.name + " · release grip: place"
                         : table != null && h.target == table.Menu ? "Aim to move menu · stick: distance · release grip: place"
                         : h.target == screen.Placement ? "Aim to move screen · stick: distance / size · release grip: place"
@@ -257,21 +321,77 @@ namespace SpatialModeling
                 if (triggerNow) table.PointAt(ray);
                 Instruction = "Hold trigger and aim at the table position · Place Table to confirm";
             }
+            else if (previewRouted)
+            {
+                Instruction = preview.Notice;
+            }
             else if (screenFirst)
             {
                 bool button = screen.HoverController(ray, triggerPressed);
                 Instruction = button ? "Trigger: select button" : "Grip: move screen · stick while held: distance / size";
-                if (gripPressed && (other?.target==screen.Placement || !Conflicts(other?.target, screen.Placement))) Begin(h, screen.Placement, null, aim, ray.GetPoint(distance));
+                if (gripPressed && BlenderScreen.CanGrabScreen(screen.PositionLocked)
+                    && (other?.target==screen.Placement || !Conflicts(other?.target, screen.Placement))) Begin(h, screen.Placement, null, aim, ray.GetPoint(distance));
             }
             else if (hitPart != null)
             {
+                if (!gripNow && !IsHolding)
+                {
+                    h.pointed = hitPart;
+                    if (voice == null) voice = FindFirstObjectByType<VoiceUiAdapter>();
+                    if (triggerPressed) voice?.SelectControllerObject(hitPart.ObjectId);
+                }
                 var target = MoveIndividualParts ? hitPart.transform : scene.Placement;
-                Instruction = MoveIndividualParts ? "Grip: arrange " + hitPart.name + " in your view" : "Grip: move the whole build";
+                Instruction = "Trigger: select " + hitPart.name + " without moving · " +
+                    (MoveIndividualParts ? "grip: arrange part" : "grip: move whole build");
                 if (gripPressed && (other?.target==target || !Conflicts(other?.target, target))) Begin(h, target, MoveIndividualParts ? hitPart : null, aim, ray.GetPoint(distance));
             }
-            h.hasHit = levelFirst || tableFirst || hitScreen || hitPart != null;
+            h.hasHit = previewRouted || levelFirst || tableFirst || hitScreen || hitPart != null;
             h.pointerDistance = distance;
             return true;
+        }
+
+        public void ForgetVoicePointer()
+        {
+            foreach (var h in new[] { left, right })
+                if (h != null) { h.pointed = null; h.armed = false; }
+        }
+
+        void CacheGuideVoiceState()
+        {
+            // Explicit Open is the discovery boundary. Routing only reads these
+            // existing objects; a changed lifetime closes help for rediscovery.
+            guideVoicePanels=UnityEngine.Object.FindObjectsByType<PendingCommandPanel>(FindObjectsInactive.Include,FindObjectsSortMode.None);
+            guideVoiceOwner=voice!=null?voice:UnityEngine.Object.FindFirstObjectByType<VoiceUiAdapter>();
+            guideHadVoiceOwner=guideVoiceOwner!=null;
+        }
+        bool GuideVoiceLifetimeCurrent()
+        {
+            if(guideHadVoiceOwner&&guideVoiceOwner==null)return false;
+            if(voice!=null&&voice!=guideVoiceOwner)return false;
+            foreach(var panel in guideVoicePanels)if(panel==null)return false;
+            return true;
+        }
+        bool VoiceReviewVisible()
+        {
+            foreach(var panel in guideVoicePanels)
+                if(panel!=null&&panel.Visible)return true;
+            return false;
+        }
+        bool GuideEditingBusy()
+        {
+            var preview=PreviewInteraction.Current;var drawing=preview?.Drawing;
+            return IsHolding||preview?.NativeGestureOwned==true||preview?.NativeTransitionPending==true
+                ||preview?.DirectEditing?.Gesturing==true||preview?.DirectEditing?.LiveBusy==true
+                ||drawing?.HasDraft==true||drawing?.NativeModalActive==true||drawing?.Session.Busy==true||drawing?.Session.ExternalEditBusy==true;
+        }
+        public bool CanOpenGuide(out string reason)
+        {
+            reason="Guide: finish or cancel the current edit before opening help.";
+            if(GuideEditingBusy())return false;
+            CacheGuideVoiceState();
+            if(VoiceReviewVisible()){reason="Guide: finish the current voice question or confirmation first.";return false;}
+            if(Camera.main==null){reason="Guide: wait for the headset view.";return false;}
+            reason="";return true;
         }
 
         // Read position, orientation and validity from one Input System pose state.
@@ -290,8 +410,10 @@ namespace SpatialModeling
             if (h.previousGripControl != null && h.previousGripControl != control)
             {
                 h.poseControlSwitches++;
+                PreviewInteraction.Current?.TrackingLost(h.node);
                 Release(h); // A replacement device must not inherit an old device's hold offset.
                 h.aimInitialized = false;
+                h.guideTriggerOwned = false;
                 h.armed = false;
                 h.previousPoseTime = 0;
             }
@@ -379,6 +501,8 @@ namespace SpatialModeling
         {
             if (!TryReadHand(h, out var hand, out var aim))
             {
+                pairScaleFeedback.Hide();
+                PreviewInteraction.Current?.TrackingLost(h.node);
                 Release(h);
                 h.visual.SetActive(false);
                 h.armed = false;
@@ -424,15 +548,52 @@ namespace SpatialModeling
                 h.alignRequested=false;
                 h.largestDisplayStep = Mathf.Max(h.largestDisplayStep, Vector3.Distance(h.target.position, pose.position));
                 h.target.SetPositionAndRotation(pose.position, pose.rotation);
+                if(scene.Table!=null && h.target==scene.Table.Menu)
+                    scene.Table.FaceMenuTowardUser(Camera.main.transform.position);
                 h.part?.RememberArrangement();
                 if (h.timingSeconds >= 2) LogGrabTiming(h);
             }
-            aim = new Pose(h.stableAim.position, h.stableAim.rotation);
-            h.ray.SetPosition(0, aim.position);
-            // Keep the pointer fixed to the filtered grab contact, rather than
-            // drawing an independently jittering endpoint across the held item.
-            var endpoint = h.target != null ? h.target.TransformPoint(h.localContact)
-                : aim.position + aim.rotation * Vector3.forward * h.pointerDistance;
+            // Derive all visuals AFTER the existing stabilizer and object update.
+            // A held point follows the actual smooth grab contact, never a second
+            // raw ray or a nearer unrelated surface that could make it skip.
+            Physics.SyncTransforms(); // Menu, pair and held transforms may have moved since LateUpdate.
+            var currentRay = new Ray(h.stableAim.position, h.stableAim.forward);
+            float pointerDistance = 4f;
+            bool hit = h.target != null;
+            Vector3 endpoint;
+            var direct=PreviewInteraction.Current?.DirectEditing;
+            Vector3 directEndpoint=default;
+            bool directGesture=direct!=null&&direct.TryGestureVisual(h.node,currentRay,out directEndpoint);
+            if(h.target!=null)
+            {
+                endpoint=h.target.TransformPoint(h.localContact);
+                pointerDistance=Vector3.Distance(currentRay.origin,endpoint);
+            }
+            else if(directGesture)
+            {
+                endpoint=directEndpoint;
+                pointerDistance=Vector3.Distance(currentRay.origin,endpoint);
+                hit=true;
+            }
+            else
+            {
+                void Near(bool found, float d) { if (found && d >= 0 && d <= pointerDistance) { pointerDistance = d; hit = true; } }
+                var pointed = scene.PickObject(currentRay, out float objectDistance);
+                Near(pointed != null, objectDistance);
+                Near(screen.RaycastSurface(currentRay, out float screenDistance), screenDistance);
+                if (scene.Table != null) Near(scene.Table.RaycastControls(currentRay, out float menuDistance), menuDistance);
+                if (scene.Table?.Guide != null) Near(scene.Table.Guide.Raycast(currentRay,out float guideDistance),guideDistance);
+                if (arrangement != null) Near(arrangement.Surfaces.RaycastLevel(currentRay, out float levelDistance) != null, levelDistance);
+                if (PreviewInteraction.Current != null) Near(PreviewInteraction.Current.RaycastVisual(currentRay, out float previewDistance), previewDistance);
+                endpoint=currentRay.GetPoint(pointerDistance);
+            }
+            var visualForward=endpoint-currentRay.origin;
+            var visualRotation=visualForward.sqrMagnitude>.000001f
+                ? Quaternion.LookRotation(visualForward,h.stableAim.up):h.stableAim.rotation;
+            if(h.body!=null)h.body.SetPositionAndRotation(currentRay.origin,visualRotation);
+            h.pointerDistance = pointerDistance;
+            h.hasHit = hit;
+            h.ray.SetPosition(0, currentRay.origin);
             h.ray.SetPosition(1, endpoint);
             h.tip.position = endpoint;
             h.tip.gameObject.SetActive(h.hasHit || h.target != null);
@@ -457,6 +618,9 @@ namespace SpatialModeling
             hand.rotationAxis=Vector3.up;
             hand.freePlacement=hand.alignRequested=hand.turnLatched=false;
             hand.rayRelative = RelativeRayPose(pose, new Pose(target.position, target.rotation));
+            // Raw hit testing must not inherit the previous frame's filtered aim
+            // at pickup. Start manipulation at the displayed contact with no snap.
+            if (hand.stableAim != null) hand.stableAim.SetPositionAndRotation(pose.position, pose.rotation);
             hand.localContact = target.InverseTransformPoint(contact);
             hand.timingFrames = hand.slowFrames = 0;
             hand.poseControlSwitches = 0;
@@ -484,6 +648,7 @@ namespace SpatialModeling
                 // after those reads before applying any two-hand transform.
                 || left.target==null || left.target!=right.target)
             {
+                pairScaleFeedback.Hide();
                 if(pairTarget!=null)
                 {
                     foreach(var hand in new[]{left,right})
@@ -504,6 +669,7 @@ namespace SpatialModeling
             {
                 pairTarget=left.target; pairVector=vector; pairMidpoint=midpoint;
                 pairFrame=frame; pairRotation=pairTarget.rotation; pairScale=pairTarget.localScale;
+                pairFeedbackBaseline=pairTarget.localScale;
                 pairOffset=pairTarget.position-midpoint;
             }
             float ratio=left.part!=null ? 1f : Mathf.Clamp(vector.magnitude/pairVector.magnitude,.25f,4f);
@@ -523,6 +689,10 @@ namespace SpatialModeling
             }
             left.alignRequested=right.alignRequested=false;
             pairTarget.SetPositionAndRotation(pose.position,pose.rotation);
+            pairScaleFeedback.ShowDisplayScale(DisplayScaleFactors(pairTarget.localScale,pairFeedbackBaseline));
+            pairScaleFeedback.Draw(midpoint,Camera.main);
+            if(scene.Table!=null && pairTarget==scene.Table.Menu && Camera.main!=null)
+                scene.Table.FaceMenuTowardUser(Camera.main.transform.position);
             left.part?.RememberArrangement(); right.part?.RememberArrangement();
             Instruction="Two hands: rotate and resize · release one: continue moving · release both: place";
         }
@@ -549,7 +719,11 @@ namespace SpatialModeling
             hand.timingSeconds = hand.maximumFrameTime = hand.largestRawStep = hand.largestGripStep = hand.largestGripTurn = hand.largestDisplayStep = 0;
         }
 
-        public void CancelGrabs() { Release(left); Release(right); }
+        public void CancelGrabs() { pairScaleFeedback.Hide();Release(left); Release(right); PreviewInteraction.Current?.DirectEditing?.Cancel("Placement or tracking changed"); }
+        public static Vector3 DisplayScaleFactors(Vector3 current,Vector3 original)=>new Vector3(
+            Mathf.Abs(original.x)>1e-10f?current.x/original.x:1,
+            Mathf.Abs(original.y)>1e-10f?current.y/original.y:1,
+            Mathf.Abs(original.z)>1e-10f?current.z/original.z:1);
         public void TogglePartMode() { CancelGrabs(); MoveIndividualParts = !MoveIndividualParts; }
         public void ResetArrangement() { CancelGrabs(); scene?.ResetObjectArrangement(); }
         public static Pose ToWorldPose(Transform origin, Pose local) => origin == null ? local
@@ -558,6 +732,8 @@ namespace SpatialModeling
             Quaternion.Inverse(aim.rotation) * (target.position - aim.position), Quaternion.Inverse(aim.rotation) * target.rotation);
         public static Pose FollowRay(Pose aim, Pose relative, float depth) => new Pose(
             aim.position + aim.rotation * (relative.position + Vector3.forward * depth), aim.rotation * relative.rotation);
+        public static float AdvanceDepth(float depth, float axis, float elapsed) =>
+            Mathf.Abs(axis) > .2f ? depth + axis * elapsed : depth;
         public static Pose FollowPlacementRay(Pose aim,Pose relative,float depth,bool preserveRotation,
             Quaternion placementRotation,Quaternion explicitRotation)
         {

@@ -18,8 +18,10 @@ namespace SpatialModeling.VoiceCore
         /// <summary>The contract's longest <c>text</c>; longer text (only typed) stays on VoiceCore's own path.</summary>
         public const int MaxText = 500;
 
-        internal VoiceResolve(string text, float confidence, SceneObject target, bool lowConfidence)
+        internal VoiceResolve(string text, float confidence, SceneObject target, bool lowConfidence, string continuation = null, bool composition = false)
         {
+            Composition = composition;
+            Continuation = continuation;
             Text = text;
             Confidence = confidence;
             TargetId = target?.Id;
@@ -28,6 +30,8 @@ namespace SpatialModeling.VoiceCore
 
         /// <summary>The transcript as heard.</summary>
         public string Text { get; }
+        public string Continuation { get; }
+        public bool Composition { get; }
 
         /// <summary>The recognizer's confidence, 0 to 1. Below <see cref="VoiceSessionOptions.MinConfidence"/> the host may
         /// only ask, never run (and the session treats a run as a question).</summary>
@@ -48,6 +52,8 @@ namespace SpatialModeling.VoiceCore
                 { "text", Text },
                 { "confidence", Math.Round(Math.Min(1.0, Math.Max(0.0, Confidence)), 3) },
             };
+            if (Continuation != null) payload["continuation"] = Continuation;
+            if (Composition) payload["composition"] = true;
             if (TargetId != null && targetGeneration.HasValue)
                 payload["target"] = new Dictionary<string, object> { { "id", TargetId }, { "generation", targetGeneration.Value } };
             return payload;
@@ -59,6 +65,7 @@ namespace SpatialModeling.VoiceCore
     {
         /// <summary>Sure: run the first candidate now.</summary>
         Run,
+        Clarify,
         /// <summary>Not sure: ask "which one?" with up to three candidates.</summary>
         Ask,
         /// <summary>Nothing fits: VoiceCore handles the words as it did before (usually "Sorry, I can't do that").</summary>
@@ -69,8 +76,10 @@ namespace SpatialModeling.VoiceCore
     /// <c>voice.run</c> with its <see cref="Choice"/>, and the host runs its own copy.</summary>
     public sealed class VoiceCandidate
     {
-        public VoiceCandidate(int choice, string say, string op = null, bool needsTarget = false)
+        public VoiceCandidate(int choice, string say, string op = null, bool needsTarget = false, bool requiresConfirmation = false, string targetId = null)
         {
+            RequiresConfirmation = requiresConfirmation;
+            TargetId = targetId;
             Choice = choice;
             Say = say ?? "";
             Operator = op;
@@ -79,6 +88,8 @@ namespace SpatialModeling.VoiceCore
 
         /// <summary>1 to 3: what the user says to pick it.</summary>
         public int Choice { get; }
+        public bool RequiresConfirmation { get; }
+        public string TargetId { get; }
 
         /// <summary>Its name, to show next to its number ("Subdivision Surface").</summary>
         public string Say { get; }
@@ -99,8 +110,9 @@ namespace SpatialModeling.VoiceCore
         public const string Type = "voice.candidates";
 
         public VoiceCandidates(string resolution, VoiceDecision decision, string reason, double expiresIn,
-            IReadOnlyList<VoiceCandidate> candidates)
+            IReadOnlyList<VoiceCandidate> candidates, string missing = null)
         {
+            Missing = missing;
             Resolution = resolution ?? throw new ArgumentNullException(nameof(resolution));
             Decision = decision;
             Reason = reason;
@@ -112,6 +124,7 @@ namespace SpatialModeling.VoiceCore
         public string Resolution { get; }
 
         public VoiceDecision Decision { get; }
+        public string Missing { get; }
 
         /// <summary>Why the host asked or rejected, for display, or null.</summary>
         public string Reason { get; }
@@ -130,17 +143,18 @@ namespace SpatialModeling.VoiceCore
                 ?? throw new FormatException("voice.candidates payload is not an object");
             string decision = MiniJson.Get<string>(payload, "decision");
             VoiceDecision parsed = decision == "run" ? VoiceDecision.Run : decision == "ask" ? VoiceDecision.Ask
-                : decision == "reject" ? VoiceDecision.Reject : throw new FormatException("Unknown decision " + decision);
+                : decision == "clarify" ? VoiceDecision.Clarify : decision == "reject" ? VoiceDecision.Reject : throw new FormatException("Unknown decision " + decision);
             var candidates = new List<VoiceCandidate>();
             if (payload.TryGetValue("candidates", out object list) && list is List<object> items)
                 foreach (object item in items)
                 {
                     var c = item as Dictionary<string, object> ?? throw new FormatException("candidate is not an object");
                     candidates.Add(new VoiceCandidate((int)MiniJson.Get<double>(c, "choice"), MiniJson.Get<string>(c, "say"),
-                        MiniJson.Optional<string>(c, "operator"), MiniJson.Optional<bool>(c, "needs_target")));
+                        MiniJson.Optional<string>(c, "operator"), MiniJson.Optional<bool>(c, "needs_target"),
+                        MiniJson.Optional<bool>(c, "requires_confirmation"), MiniJson.Optional<string>(c, "target_id")));
                 }
             return new VoiceCandidates(MiniJson.Get<string>(payload, "resolution"), parsed, MiniJson.Optional<string>(payload, "reason"),
-                payload.ContainsKey("expires_in") ? MiniJson.Get<double>(payload, "expires_in") : 30, candidates);
+                payload.ContainsKey("expires_in") ? MiniJson.Get<double>(payload, "expires_in") : 30, candidates, MiniJson.Optional<string>(payload, "missing"));
         }
     }
 

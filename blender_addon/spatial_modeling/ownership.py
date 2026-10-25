@@ -33,7 +33,7 @@ def source():
         state = getattr(remote_client, "state", None)
         return [], None, getattr(state, "status", "Connection lost — edits disabled")
     actor = host._session.host["actor_id"] if host._session is not None else None
-    return host.current_leases(), actor, host.status
+    return host.displayed_leases(), actor, host.status
 
 
 def _marks():

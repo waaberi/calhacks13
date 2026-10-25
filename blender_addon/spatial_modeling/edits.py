@@ -38,7 +38,8 @@ import bmesh
 import bpy
 from mathutils import Matrix, Quaternion, Vector
 
-from .commands import Applied, Refused
+from . import sketch
+from .commands import SKETCH_OPS, Applied, Refused
 
 STEP_PROPERTY = "spatial_modeling_step"  # on the scene: the last command's Undo step
 PRIMITIVES = {"cube": "Cube", "sphere": "Sphere", "cylinder": "Cylinder"}
@@ -63,9 +64,12 @@ class Editor:
     """
 
     def __init__(self, sync, undoable, document=None, voice=None):
+        if voice is not None:
+            voice.editor = self
         self.voice = voice  # voice_ops.Voice runs voice.run; without one it is refused
         self.sync = sync
         self.document = document
+        self.supports_sketches = callable(getattr(sketch, "apply", None))
         commit = undoable(lambda done: done.summary)  # the Undo step is named after the edit
         self._ops = {
             op: commit(self._published(fn))
@@ -75,9 +79,18 @@ class Editor:
                 ("object.rotate", self._rotate),
                 ("object.scale", self._scale),
                 ("object.delete", self._delete),
+                ("object.spatial_edit", self._spatial_edit),
                 ("voice.run", self._voice_run),
             )
         }
+        if self.supports_sketches:
+            for op in SKETCH_OPS:
+                def apply_sketch(target_id, args, operation=op):
+                    return sketch.apply(operation, target_id, args)
+                self._ops[op] = commit(self._published(apply_sketch))
+
+    def command_targets(self, op, args, conn):
+        return self.voice.command_targets(args, conn) if op == "voice.run" and self.voice else {}
 
     def flush(self):
         return self.sync.flush()
@@ -101,8 +114,6 @@ class Editor:
         aren't objects, such as sketches, add nothing: a sketch is leased by its ID.
         """
         start = [o for o in (self.sync.find_object(i) for i in ids) if o is not None]
-        if not start:
-            return []
         users, children, dependents = {}, {}, {}
         for obj in bpy.context.view_layer.objects:
             if obj.data is not None:
@@ -122,11 +133,22 @@ class Editor:
                 if other.session_uid not in found:
                     found[other.session_uid] = other
                     queue.append(other)
-        return [self.sync.object_id(o) for o in found.values()]
+        result = [self.sync.object_id(o) for o in found.values()]
+        linked_sketches = getattr(sketch, "linked", None)
+        if linked_sketches is not None:
+            result.extend(i for i in linked_sketches([*ids, *result]) if i not in result)
+        return result
 
     def apply(self, op, target_id, args):
+        from . import live_edit
+        live_edit.ensure_no_active()
         mode = bpy.context.mode
-        if op != "document.save" and mode != "OBJECT":
+        spatial_mesh = (mode == "EDIT_MESH" and op == "object.spatial_edit" or
+                        mode in ("EDIT_MESH", "POSE") and op in ("history.undo", "history.redo"))
+        if mode != "OBJECT" and op == "voice.run" and self.voice is not None:
+            recipe = getattr(self.voice, "is_recipe", None)
+            spatial_mesh = callable(recipe) and recipe(args)
+        if op != "document.save" and mode != "OBJECT" and not spatial_mesh:
             name = MODE_NAMES.get(mode, mode.replace("_", " ").title())
             raise Refused("failed", f"Host Blender is in {name}. Switch it to Object Mode first.")
         if op == "document.save":
@@ -134,6 +156,16 @@ class Editor:
         try:
             if op in ("history.undo", "history.redo"):
                 return self._history(undo=op == "history.undo")
+            if op in SKETCH_OPS:
+                if not self.supports_sketches:
+                    raise Refused("failed", "Sketches aren't available on this host yet.")
+                try:
+                    return self._ops[op](target_id, args)
+                except Refused:
+                    raise
+                except Exception:
+                    self._incomplete(op)
+                    raise
             return self._object_op(op, target_id, args)
         except Refused:
             raise  # nothing changed
@@ -147,6 +179,9 @@ class Editor:
             obj = self.sync.find_object(target_id)
             if obj is None:
                 raise Refused("not_found", "That object doesn't exist (any more).")
+            is_sketch = getattr(sketch, "is_sketch", None)
+            if is_sketch is not None and is_sketch(obj):
+                raise Refused("failed", "Use the sketch tools to edit this native sketch.")
             if obj.library is not None:
                 raise Refused("failed", f"{obj.name} is linked from another file, so it can't "
                               "be changed here.")
@@ -187,7 +222,11 @@ class Editor:
 
     # Objects
 
-    def _add(self, _obj, args):
+    def _spatial_edit(self, obj, args):
+        from . import spatial_model_edit
+        return spatial_model_edit.apply(self, obj, args)
+
+    def _add(self, _obj, args, stage=False):
         unit = _unit()
         kind = args["primitive"]
         size = [v / unit for v in args["dimensions"]]
@@ -221,8 +260,13 @@ class Editor:
             bpy.data.objects.remove(obj)
             bpy.data.meshes.remove(mesh)
             raise Refused("failed", f"Blender didn't make the {kind} as asked. Nothing changed.")
-        self._edited()  # before object_id()'s flush
-        object_id = self.sync.object_id(obj)  # given now, inside this Undo step
+        if not stage:
+            self._edited()  # before object_id()'s flush
+        if stage:
+            from .sync import stage_object_id
+            object_id = stage_object_id(obj)
+        else:
+            object_id = self.sync.object_id(obj)  # given now, inside this Undo step
         return Applied(f"Added {obj.name} ({_mm3(args['dimensions'])} mm)", created=[object_id])
 
     def _move(self, obj, args):

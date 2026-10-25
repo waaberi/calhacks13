@@ -67,15 +67,13 @@ public static class PhysicalScaleChecks
                 scene.Handle(HostLink.DecodeScene(payload,true));
                 Near(scene.Placement.lossyScale,Vector3.one*2,"same-document reconnect preserves chosen magnification");
                 CheckWorldGeometry(scene,(JArray)item["expected"],2f);
-                // Test the actual compact-menu callback and shared collider routing.
+                // The requested handheld action is removed; other controls retain the scale API.
                 var arrangement=container.AddComponent<WorkspaceArrangement>();
                 Invoke(arrangement,"Awake");
                 Invoke(table,"CreatePanel");
                 table.UpdateLeftHandMenu(new Pose(new Vector3(-.3f,1.1f,0),Quaternion.identity),new Vector3(0,1.6f,-1),true);
-                var button=table.Menu.GetComponentsInChildren<TableAction>(true).Single(a=>a.name=="Actual size");
-                Physics.SyncTransforms();
-                var ray=new Ray(button.transform.position-button.transform.forward*.3f,button.transform.forward);
-                Check(table.HoverController(ray,true),"Actual size invoked through real menu collider");
+                Check(!table.Menu.GetComponentsInChildren<TableAction>(true).Any(a=>a.name=="Actual size"),"removed Actual size action is absent from the handheld menu");
+                table.RestoreActualSize();
                 Near(scene.Placement.lossyScale,Vector3.one,"Actual size removes all inspection magnification");
                 Near(scene.Placement.position,pose.position,"Actual size preserves workspace position");
                 Check(Quaternion.Angle(scene.Placement.rotation,pose.rotation)<.001f,"Actual size preserves workspace heading");

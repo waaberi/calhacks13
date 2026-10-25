@@ -120,7 +120,7 @@ namespace SpatialModeling.VoiceCore
     /// <see cref="VoiceSessionOptions.HostTimeout"/>), the words are handled exactly as without a host.
     /// Not thread-safe: call it from the Unity main thread, and call <see cref="Tick"/> every frame.
     /// </summary>
-    public sealed class VoiceSession
+    public sealed partial class VoiceSession
     {
         readonly VoiceSessionOptions options;
         readonly Func<DateTime> clock;
@@ -233,6 +233,7 @@ namespace SpatialModeling.VoiceCore
             var turn = Begin();
             selection.Clear();
             selection.AddRange(selectedIds);
+            ResumeCompositionTarget(turn);
             if (pending != null && (pending.Missing & MissingFields.Target) != 0)
             {
                 SceneObject selected = SingleSelected();
@@ -263,6 +264,7 @@ namespace SpatialModeling.VoiceCore
         public VoiceTurn DocumentChanged()
         {
             var turn = Begin();
+            CancelComposition(turn, Prompt.DocumentChanged);
             if (pending != null || choice != null || resolving != null)
             {
                 pending = null;
@@ -282,6 +284,7 @@ namespace SpatialModeling.VoiceCore
         public VoiceTurn ConnectionLost()
         {
             var turn = Begin();
+            CancelComposition(turn, Prompt.ConnectionLost);
             if (pending != null || choice != null || resolving != null)
             {
                 pending = null;
@@ -295,6 +298,7 @@ namespace SpatialModeling.VoiceCore
                 turn.GrammarChanged = true;
             }
             hostResolves = true;
+            compositionEnabled = false;
             return turn.Build();
         }
 
@@ -302,6 +306,7 @@ namespace SpatialModeling.VoiceCore
         public VoiceTurn Cancel()
         {
             var turn = Begin();
+            CancelComposition(turn, Prompt.Cancelled);
             if (pending != null || choice != null || resolving != null)
             {
                 pending = null;
@@ -356,6 +361,7 @@ namespace SpatialModeling.VoiceCore
                 return turn.Build();
             Resolving asked = resolving;
             turn.HostReason = answer.Reason;
+            if (AnswerComposition(answer, turn)) return turn.Build();
             var candidates = new List<VoiceCandidate>();
             foreach (VoiceCandidate candidate in answer.Candidates)
                 if (candidate != null && candidate.Choice >= 1 && candidate.Choice <= 3 && candidates.Count < 3)
@@ -436,6 +442,7 @@ namespace SpatialModeling.VoiceCore
                 turn.NoResult = NoResultReason.Silence;
                 return turn.Build();
             }
+            if (HearComposition(result, turn)) return turn.Build();
             if (choice != null && HearChoice(result, turn))
                 return turn.Build();
             resolving = null;
@@ -512,8 +519,14 @@ namespace SpatialModeling.VoiceCore
         /// Vosk gives "two" about 0.5 because "to" sounds the same.</summary>
         void AskHost(RecognitionResult result, Turn turn)
         {
-            SceneObject target = CommandParser.NamedObject(result.Text, objects) ?? FromContext(CommandKind.Move);
-            var request = new VoiceResolve(result.Text, result.Confidence, target, result.Confidence < options.MinConfidence);
+            bool composing = compositionToken != null || (compositionEnabled && IsCompositionRequest(result.Text));
+            // A compound transcript contains many parameter words and potentially several names.
+            // The host resolves each clause; this field carries only the current controller context.
+            SceneObject target = composing ? FromContext(CommandKind.Move)
+                : CommandParser.NamedObject(result.Text, objects) ?? FromContext(CommandKind.Move);
+            if (compositionToken != null && compositionMissing == "target" && result.Text.TrimStart().StartsWith("select ", StringComparison.OrdinalIgnoreCase))
+                target = CommandParser.NamedObject(result.Text, objects) ?? target;
+            var request = new VoiceResolve(result.Text, result.Confidence, target, result.Confidence < options.MinConfidence, compositionToken, composing);
             // One of VoiceCore's own shapes without its verb is a core command that lost its verb ("selected cylinder",
             // "on cube"): it could be select, add or delete, so the host may only ask. On TTS with today's grammar the
             // host otherwise ran "add a cylinder" for "select the cylinder" 3 times out of 15.
@@ -524,6 +537,20 @@ namespace SpatialModeling.VoiceCore
         }
 
         bool Answers(string re) => resolving?.MessageId != null && re == resolving.MessageId;
+
+        // An external interpreter proposes a complete typed recipe. Force host
+        // resolution even when its words also contain a valid core prefix.
+        public VoiceTurn ResolveRecipe(string transcript)
+        {
+            var turn = Begin();
+            EndChoice(turn); ClearComposition(); pending = null;
+            var result = new RecognitionResult(transcript, 1);
+            var target = FromContext(CommandKind.Move);
+            var request = new VoiceResolve(transcript, 1, target, false, null, true);
+            resolving = new Resolving(request, result, target, clock());
+            turn.Resolve = request;
+            return turn.Build();
+        }
 
         /// <summary>After the host timeout, handles the waiting words as without a host. True if it did.</summary>
         bool TimedOutWaiting(Turn turn)
@@ -537,7 +564,14 @@ namespace SpatialModeling.VoiceCore
         void HearWithoutHost(Turn turn)
         {
             RecognitionResult result = resolving.Result;
+            bool wholePlan = resolving.Request.Composition;
             resolving = null;
+            if (wholePlan || compositionToken != null || IsCompositionRequest(result.Text))
+            {
+                ClearComposition();
+                turn.Prompts.Add(Prompt.Failed);
+                return;
+            }
             HearHere(result, turn);
         }
 
@@ -593,7 +627,9 @@ namespace SpatialModeling.VoiceCore
                 return;
             }
             // Without a target the host answers with its own reason, which the app shows.
-            turn.Command = new VoiceCommand(resolution, candidate, candidate.NeedsTarget ? target : null);
+            SceneObject actual = candidate.TargetId == null ? target : Find(candidate.TargetId);
+            if (candidate.TargetId != null && actual == null) { turn.Prompts.Add(Prompt.TargetDeleted); return; }
+            turn.Command = new VoiceCommand(resolution, candidate, candidate.NeedsTarget ? actual : null);
         }
 
         void EndChoice(Turn turn)
@@ -773,6 +809,7 @@ namespace SpatialModeling.VoiceCore
         /// <summary>A pointer that came to rest on an object after the question answers it.</summary>
         void FillFromPointer(Turn turn)
         {
+            ResumeCompositionTarget(turn, true);
             if (pending == null || (pending.Missing & MissingFields.Target) == 0 || pointerId == null)
                 return;
             SceneObject pointed = Find(pointerId);
@@ -810,6 +847,7 @@ namespace SpatialModeling.VoiceCore
         Turn Begin()
         {
             var turn = new Turn();
+            if (compositionToken != null && clock() >= compositionExpires) CancelComposition(turn, Prompt.TimedOut);
             if (pending != null && clock() >= expiresAt)
             {
                 pending = null;

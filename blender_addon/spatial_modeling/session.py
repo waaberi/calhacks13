@@ -103,13 +103,14 @@ class Session:
     """
 
     def __init__(self, document, snapshot, session_id, on_change=None, name=None,
-                 client_can_edit=False, store=None):
+                 client_can_edit=False, store=None, capabilities=None):
         self.document = document
         self.snapshot = snapshot
         self.session_id = session_id
         self.host_epoch = uuid.uuid4().hex
         self.host = {"actor_id": uuid.uuid4().hex, "name": host_name(name), "role": "host"}
         self.client_can_edit = client_can_edit
+        self.capabilities = capabilities
         self.participants = {}  # joined Connection -> actor, in joining order
         self.on_change = on_change
         self.store = session_store.MemoryStore(lease_ttl_ms=None) if store is None else store
@@ -163,6 +164,7 @@ class Session:
             "host_epoch": self.host_epoch,
             "actor_id": actor["actor_id"],
             "can_edit": can_edit,
+            "capabilities": self.capabilities() if self.capabilities else {"sketch": False},
             "app": APP,
             "document": doc,
         }, re=msg["id"])
@@ -229,6 +231,9 @@ class Session:
 
     def broadcast(self, msg, exclude=None):
         """Send msg to every participant except `exclude`, on every listener."""
+        echo = getattr(self, "live_edit_echo", None)
+        if echo is not None and msg.get("type") in ("scene.update", "scene.snapshot"):
+            msg = dict(msg, payload=dict(msg["payload"], live_edit=dict(echo)))
         if self._server is not None:
             self._server.broadcast(msg, exclude)
 

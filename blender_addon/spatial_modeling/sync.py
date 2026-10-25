@@ -64,7 +64,7 @@ import uuid
 import bpy
 from bpy.app.handlers import persistent
 
-from . import document, protocol, scene
+from . import document, protocol, scene, sketch
 
 ID_PROPERTY = "spatial_modeling_id"
 MIN_INTERVAL = 0.05  # s between flushes from poll(): at most 20 scene.updates a second
@@ -116,6 +116,8 @@ class _Sync:
         self.document = doc  # document.Document; its revision is the counter
         self.session = session  # broadcast(msg) reaches every welcomed client
         self.objects = {}  # ID -> _Entry, as of the last flush
+        self.sketches = {}  # ID -> complete editable sketch wire record
+        self.sketch_uids = {}  # ID -> native object's identity across Undo/Redo
         self.started = False  # the first flush only records the scene, at revision 0
         self.pending = True  # something may have changed since the last flush
         self.full = True  # re-evaluate every mesh (after Undo/Redo or a unit change)
@@ -170,7 +172,8 @@ def _identify(st, objects):
         if len(group) > 1:  # duplicated: the object that had the ID keeps it
             entry = st.objects.get(oid)
             keep = (
-                next((o for o in group if entry is not None and o.session_uid == entry.uid), None)
+                next((o for o in group if (entry is not None and o.session_uid == entry.uid)
+                      or st.sketch_uids.get(oid) == o.session_uid), None)
                 or next((o for o in group if _assigned.get(o.session_uid) == oid), None)
                 or min(group, key=lambda o: o.name)
             )
@@ -255,7 +258,8 @@ def _fit(payload):
 
 def _snapshot_payload(st, doc):
     objects = [st.objects[oid].wire(True) for oid in _ordered(st.objects)]
-    return _fit({"document": doc, "objects": objects, "sketches": []})  # sketches: P3C
+    return _fit({"document": doc, "objects": objects,
+                 "sketches": list(st.sketches.values())})
 
 
 def _document_state(doc):
@@ -295,6 +299,8 @@ def _flush(st):
     memberships = _memberships(scn)
     current = {}
     for oid, obj in ids:
+        if sketch.is_internal(obj):
+            continue
         parent = obj.parent
         parent_id = id_of.get(parent.session_uid) if parent is not None else None
         record = scene.record(obj, oid, parent_id, view_layer, depsgraph, scale)
@@ -316,8 +322,14 @@ def _flush(st):
         current[oid] = _Entry(record, mesh, old.generation if old else 0, obj.session_uid,
                               memberships.get(obj.session_uid, frozenset()))
 
+    sketches = {record["id"]: record for record in sketch.snapshot()}
+    sketch_uids = {oid: obj.session_uid for oid, obj in ids if sketch.is_sketch(obj)}
+    for oid, record in sketches.items():
+        record["generation"] = st.sketches.get(oid, {}).get("generation", 0)
+
     if not st.started:  # what the file had when the server started is revision 0
         st.objects, st.units, st.started = current, units, True
+        st.sketches, st.sketch_uids = sketches, sketch_uids
         st.sent = _document_state(st.document.describe())
         return
 
@@ -331,27 +343,36 @@ def _flush(st):
         if new_mesh or entry.record != old.record or entry.collections != old.collections:
             changed.append((oid, new_mesh))
     removed = [oid for oid in st.objects if oid not in current]
-    if resnapshot or changed or removed:
+    changed_sketches = [oid for oid, record in sketches.items()
+                        if record != st.sketches.get(oid)]
+    removed_sketches = [oid for oid in st.sketches if oid not in sketches]
+    if resnapshot or changed or removed or changed_sketches or removed_sketches:
         st.document.revision += 1
         touched = current if resnapshot else {oid for oid, _ in changed}
         for oid in touched:
             current[oid].generation = st.document.revision
+        for oid in sketches if resnapshot else changed_sketches:
+            sketches[oid]["generation"] = st.document.revision
     gone = {oid: st.objects[oid].record["name"] for oid in removed}
+    gone.update({oid: st.sketches[oid]["name"] for oid in removed_sketches})
+    removed += removed_sketches
     st.objects, st.units = current, units
-    if on_change is not None and (resnapshot or changed or removed):
+    st.sketches, st.sketch_uids = sketches, sketch_uids
+    if on_change is not None and (resnapshot or changed or changed_sketches or removed):
         try:
-            on_change([oid for oid, _ in changed], gone, resnapshot)
+            on_change([oid for oid, _ in changed] + changed_sketches, gone, resnapshot)
         except Exception:  # watching must never stop the sync itself
             log.exception("on_change failed")
 
     doc = st.document.describe()
     if resnapshot:
         msg = protocol.message("scene.snapshot", _snapshot_payload(st, doc))
-    elif changed or removed or _document_state(doc) != st.sent:
+    elif changed or changed_sketches or removed or _document_state(doc) != st.sent:
         order = {oid: i for i, oid in enumerate(_ordered(current))}
         changed.sort(key=lambda c: order[c[0]])
         objects = [current[oid].wire(with_mesh) for oid, with_mesh in changed]
-        payload = {"document": doc, "objects": objects, "sketches": [], "removed": removed}
+        payload = {"document": doc, "objects": objects,
+                   "sketches": [sketches[oid] for oid in changed_sketches], "removed": removed}
         msg = protocol.message("scene.update", _fit(payload))
     else:
         return
@@ -425,6 +446,8 @@ def generation(object_id):
         return None
     flush()
     entry = _state.objects.get(object_id)
+    if object_id in _state.sketches:
+        return _state.sketches[object_id]["generation"]
     return entry.generation if entry is not None else None
 
 
@@ -441,10 +464,19 @@ def find_object(object_id):
     return match
 
 
+def stage_object_id(obj):
+    """Assign an ID without publishing intermediate state inside an atomic voice plan."""
+    taken = {o.get(ID_PROPERTY) for o in bpy.context.view_layer.objects if o != obj}
+    return _valid_id(obj.get(ID_PROPERTY)) or _give_id(obj, taken)
+
+
 def object_id(obj):
     """The object's ID, given now (with a flush) if it has none yet."""
     uid = obj.session_uid
     if _state is not None:
+        for oid, sketch_uid in _state.sketch_uids.items():
+            if sketch_uid == uid:
+                return oid
         for _ in range(2):
             for oid, entry in _state.objects.items():
                 if entry.uid == uid:

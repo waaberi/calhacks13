@@ -8,6 +8,7 @@ public static class RoomSetupChecks
     public static void Run()
     {
         RoomLocalizationChecks.Run();
+        RoomRecoveryChecks.Run();
         RoomSpaceReplayChecks.Run();
         // SDK tracking space can differ from the camera's parent after recenter.
         // A room point two metres forward in that space must appear two metres

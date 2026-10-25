@@ -42,6 +42,7 @@ namespace SpatialModeling
         public string OpenEpoch => openEpoch;
         public long Revision => revision;
         public TablePlacement Table => table;
+        public Material ObjectDisplayMaterial => ObjectMaterial;
         public IEnumerable<WorkspaceObjectView> ObjectViews
         {
             get { foreach (var go in objects.Values) if (go != null) yield return go.GetComponent<WorkspaceObjectView>(); }
@@ -50,6 +51,7 @@ namespace SpatialModeling
         public Pose PlacementHeadPose { get; private set; }
         readonly StartupFacingGate startupFacing = new StartupFacingGate();
         string documentId = "", openEpoch = "";
+        string localActorId = "";
         TablePlacement table;
         internal HostLink Link => link;
         internal event System.Action<HostEvent> HostEventReceived;
@@ -112,7 +114,10 @@ namespace SpatialModeling
             recenterAction.AddBinding("<XRController>{RightHand}/secondaryButton"); // B on Quest
             recenterAction.AddBinding("<XRController>{LeftHand}/secondaryButton");  // Y on Quest
             recenterAction.AddBinding("<Keyboard>/r");
-            recenterAction.performed += _ => RequestRecenter();
+            recenterAction.performed += context =>
+            {
+                if (!(context.control?.device is Keyboard && PreviewInteraction.BlocksDesktopShortcuts)) RequestRecenter();
+            };
             recenterAction.Enable();
             var name = string.IsNullOrWhiteSpace(userName) ? "VR user" : userName.Trim();
             link = new HostLink(host, connectionPort, new JObject
@@ -282,7 +287,7 @@ namespace SpatialModeling
             {
                 // IMGUI is only visible on the monitor. A world-space canvas is rendered
                 // by both headset eyes, so a stale scene cannot silently look connected.
-                statusPanel = new GameObject("Blender connection status", typeof(RectTransform), typeof(Canvas), typeof(Image));
+                statusPanel = new GameObject("Blender connection status", typeof(RectTransform), typeof(Canvas), typeof(RoundedGlassImage));
                 statusPanel.transform.SetParent(camera.transform, false);
                 statusPanel.transform.localPosition = new Vector3(0f, 0.10f, 1f);
                 statusPanel.transform.localScale = Vector3.one * 0.001f;
@@ -292,7 +297,8 @@ namespace SpatialModeling
                 canvas.renderMode = RenderMode.WorldSpace;
                 canvas.worldCamera = camera;
                 var background = statusPanel.GetComponent<Image>();
-                background.color = new Color(0.015f, 0.02f, 0.03f, 0.94f);
+                GlassTheme.StylePanel(background);
+                statusPanel.AddComponent<GlassRoot>();
                 background.raycastTarget = false;
                 var label = new GameObject("Status", typeof(RectTransform), typeof(Text));
                 label.transform.SetParent(statusPanel.transform, false);
@@ -306,6 +312,7 @@ namespace SpatialModeling
                 headsetStatus.fontSize = 32;
                 headsetStatus.alignment = TextAnchor.MiddleCenter;
                 headsetStatus.raycastTarget = false;
+                GlassTheme.StyleText(headsetStatus);
             }
             var screen = FindFirstObjectByType<BlenderScreen>();
             bool screenVisible = screen != null && screen.Visible;
@@ -370,10 +377,7 @@ namespace SpatialModeling
                 case Status.Disconnected: text = $"Disconnected. Reconnecting...{stale}\n{reason}"; break;
                 default: text = $"Connecting to Blender at {host}:{port} ...{stale}\n{(link != null && link.SocketOpen ? "" : reason)}"; break;
             }
-            if (style == null) style = new GUIStyle(GUI.skin.label) { fontSize = 26 };
-            style.normal.textColor = status == Status.Connected ? Color.white : new Color(1f, 0.6f, 0.2f);
-            GUI.Label(new Rect(20, 20, 1400, 200), text, style);
-            if (GUI.Button(new Rect(20, 230, 300, 48), "Recenter view (B / Y / R)")) RequestRecenter();
+            GlassDesktopStatus.Draw(text,status!=Status.Connected,RequestRecenter);
         }
 
         void HandleCore(HostEvent e)
@@ -388,6 +392,7 @@ namespace SpatialModeling
                 case HostEventKind.Welcome:
                     hostError = hostErrorCode = "";
                     documentName = e.Text;
+                    localActorId = e.ActorId;
                     break;
                 case HostEventKind.Error:
                     hostErrorCode = e.Code;
@@ -445,7 +450,20 @@ namespace SpatialModeling
                     bool applied = true;
                     foreach (var r in e.Objects)
                     {
-                        try { ApplyObject(r); }
+                        try
+                        {
+                            if (objects.TryGetValue(r.Id, out var existingView))
+                            {
+                                var inspectedView = existingView.GetComponent<WorkspaceObjectView>();
+                                bool acceptedEcho = inspectedView == null || inspectedView.AcceptLiveEcho(e.LiveEdit, localActorId);
+                                if (!acceptedEcho && inspectedView != null &&
+                                    !string.IsNullOrEmpty(inspectedView.LivePresentationId) &&
+                                    (string)e.LiveEdit?["id"] == inspectedView.LivePresentationId &&
+                                    (string)e.LiveEdit?["actor_id"] == localActorId)
+                                    continue;
+                            }
+                            ApplyObject(r);
+                        }
                         catch (System.Exception ex) { applied = false; Debug.LogWarning($"HostScene: couldn't draw {r.Id}: {ex.Message}"); }
                     }
                     if (!applied)

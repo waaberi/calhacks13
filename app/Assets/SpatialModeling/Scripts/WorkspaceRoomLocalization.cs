@@ -12,6 +12,7 @@ namespace SpatialModeling
         public struct FloorCandidate
         {
             public Guid Room;
+            public Guid Anchor;
             public Pose WorldPose;
             // Actual Boundary2D vertices in the floor anchor's XY plane. No bounds fallback.
             public Vector2[] Boundary;
@@ -83,6 +84,19 @@ namespace SpatialModeling
             }
             var local=Quaternion.Inverse(rotation)*delta;
             return InsideActualBoundary(floor.Boundary,new Vector2(local.x,local.y),limits.EdgeTolerance);
+        }
+        // Continuity is allowed only for an independently verified room/floor
+        // identity and a new successful containment test of that exact floor.
+        // A persisted identity never substitutes for a current tracked pose.
+        public static bool TrySelectRoomWithContinuity(IReadOnlyList<FloorCandidate> floors,Pose headWorld,
+            bool headReady,double now,Guid verifiedRoom,Guid verifiedFloor,out Guid room,out string reason)
+        {
+            if(TrySelectRoom(floors,headWorld,headReady,now,out room,out reason))return true;
+            if(reason!="Saved room match is ambiguous"||verifiedRoom==Guid.Empty||verifiedFloor==Guid.Empty)return false;
+            foreach(var floor in floors)
+                if(floor.Room==verifiedRoom&&floor.Anchor==verifiedFloor&&ContainsHead(floor,headWorld.position,now,DefaultLimits))
+                {room=verifiedRoom;reason="Previously verified saved room contains the headset · overlapping room retained separately";return true;}
+            return false;
         }
 
         // An unassigned mesh can only inherit a unique known room AFTER that room

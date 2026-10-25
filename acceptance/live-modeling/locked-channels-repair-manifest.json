@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "source": "a786f3123983a425dd8080c2e9a2b586ef2efe62",
+  "application_source": "23a83c430786867aea94d37264df9b3b3c168925",
+  "assembly_sha256": "534c4c394d914669d5b94a7b1e361ceb5737f6fe5520dedfee4fb9d8de6214c4",
+  "manifest_sha256": "23b832becf018cedf97767687e3b9b335011019776445fb55836a5d5356fd51d",
+  "backend_module_sha256": "0c5a967cf9196ad216b3f1d2bacb4cd0fafcc9729c0da02ceab104e07a4f839d",
+  "fresh_backend_pytest": {
+    "passed": 1518,
+    "skipped": 37,
+    "failed": 0,
+    "fresh": true,
+    "command": "pytest tests/backend tests/p25 -q --disable-warnings -p no:cacheprovider",
+    "elapsed_seconds": 47.87
+  },
+  "real_background_blender": {
+    "checks": 9,
+    "passed": true,
+    "live_update_one_undo_redo_cancel": true,
+    "lock_changes_fenced": true,
+    "keyframes_preserved": true
+  },
+  "stateless_handoff_background_proof": {
+    "passed": true,
+    "preexisting_undo_redo": true,
+    "guard_and_rollback_checks": 5
+  },
+  "unity": {
+    "reused": true,
+    "mandatory_markers": 88,
+    "source_unchanged": true
+  },
+  "history_and_model_preserved_on_live_handoff": true,
+  "runtime_applied": true,
+  "physical_acceptance": false,
+  "no_gui_test_windows": true,
+  "limitations": [
+    "Fully locked native transforms remain blocked.",
+    "Scale feedback displays requested factors; locked axes retain their native values.",
+    "Physical controller editing and room fit remain wearer checks.",
+    "Separate Host collaboration upgrade is not included in this lock-only package."
+  ],
+  "no_pr_push_main_fps": true
+}

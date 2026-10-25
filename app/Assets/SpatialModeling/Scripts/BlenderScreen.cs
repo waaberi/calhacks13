@@ -22,16 +22,30 @@ namespace SpatialModeling
         public long LastAgeMs { get; private set; }
         public bool HasImage => image != null && image.enabled;
         public float Magnification { get; private set; } = 1f;
+        public bool PositionLocked { get; private set; }
+        public void TogglePositionLock() { PositionLocked = !PositionLocked; Debug.Log("BLENDER_SCREEN_LOCK locked=" + PositionLocked); }
+        public static bool CanGrabScreen(bool locked) => !locked;
+        public static string CaptureBaseUrl
+        {
+            get
+            {
+                return HostScene.TryResolvePort(Environment.GetEnvironmentVariable("CALHACKS_CAPTURE_PORT"), 8766, out int port)
+                    ? "http://127.0.0.1:" + port : null;
+            }
+        }
+        public RectTransform ImageRectTransform => image != null ? image.rectTransform : null;
+        public string DisplayedCaptureInstance { get; private set; } = "";
+        public long DisplayedSelectionGeneration { get; private set; } = -1;
+        public string DisplayedCaptureGeometry { get; private set; } = "";
 
         const float ScreenWidth = 1800f, ScreenHeight = 1100f, ScreenDistance = 1.25f;
 
         GameObject canvasObject, body;
         RawImage image;
-        Text status, buttonText, hint, magnifyText, modeText, roomText;
-        Button toggleButton, magnifyButton, modeButton, resetButton, roomButton, pointedButton;
+        Text status, magnifyText, modeText, roomText, lockText;
+        Button magnifyButton, modeButton, roomButton, lockButton, pointedButton, arrangeModeButton, editModeButton;
         Button[] buttons;
         WorkspaceArrangement arrangement;
-        Text assistText;
         WorkspaceInteraction interaction;
         WorkspacePassthrough passthrough;
         bool controllerHover;
@@ -74,7 +88,8 @@ namespace SpatialModeling
             toggle.AddBinding("<XRController>{RightHand}/primaryButton"); // A
             toggle.AddBinding("<XRController>{LeftHand}/primaryButton"); // X
             toggle.AddBinding("<Keyboard>/f2");
-            toggle.performed += _ => Toggle();
+            toggle.performed += context =>
+            { if (!(context.control?.device is Keyboard && PreviewInteraction.BlocksDesktopShortcuts)) Toggle(); };
             toggle.Enable();
             select = new InputAction("Select Blender screen button", InputActionType.Button);
             select.AddBinding("<XRController>{RightHand}/triggerPressed");
@@ -84,7 +99,10 @@ namespace SpatialModeling
             magnify = new InputAction("Magnify Blender screen", InputActionType.Button);
             magnify.AddBinding("<XRController>{RightHand}/thumbstickClicked");
             magnify.AddBinding("<Keyboard>/z");
-            magnify.performed += _ => { if (Visible && (interaction==null || !interaction.IsHolding)) CycleMagnification(); };
+            magnify.performed += context => { if (!(context.control?.device is Keyboard && PreviewInteraction.BlocksDesktopShortcuts)
+                && Visible && (interaction==null || !interaction.IsHolding)
+                && !(PreviewInteraction.Current?.OwnsControllerButtons ?? false)
+                && !(PreviewInteraction.Current?.CapturesScroll ?? false)) CycleMagnification(); };
             magnify.Enable();
             panAction = new InputAction("Pan magnified Blender screen", InputActionType.Value);
             panAction.AddBinding("<XRController>{RightHand}/thumbstick");
@@ -93,6 +111,13 @@ namespace SpatialModeling
             panAction.Enable();
             StartCoroutine(Poll(0));
             StartCoroutine(Poll(1));
+        }
+
+        public static Vector2 ReadInspectionPan(InputAction action)
+        {
+            if (action == null || (PreviewInteraction.BlocksDesktopShortcuts && action.activeControl?.device is Keyboard))
+                return Vector2.zero;
+            return action.ReadValue<Vector2>();
         }
 
         void OnDisable()
@@ -149,15 +174,14 @@ namespace SpatialModeling
             if (interaction == null || !interaction.HasTrackedHands) foreach (var button in buttons)
             {
                 var rect = button.GetComponent<RectTransform>();
-                bool hovering = new Plane(rect.forward, rect.position).Raycast(ray, out float enter) && enter > 0f
-                    && rect.rect.Contains((Vector2)rect.InverseTransformPoint(ray.GetPoint(enter)));
+                bool hovering = GlassRaycast.Hit(rect,ray,out _,out _);
                 if (hovering) pointedButton = button;
-                button.GetComponent<Image>().color = hovering
-                    ? new Color(0.15f, 0.5f, 0.72f, 1f) : new Color(0.08f, 0.22f, 0.33f, 1f);
+                if(hovering)button.GetComponent<GlassControl>()?.Hover();
             }
-            if (Visible && Magnification > 1f && (interaction == null || !interaction.IsHolding))
+            if (Visible && Magnification > 1f && (interaction == null || !interaction.IsHolding)
+                && !(PreviewInteraction.Current?.CapturesScroll ?? false))
             {
-                var axis = panAction.ReadValue<Vector2>();
+                var axis = ReadInspectionPan(panAction);
                 if (axis.sqrMagnitude > 0.04f) pan += axis * (0.3f * Time.unscaledDeltaTime);
             }
             var crop = CropFor(Magnification, pan);
@@ -167,24 +191,30 @@ namespace SpatialModeling
                 Unavailable("Capture stalled — waiting for a fresh Blender frame");
             status.text = hostNotice.Length > 0 ? hostNotice : HasImage ? "Blender connected · Live view" : CaptureState;
             status.color = HasImage && hostNotice.Length == 0 ? Color.white : new Color(1f, 0.7f, 0.25f);
-            buttonText.text = Visible ? "Hide Blender" : "Show Blender";
             magnifyText.text = $"Magnify: {Magnification:0.#}×";
             modeText.text = interaction != null && interaction.MoveIndividualParts ? "Arrange: one part" : "Arrange: whole build";
-            if(assistText!=null) assistText.text=arrangement!=null && arrangement.AssistEnabled ? "Surface help: on" : "Surface help: off";
+            lockText.text = PositionLocked ? "Screen position LOCKED" : "Lock screen position";
+            GlassTheme.State(lockButton, PositionLocked);
+            RefreshEditingMode();
             roomButton.interactable = passthrough != null && passthrough.Supported;
             roomText.text = passthrough != null && passthrough.Supported
                 ? passthrough.Active ? "Room view: on" : "Room view: off" : "Room view: unavailable";
             if (passthrough != null && !passthrough.Active && hostNotice.Length == 0 && HasImage)
                 status.text += " · " + passthrough.State;
-            hint.text = hostNotice.Length > 0 && !Visible ? hostNotice
-                : interactionNotice.Length > 0 ? interactionNotice
-                : "A / X: show–hide · B / Y: recenter · Grip: move screen or build";
-            hint.color = hostNotice.Length > 0 && !Visible ? new Color(1f, 0.7f, 0.25f) : Color.white;
             if (!smokeStarted && Array.IndexOf(Environment.GetCommandLineArgs(), "--p1-smoke") >= 0)
             {
                 smokeStarted = true;
                 StartCoroutine(Smoke());
             }
+        }
+
+        public static void ConfigureCaptureTexture(Texture2D target, bool clearText)
+        {
+            target.filterMode = FilterMode.Trilinear;
+            target.anisoLevel = 4;
+            // Keep the mip chain/oblique filtering; a bounded bias retains more
+            // native UI detail when the streamed desktop is reduced in VR.
+            target.mipMapBias = clearText ? -.65f : 0f;
         }
 
         void LogDisplayQuality()
@@ -200,7 +230,7 @@ namespace SpatialModeling
             loggedViewportScale = viewport; loggedEyeScale = eyeScale;
             var pipeline = UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline
                 as UnityEngine.Rendering.Universal.UniversalRenderPipelineAsset;
-            Debug.Log($"P1_DISPLAY_QUALITY source={texture.width}x{texture.height} eye={eyeWidth}x{eyeHeight} eye_scale={eyeScale:F2} viewport_scale={viewport:F2} pipeline_scale={pipeline?.renderScale:F2} msaa={pipeline?.msaaSampleCount} filter={texture.filterMode} mips={texture.mipmapCount}");
+            Debug.Log($"P1_DISPLAY_QUALITY source={texture.width}x{texture.height} eye={eyeWidth}x{eyeHeight} eye_scale={eyeScale:F2} viewport_scale={viewport:F2} pipeline_scale={pipeline?.renderScale:F2} msaa={pipeline?.msaaSampleCount} filter={texture.filterMode} mips={texture.mipmapCount} mip_bias={texture.mipMapBias:F2}");
         }
 
         public void Toggle()
@@ -220,10 +250,29 @@ namespace SpatialModeling
         {
             distance = 0f;
             if (Placement == null || !canvasObject.activeInHierarchy) return false;
-            if (!new Plane(Placement.forward, Placement.position).Raycast(ray, out distance) || distance < 0f || distance > 4f) return false;
-            var local = Placement.InverseTransformPoint(ray.GetPoint(distance));
-            return Mathf.Abs(local.x) <= 920 && ((Visible && local.y>=-820 && local.y<=790)
-                || (!Visible && ((local.y>=-820 && local.y<=-560) || (local.y>=685 && local.y<=790))));
+            bool found=false;float nearest=4;
+            if(Visible&&body!=null&&GlassRaycast.Hit(body.GetComponent<RectTransform>(),ray,out var bodyDistance,out _))
+            {nearest=bodyDistance;found=true;}
+            if(buttons!=null)foreach(var button in buttons)
+                if(button!=null&&button.gameObject.activeInHierarchy&&GlassRaycast.Hit(button.GetComponent<RectTransform>(),ray,out var d,out _)&&d<=nearest)
+                {nearest=d;found=true;}
+            distance=nearest;return found;
+        }
+
+        public bool TryPreviewPoint(Ray ray, out Vector2 normalized, out float distance)
+        {
+            normalized = default; distance = 0;
+            if (!Visible || !HasImage || image == null || !image.gameObject.activeInHierarchy
+                || !GlassRaycast.Hit(image.rectTransform,ray,out distance,out var local,false)) return false;
+            var bounds=image.rectTransform.rect;
+            // Curved inverse/world transforms can round an exact edge by a small
+            // fraction of one native pixel. Do not drop the native corner control.
+            const float edgeEpsilon=.05f;
+            if(Mathf.Abs(local.x-bounds.xMin)<edgeEpsilon)local.x=bounds.xMin;
+            if(Mathf.Abs(local.x-bounds.xMax)<edgeEpsilon)local.x=bounds.xMax;
+            if(Mathf.Abs(local.y-bounds.yMin)<edgeEpsilon)local.y=bounds.yMin;
+            if(Mathf.Abs(local.y-bounds.yMax)<edgeEpsilon)local.y=bounds.yMax;
+            return PreviewInputMapping.TryMap(image.rectTransform.rect,image.uvRect,local,out normalized);
         }
 
         public bool HoverController(Ray ray, bool pressed)
@@ -233,10 +282,10 @@ namespace SpatialModeling
             {
                 if (!button.interactable) continue;
                 var rect = button.GetComponent<RectTransform>();
-                if (!rect.rect.Contains((Vector2)rect.InverseTransformPoint(ray.GetPoint(distance)))) continue;
-                button.GetComponent<Image>().color = new Color(0.15f, 0.5f, 0.72f, 1f);
+                if (!GlassRaycast.Hit(rect,ray,out _,out _)) continue;
+                button.GetComponent<GlassControl>()?.Hover();
                 controllerHover = true;
-                if (pressed) button.onClick.Invoke();
+                if (pressed) { button.GetComponent<GlassControl>()?.Press();button.onClick.Invoke(); }
                 return true;
             }
             return false;
@@ -245,7 +294,7 @@ namespace SpatialModeling
         public void ClearControllerHover()
         {
             if (buttons == null) return;
-            if (controllerHover) foreach (var button in buttons) button.GetComponent<Image>().color = new Color(0.08f, 0.22f, 0.33f, 1f);
+            if (controllerHover) foreach (var button in buttons) button.GetComponent<GlassControl>()?.ClearHover();
             controllerHover = false;
         }
 
@@ -272,9 +321,12 @@ namespace SpatialModeling
 
         void BuildUi(Camera camera)
         {
-            canvasObject = new GameObject("Blender screen canvas", typeof(RectTransform), typeof(Canvas), typeof(GraphicRaycaster));
+            canvasObject = new GameObject("Blender screen canvas", typeof(RectTransform), typeof(Canvas), typeof(GlassGraphicRaycaster));
             canvasObject.transform.SetPositionAndRotation(camera.transform.position + camera.transform.forward * ScreenDistance, camera.transform.rotation);
             canvasObject.transform.localScale = Vector3.one * 0.001f;
+            canvasObject.AddComponent<GlassRoot>();
+            canvasObject.AddComponent<GlassCurvedCanvas>();
+            canvasObject.AddComponent<BlenderViewAppearance>();
             canvasObject.GetComponent<RectTransform>().sizeDelta = new Vector2(1840, 1700);
             var canvas = canvasObject.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
@@ -282,63 +334,70 @@ namespace SpatialModeling
             if (FindFirstObjectByType<EventSystem>() == null)
                 new GameObject("Screen UI events", typeof(EventSystem), typeof(InputSystemUIInputModule));
             body = Rect("Live Blender window", canvasObject.transform, new Vector2(0, 70), new Vector2(1840, 1250));
-            var background = body.AddComponent<Image>();
-            background.color = new Color(0.015f, 0.02f, 0.03f, 0.98f);
+            var background = body.AddComponent<RoundedGlassImage>();
+            GlassTheme.StylePanel(background);
             background.raycastTarget = false;
-            Label("Title", body.transform, new Vector2(0, 580), new Vector2(1800, 60), "BLENDER", 32);
-            var imageObject = Rect("Selected window image", body.transform, Vector2.zero, new Vector2(ScreenWidth, ScreenHeight));
+            var well=GlassTheme.Panel(body.transform,"Rounded native viewport well",Vector2.zero,new Vector2(ScreenWidth+24,ScreenHeight+24));
+            well.GetComponent<RoundedGlassImage>().Radius=12;well.GetComponent<Image>().color=new Color(.012f,.015f,.022f,1);
+            var mask=well.gameObject.AddComponent<Mask>();mask.showMaskGraphic=true;
+            var imageObject = Rect("Selected window image", well, Vector2.zero, new Vector2(ScreenWidth, ScreenHeight));
             image = imageObject.AddComponent<RawImage>();
             image.raycastTarget = false;
             image.enabled = false;
             status = Label("Capture state", body.transform, new Vector2(0, -585), new Vector2(1800, 65), CaptureState, 32);
-            var control = Rect("Show hide button", canvasObject.transform, new Vector2(-670, -610), new Vector2(420, 80));
-            control.AddComponent<Image>();
-            toggleButton = control.AddComponent<Button>();
-            toggleButton.onClick.AddListener(Toggle);
-            buttonText = Label("Label", control.transform, Vector2.zero, new Vector2(400, 65), "Hide Blender", 32);
-            var zoomControl = Rect("Magnify button", canvasObject.transform, new Vector2(-230, -610), new Vector2(420, 80));
-            zoomControl.AddComponent<Image>();
+            var zoomControl = Rect("Magnify button", canvasObject.transform, new Vector2(-740, -610), new Vector2(360, 80));
+            zoomControl.AddComponent<RoundedGlassImage>();
             magnifyButton = zoomControl.AddComponent<Button>();
             magnifyButton.onClick.AddListener(CycleMagnification);
-            magnifyText = Label("Label", zoomControl.transform, Vector2.zero, new Vector2(400, 65), "Magnify: 1×", 32);
-            var modeControl = Rect("Arrangement mode", canvasObject.transform, new Vector2(330, -610), new Vector2(600, 80));
-            modeControl.AddComponent<Image>();
+            magnifyText = Label("Label", zoomControl.transform, Vector2.zero, new Vector2(336, 65), "Magnify: 1×", 30);
+            var modeControl = Rect("Arrangement mode", canvasObject.transform, new Vector2(-280, -610), new Vector2(520, 80));
+            modeControl.AddComponent<RoundedGlassImage>();
             modeButton = modeControl.AddComponent<Button>();
             modeButton.onClick.AddListener(() => interaction?.TogglePartMode());
-            modeText = Label("Label", modeControl.transform, Vector2.zero, new Vector2(580, 65), "Arrange: whole build", 30);
-            var resetControl = Rect("Reset arrangement", canvasObject.transform, new Vector2(780, -610), new Vector2(280, 80));
-            resetControl.AddComponent<Image>();
-            resetButton = resetControl.AddComponent<Button>();
-            resetButton.onClick.AddListener(() => interaction?.ResetArrangement());
-            Label("Label", resetControl.transform, Vector2.zero, new Vector2(260, 65), "Reset view", 30);
-            var roomControl = Rect("Room view", canvasObject.transform, new Vector2(640, -730), new Vector2(560, 80));
-            roomControl.AddComponent<Image>();
+            modeText = Label("Label", modeControl.transform, Vector2.zero, new Vector2(496, 65), "Arrange: whole build", 30);
+            var lockControl = Rect("Lock Blender screen position", canvasObject.transform, new Vector2(220, -610), new Vector2(440, 80));
+            lockControl.AddComponent<RoundedGlassImage>();
+            lockButton = lockControl.AddComponent<Button>();
+            lockButton.onClick.AddListener(() =>
+            {
+                if (PreviewInteraction.Current != null) PreviewInteraction.Current.ToggleScreenPositionLock();
+                else TogglePositionLock();
+            });
+            lockText = Label("Label", lockControl.transform, Vector2.zero, new Vector2(416, 65), "Lock screen position", 28);
+            var roomControl = Rect("Room view", canvasObject.transform, new Vector2(680, -610), new Vector2(440, 80));
+            roomControl.AddComponent<RoundedGlassImage>();
             roomButton = roomControl.AddComponent<Button>();
             roomButton.onClick.AddListener(() => passthrough?.Toggle());
-            roomText = Label("Label", roomControl.transform, Vector2.zero, new Vector2(540, 65), "Room view: checking", 30);
-            hint = Label("Controls", canvasObject.transform, new Vector2(-300, -735), new Vector2(1200, 120), "", 28);
+            roomText = Label("Label", roomControl.transform, Vector2.zero, new Vector2(416, 65), "Room view: checking", 28);
             if(arrangement==null) arrangement=FindFirstObjectByType<WorkspaceArrangement>();
             Button FrameAction(string name,float x,string label,Action action,bool enabled=true)
             {
-                var item=Rect(name,canvasObject.transform,new Vector2(x,735),new Vector2(350,80));
-                item.AddComponent<Image>();
+                var item=Rect(name,canvasObject.transform,new Vector2(x,735),new Vector2(560,80));
+                item.AddComponent<RoundedGlassImage>();
                 var button=item.AddComponent<Button>(); button.interactable=enabled;
                 button.onClick.AddListener(()=>action?.Invoke());
-                Label("Label",item.transform,Vector2.zero,new Vector2(330,70),label,28);
+                Label("Label",item.transform,Vector2.zero,new Vector2(536,70),label,28);
                 return button;
             }
-            var arrangeButton=FrameAction("Arrange space mode",-720,"Arrange space ✓",()=>arrangement?.SelectArrange());
-            var editButton=FrameAction("Edit model mode",-360,"Edit model · coming soon",null,false);
-            var assistButton=FrameAction("Surface assistance",0,"Surface help: on",()=>arrangement?.ToggleAssist());
-            assistText=assistButton.GetComponentInChildren<Text>();
-            var undoButton=FrameAction("Undo workspace placement",360,"Undo placement",()=>arrangement?.UndoPlacement());
-            var recoverButton=FrameAction("Recover workspace",720,"Recover workspace",()=>arrangement?.Recover());
-            buttons = new[] { toggleButton, magnifyButton, modeButton, resetButton, roomButton,
-                arrangeButton,editButton,assistButton,undoButton,recoverButton };
-            foreach (var button in buttons) button.GetComponent<Image>().color = new Color(0.08f, 0.22f, 0.33f, 1f);
-            arrangeButton.GetComponent<Image>().color=new Color(.05f,.35f,.25f,1);
-            editButton.GetComponentInChildren<Text>().color=new Color(.55f,.55f,.55f,1);
+            var arrangeButton=FrameAction("Arrange space mode",-300,"Arrange space ✓",()=>arrangement?.SelectArrange());
+            var editButton=FrameAction("Edit model mode",300,"Edit model",()=>arrangement?.SelectEditModel());
+            buttons = new[] { magnifyButton, modeButton, lockButton, roomButton,
+                arrangeButton,editButton };
+            foreach (var button in buttons) GlassTheme.StyleAction(button.gameObject);
+            arrangeModeButton=arrangeButton;editModeButton=editButton;
+            RefreshEditingMode();
+            canvasObject.GetComponent<GlassCurvedCanvas>().ApplyToChildren();
+            canvasObject.GetComponent<BlenderViewAppearance>().Apply();
             body.SetActive(Visible);
+        }
+
+        public void RefreshEditingMode()
+        {
+            if(arrangeModeButton==null||editModeButton==null)return;
+            bool editing=PreviewInteraction.Current?.ModelEditingActive??false;
+            GlassTheme.State(arrangeModeButton,!editing);GlassTheme.State(editModeButton,editing);
+            arrangeModeButton.GetComponentInChildren<Text>().text=editing?"Arrange space":"Arrange space ✓";
+            editModeButton.GetComponentInChildren<Text>().text=editing?"Edit model ✓":"Edit model";
         }
 
         static GameObject Rect(string name, Transform parent, Vector2 position, Vector2 size)
@@ -361,11 +420,13 @@ namespace SpatialModeling
             text.color = Color.white;
             text.text = value;
             text.raycastTarget = false;
+            GlassTheme.StyleText(text);
             return text;
         }
 
         void Unavailable(string message)
         {
+            DisplayedCaptureInstance = ""; DisplayedSelectionGeneration = -1; DisplayedCaptureGeometry = "";
             CaptureState = message;
             etag = null;
             if (image != null) { image.enabled = false; image.texture = null; }
@@ -381,7 +442,8 @@ namespace SpatialModeling
                 if (image == null) { yield return null; continue; }
                 // Keep checking when hidden: reopening never shows a queued/stale frame.
                 // Native DownloadHandlerTexture decodes off the render thread.
-                var request = UnityWebRequestTexture.GetTexture("http://127.0.0.1:8766/frame", true);
+                if (CaptureBaseUrl == null) { Unavailable("Invalid local capture port"); yield break; }
+                var request = UnityWebRequestTexture.GetTexture(CaptureBaseUrl + "/frame", true);
                 requests[lane] = request;
                 request.timeout = 2;
                 if (etag != null) request.SetRequestHeader("If-None-Match", etag);
@@ -408,13 +470,16 @@ namespace SpatialModeling
                         {
                             if (texture != null) Destroy(texture);
                             texture = decoded;
-                            texture.filterMode = FilterMode.Trilinear;
-                            texture.anisoLevel = 4;
+                            ConfigureCaptureTexture(texture, PreviewInteraction.Requested);
                             image.texture = texture;
                             image.enabled = true;
                             var scale = Mathf.Min(ScreenWidth / texture.width, ScreenHeight / texture.height);
                             image.rectTransform.sizeDelta = new Vector2(texture.width * scale, texture.height * scale);
                             lastCaptured = captured;
+                            DisplayedCaptureInstance = request.GetResponseHeader("X-Capture-Instance") ?? "";
+                            DisplayedCaptureGeometry = request.GetResponseHeader("X-Capture-Geometry") ?? "";
+                            DisplayedSelectionGeneration = long.TryParse(request.GetResponseHeader("X-Selection-Generation"), out var selectedGeneration)
+                                ? selectedGeneration : -1;
                             lastConfirmed = alive;
                             etag = request.GetResponseHeader("ETag");
                             long.TryParse(etag?.Trim('"'), out var frame);
@@ -437,8 +502,13 @@ namespace SpatialModeling
                 }
                 else if (request.responseCode == 304)
                 {
+                    bool sameSource = !PreviewInteraction.Requested || (PreviewInputMapping.FrameMatches(
+                        DisplayedCaptureInstance, DisplayedSelectionGeneration,
+                        request.GetResponseHeader("X-Capture-Instance"),
+                        long.TryParse(request.GetResponseHeader("X-Selection-Generation"), out var selectedGeneration) ? selectedGeneration : -1)
+                        && DisplayedCaptureGeometry == request.GetResponseHeader("X-Capture-Geometry"));
                     // A live HTTP server cannot certify arbitrarily old pixels.
-                    if (long.TryParse(request.GetResponseHeader("X-Capture-Alive"), out var alive)
+                    if (sameSource && long.TryParse(request.GetResponseHeader("X-Capture-Alive"), out var alive)
                         && long.TryParse(request.GetResponseHeader("X-Captured-At"), out var captured)
                         && CaptureIsFresh(captured, alive, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()))
                         lastConfirmed = alive;

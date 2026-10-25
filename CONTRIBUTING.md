@@ -59,3 +59,10 @@ compatibility. Test evidence and outstanding gates are recorded in GitHub #5.
 
 - [Placement and orientation lifecycle contract](docs/product-workflow/PLACEMENT_ORIENTATION_CONTRACT.md)
 - [Direct workspace arrangement and surface assistance](docs/product-workflow/WORKSPACE_ARRANGEMENT.md)
+
+
+## P2.5 preview input and spatial drawing
+
+P2.5 is isolated on `codex/talia-p2-5-blender-interaction`. Enable it explicitly with `CALHACKS_P25=1` or `--p25`; the separate capture helper also requires `--enable-input`. Default P2 launch and accepted placement/Arrange controls stay unchanged. Do not use the current P2 Player/helper/native document for a P2.5 trial without a coordinated handoff.
+
+Read [preview controls, coverage and launch instructions](docs/product-workflow/P2_5_PREVIEW_INTERACTION.md), [native/spatial contracts](docs/product-workflow/P2_5_SPATIAL_BRIDGE.md) and [verification and remaining runtime acceptance](docs/product-workflow/P2_5_RESULTS.md). The Windows build entry is `P25Build.Windows`; isolated launch preflight is `desktop-capture/launch_p25.py`. Compiler/mock checks do not establish native button or headset usability acceptance. No FPS target or main merge is implied.
