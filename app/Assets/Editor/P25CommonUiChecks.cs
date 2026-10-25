@@ -29,6 +29,7 @@ public static class P25CommonUiChecks
 
     public static void RunNativeOnly()
     {
+        RunEditingWorkflow();
         using (var f = new Fixture())
         {
             var names = ((List<Button>)Get(f.Preview, "buttons")).Select(b => b.name).ToArray();
@@ -111,6 +112,74 @@ public static class P25CommonUiChecks
                     "actual direct gesture uses native UUID/generation and typed command " + tool);
         }
         Debug.Log("P3_BLENDER_ONLY_CHECK PASS no alternate editing menus; generic keyboard/release barrier; native tool/mode/sketch/options/units/generation/modal/removal invalidation; no GUI/headset acceptance");
+    }
+
+    public static void RunEditingWorkflow()
+    {
+        using (var f = new Fixture())
+        {
+            f.NativeReady();
+            f.Preview.BeginModelEditing(); f.Tick();
+            Check(f.Panel("guidePanel").gameObject.activeInHierarchy && (bool)Get(f.Preview, "inputEnabled"),
+                "Edit model opens native Blender input and visible guide without toggling an owned session off");
+            f.Click("Next guide");
+            Check(((Text)Get(f.Preview, "guideText")).text.Contains("Edit Mode"), "guide explains real native mesh editing");
+            f.Click("Next guide");
+            Check(((Text)Get(f.Preview, "guideText")).text.Contains("does not change Blender geometry"),
+                "guide distinguishes arrangement from a native edit");
+            Gap(f, "guidePanel");
+            f.Click("Close editing guide"); f.Tick();
+            Check(!f.Panel("guidePanel").gameObject.activeInHierarchy, "guide can close to expose Blender menus");
+        }
+        using (var f = new Fixture())
+        {
+            f.NativeReady(); int executed = 0, failed = 0;
+            f.Preview.HandoffNativeCommand(() => executed++, reason => failed++);
+            Check((bool)Get(f.Preview, "endAfterRelease") && executed == 0 && failed == 0,
+                "Input ON native command first enters helper release barrier");
+            f.Preview.HandoffNativeCommand(() => executed += 100, reason => failed++);
+            Check(failed == 1, "a second command cannot replace the waiting edit");
+            Invoke(f.Preview, "FlushNativeCommand"); Check(executed == 0, "owned native lease prevents sending");
+            Set(f.Preview, "endAfterRelease", false);
+            Invoke(f.Preview, "FlushNativeCommand"); Check(executed == 0, "local input release alone cannot admit the edit");
+            f.Fresh(); Invoke(f.Preview, "FlushNativeCommand"); Invoke(f.Preview, "FlushNativeCommand");
+            Check(executed == 1 && failed == 1 && !(bool)Get(f.Preview, "inputEnabled"),
+                "fresh released native owner permits exactly one edit and leaves Input OFF");
+        }
+        foreach (string refusal in new[] { "modal", "timeout", "tracking", "stale", "ending", "token", "malformed_owner" })
+        {
+            using var f = new Fixture(); f.NativeReady(); int executed = 0, failed = 0;
+            if (refusal == "modal") { var native = f.Native(true); native["modal_active"] = true; f.Drawing.SetNativeState(native); }
+            f.Preview.HandoffNativeCommand(() => executed++, reason => failed++);
+            if (refusal == "timeout") Set(f.Preview, "pendingNativeUntil", float.NegativeInfinity);
+            if (refusal == "tracking") f.Preview.TrackingLost(f.Preview.PrimaryHand);
+            if (refusal == "stale") { f.Fresh(); Set(f.Drawing, "stateAt", float.NegativeInfinity); Set(f.Preview, "endAfterRelease", false); }
+            if (refusal == "ending") { var native = f.Native(); native["ui_ending"] = true; f.Drawing.SetNativeState(native); Set(f.Preview, "endAfterRelease", false); }
+            if (refusal == "token") { var native = f.Native(); native["ui_session_id"] = "retained"; f.Drawing.SetNativeState(native); Set(f.Preview, "endAfterRelease", false); }
+            if (refusal == "malformed_owner") { var native = f.Native(); native["ui_owner"] = "unknown"; f.Drawing.SetNativeState(native); Set(f.Preview, "endAfterRelease", false); }
+            Invoke(f.Preview, "FlushNativeCommand");
+            Check(executed == 0, "handoff never sends through " + refusal);
+            if (refusal == "modal" || refusal == "timeout" || refusal == "tracking") Check(failed == 1, "explicit refusal reported for " + refusal);
+        }
+        using (var f = new Fixture())
+        {
+            Set(f.Host, "sessionId", "session"); Set(f.Host, "hostEpoch", "host"); Set(f.Host, "welcomeDocumentId", "doc");
+            Set(f.Host, "welcomeOpenEpoch", "open"); Set(f.Host, "actorId", "actor");
+            var generations = (Dictionary<string, long>)Get(f.Host, "generations"); generations[A] = 3;
+            const string identity = "session/host/doc/open/actor";
+            Check(Invoke(f.Host, "CommandHandoffContextError", identity, A, 3L) == null, "unchanged native identity and generation admit the delayed intent");
+            generations[A] = 4;
+            Check(Invoke(f.Host, "CommandHandoffContextError", identity, A, 3L) != null, "changed native target generation rejects the delayed intent");
+            generations.Remove(A);
+            Check(Invoke(f.Host, "CommandHandoffContextError", identity, A, 3L) != null, "removed native target rejects delayed intent");
+            foreach (string field in new[] { "sessionId", "hostEpoch", "welcomeDocumentId", "welcomeOpenEpoch", "actorId" })
+            {
+                var before = Get(f.Host, field); Set(f.Host, field, "changed");
+                Check(Invoke(f.Host, "CommandHandoffContextError", identity, null, 0L) != null, "changed native identity rejects handoff: " + field);
+                Set(f.Host, field, before);
+            }
+        }
+        Debug.Log("P25_EDIT_WORKFLOW_CHECK PASS actual Edit model guide/native input/curved overlay routing/ACK-owner-state barrier/single send/modal+timeout+tracking+stale+ending refusal; no native GUI or physical acceptance");
     }
 
     sealed class Fixture : IDisposable

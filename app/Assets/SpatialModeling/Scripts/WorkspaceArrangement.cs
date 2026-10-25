@@ -17,7 +17,7 @@ namespace SpatialModeling
         }
         readonly List<Entry> history = new List<Entry>();
         public bool AssistEnabled { get; private set; } = true;
-        public bool EditModelAvailable => false;
+        public bool EditModelAvailable => PreviewInteraction.Current != null;
         public WorkspaceSurfaces Surfaces { get; private set; }
         public string Instruction => "Grip: move · stick ←/→: rotate 15° · ↑/↓: distance · second grip: rotate/size";
         public string SurfaceState => Surfaces != null ? Surfaces.State : "Checking surfaces";
@@ -44,7 +44,8 @@ namespace SpatialModeling
                 scene.Table.Place();
         }
         public void ToggleAssist() { AssistEnabled=!AssistEnabled; HideGuide(); }
-        public void SelectArrange() { /* Edit model remains explicitly disabled until native editing is integrated. */ }
+        public void SelectArrange() { PreviewInteraction.Current?.EndModelEditing(); }
+        public void SelectEditModel() { PreviewInteraction.Current?.BeginModelEditing(); }
         public void Remember(Transform target)
         {
             if(target==null) return;

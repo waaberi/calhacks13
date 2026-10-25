@@ -22,6 +22,12 @@ namespace SpatialModeling
             && (string)NativeState["ui_session_id"] != null && !string.IsNullOrEmpty((string)NativeState["ui_session_id"]);
         public int NativeProcessId => NativeStateCurrent ? (int?)NativeState["process_id"] ?? 0 : 0;
         public bool NativeModalActive => (bool?)NativeState["modal_active"] ?? false;
+        // A typed edit must wait for fresh native confirmation of lease release,
+        // not merely for the local Input OFF flag or HTTP key-up acknowledgement.
+        public bool NativeCommandReady => NativeStateCurrent && !NativeModalActive && !NativeUiTransitionPending
+            && (NativeState["ui_owner"] == null || NativeState["ui_owner"].Type == JTokenType.Null)
+            && (bool?)NativeState["ui_ending"] != true
+            && string.IsNullOrEmpty((string)NativeState["ui_session_id"]);
         public string Tool => (string)NativeState["tool"] ?? "";
         public string StatusText => (ObjectToolsEnabled ? ObjectTools.TargetLabel + "\n" : TargetStatus) + status + "\n" + Session.Notice;
         public bool HasDraft => first.HasValue;

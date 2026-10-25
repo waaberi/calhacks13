@@ -97,6 +97,51 @@ namespace SpatialModeling
         public string SendCommand(string op, string targetId, JObject args, string source)
         {
             if (!CanSend) return null;
+            var preview = PreviewInteraction.Current;
+            if (preview == null || !preview.NeedsNativeCommandHandoff)
+                return SendCommandNow(op, targetId, args, source);
+            string id = Guid.NewGuid().ToString("N");
+            string identity = CommandIdentity;
+            long queuedGeneration = 0;
+            if (targetId != null && !generations.TryGetValue(targetId, out queuedGeneration)) return null;
+            var frozenArgs = (JObject)(args ?? new JObject()).DeepClone();
+            pendingOps[id] = op;
+            preview.HandoffNativeCommand(() =>
+            {
+                if (!pendingOps.ContainsKey(id)) return; // Disconnection already reported an unknown outcome; never send it later.
+                string contextError = CommandHandoffContextError(identity, targetId, queuedGeneration);
+                if (contextError != null)
+                { Answer(id, op, "rejected", "stale_context", contextError, null); return; }
+                if (SendCommandNow(op, targetId, frozenArgs, source, id) == null)
+                    Answer(id, op, "rejected", "not_connected", "The scene or target changed before input cleanup finished; no edit was sent.", null);
+            }, reason =>
+            {
+                // Defer synchronous admission failures until the caller has
+                // registered this request ID (voice tracks only returned IDs).
+                StartCoroutine(ReportHandoffFailure(id, op, reason));
+            });
+            return id;
+        }
+
+        System.Collections.IEnumerator ReportHandoffFailure(string id, string op, string reason)
+        {
+            yield return null;
+            Answer(id, op, "rejected", "busy", reason, null);
+        }
+
+        string CommandIdentity => sessionId + "/" + hostEpoch + "/" + welcomeDocumentId + "/" + welcomeOpenEpoch + "/" + actorId;
+        string CommandHandoffContextError(string identity, string targetId, long generation)
+        {
+            if (identity != CommandIdentity)
+                return "The native session changed during input cleanup; no edit was sent.";
+            if (targetId != null && (!generations.TryGetValue(targetId, out var current) || current != generation))
+                return "The target changed during input cleanup; no edit was sent. Select it and issue a fresh edit.";
+            return null;
+        }
+
+        string SendCommandNow(string op, string targetId, JObject args, string source, string requestId = null)
+        {
+            if (!CanSend) return null;
             var payload = new JObject
             {
                 ["session_id"] = sessionId,
@@ -114,7 +159,13 @@ namespace SpatialModeling
                 if (!generations.TryGetValue(targetId, out var generation)) return null;
                 payload["target"] = new JObject { ["id"] = targetId, ["generation"] = generation };
             }
-            string id = link.Send("command", payload);
+            string id;
+            if (requestId == null) id = link.Send("command", payload);
+            else
+            {
+                id = requestId;
+                link.SendEnvelope(new JObject { ["v"] = 1, ["type"] = "command", ["id"] = id, ["payload"] = payload });
+            }
             if (id != null) pendingOps[id] = op;
             return id;
         }

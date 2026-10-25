@@ -43,10 +43,9 @@ namespace SpatialModeling
         GameObject canvasObject, body;
         RawImage image;
         Text status, magnifyText, modeText, roomText, lockText;
-        Button magnifyButton, modeButton, roomButton, lockButton, pointedButton;
+        Button magnifyButton, modeButton, roomButton, lockButton, pointedButton, arrangeModeButton, editModeButton;
         Button[] buttons;
         WorkspaceArrangement arrangement;
-        Text assistText;
         WorkspaceInteraction interaction;
         WorkspacePassthrough passthrough;
         bool controllerHover;
@@ -196,7 +195,7 @@ namespace SpatialModeling
             modeText.text = interaction != null && interaction.MoveIndividualParts ? "Arrange: one part" : "Arrange: whole build";
             lockText.text = PositionLocked ? "Screen position LOCKED" : "Lock screen position";
             GlassTheme.State(lockButton, PositionLocked);
-            if(assistText!=null) assistText.text=arrangement!=null && arrangement.AssistEnabled ? "Surface help: on" : "Surface help: off";
+            RefreshEditingMode();
             roomButton.interactable = passthrough != null && passthrough.Supported;
             roomText.text = passthrough != null && passthrough.Supported
                 ? passthrough.Active ? "Room view: on" : "Room view: off" : "Room view: unavailable";
@@ -327,6 +326,7 @@ namespace SpatialModeling
             canvasObject.transform.localScale = Vector3.one * 0.001f;
             canvasObject.AddComponent<GlassRoot>();
             canvasObject.AddComponent<GlassCurvedCanvas>();
+            canvasObject.AddComponent<BlenderViewAppearance>();
             canvasObject.GetComponent<RectTransform>().sizeDelta = new Vector2(1840, 1700);
             var canvas = canvasObject.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
@@ -379,17 +379,25 @@ namespace SpatialModeling
                 Label("Label",item.transform,Vector2.zero,new Vector2(536,70),label,28);
                 return button;
             }
-            var arrangeButton=FrameAction("Arrange space mode",-600,"Arrange space ✓",()=>arrangement?.SelectArrange());
-            var editButton=FrameAction("Edit model mode",0,"Edit model · coming soon",null,false);
-            var assistButton=FrameAction("Surface assistance",600,"Surface help: on",()=>arrangement?.ToggleAssist());
-            assistText=assistButton.GetComponentInChildren<Text>();
+            var arrangeButton=FrameAction("Arrange space mode",-300,"Arrange space ✓",()=>arrangement?.SelectArrange());
+            var editButton=FrameAction("Edit model mode",300,"Edit model",()=>arrangement?.SelectEditModel());
             buttons = new[] { magnifyButton, modeButton, lockButton, roomButton,
-                arrangeButton,editButton,assistButton };
+                arrangeButton,editButton };
             foreach (var button in buttons) GlassTheme.StyleAction(button.gameObject);
-            GlassTheme.State(arrangeButton,true);
-            editButton.GetComponentInChildren<Text>().color=new Color(.55f,.55f,.55f,1);
+            arrangeModeButton=arrangeButton;editModeButton=editButton;
+            RefreshEditingMode();
             canvasObject.GetComponent<GlassCurvedCanvas>().ApplyToChildren();
+            canvasObject.GetComponent<BlenderViewAppearance>().Apply();
             body.SetActive(Visible);
+        }
+
+        public void RefreshEditingMode()
+        {
+            if(arrangeModeButton==null||editModeButton==null)return;
+            bool editing=PreviewInteraction.Current?.ModelEditingActive??false;
+            GlassTheme.State(arrangeModeButton,!editing);GlassTheme.State(editModeButton,editing);
+            arrangeModeButton.GetComponentInChildren<Text>().text=editing?"Arrange space":"Arrange space ✓";
+            editModeButton.GetComponentInChildren<Text>().text=editing?"Edit model ✓":"Edit model";
         }
 
         static GameObject Rect(string name, Transform parent, Vector2 position, Vector2 size)

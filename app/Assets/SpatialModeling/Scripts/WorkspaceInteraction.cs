@@ -219,6 +219,11 @@ namespace SpatialModeling
             var level=arrangement!=null?arrangement.Surfaces.RaycastLevel(ray,out levelDistance):null;
             bool levelFirst=level!=null && levelDistance<distance;
             if(levelFirst) distance=levelDistance;
+            var keyboard=KeyboardPassthrough.Current;
+            float keyboardDistance=4;
+            bool keyboardHit=keyboard!=null&&keyboard.RaycastHandle(ray,out keyboardDistance);
+            bool keyboardFirst=keyboardHit&&keyboardDistance<distance;
+            if(keyboardFirst) { distance=keyboardDistance;tableFirst=levelFirst=false; }
 
             // Optional P2.5 consumes only UI/drawing gestures. Existing held aim
             // mapping and P2 placement controls keep their original writers.
@@ -228,18 +233,20 @@ namespace SpatialModeling
                 && preview.RouteControllerHand(h.node, ray, h.armed && triggerNow,
                 gripNow || h.target != null || (table != null && table.IsPointing), axis,
                 Mathf.Min(Mathf.Min(hitPart != null ? partDistance : 4f, tableHit ? tableDistance : 4f),
-                    level != null ? levelDistance : 4f), out previewDistance, h.stickDown);
+                    Mathf.Min(level != null ? levelDistance : 4f,keyboardHit?keyboardDistance:4f)), out previewDistance, h.stickDown);
             if (previewRouted)
             {
                 distance = previewDistance;
                 if (!tableHit || previewDistance < tableDistance) tableFirst = false;
                 if (level != null && previewDistance < levelDistance) levelFirst = false;
+                if (keyboardHit && previewDistance < keyboardDistance) keyboardFirst = false;
             }
 
             if (h.target != null)
             {
                 if (!gripNow || (h.target == screen.Placement && (!screen.Visible || !BlenderScreen.CanGrabScreen(screen.PositionLocked)))
-                    || (table != null && h.target == table.Menu && !table.Menu.gameObject.activeInHierarchy)) Release(h);
+                    || (table != null && h.target == table.Menu && !table.Menu.gameObject.activeInHierarchy)
+                    || (keyboard!=null&&keyboard.IsPlacement(h.target)&&!keyboard.Visible)) Release(h);
                 else
                 {
                     if(triggerPressed) h.alignRequested=true;
@@ -258,10 +265,17 @@ namespace SpatialModeling
                         : table != null && h.target == table.Menu ? "Aim to move menu · stick: distance · release grip: place"
                         : h.target == screen.Placement ? "Aim to move screen · stick: distance / size · release grip: place"
                         : "Aim to move whole build · release grip: place";
-                    if(arrangement!=null) Instruction=arrangement.Surfaces.IsLevel(h.target)
+                    if(keyboard!=null&&keyboard.IsPlacement(h.target)) Instruction="Aim: align real keyboard window · stick: distance · two grips: resize · release: place";
+                    else if(arrangement!=null) Instruction=arrangement.Surfaces.IsLevel(h.target)
                         ? "Aim: move plane independently · stick: rotate/distance · release: place · Align: Manage planes"
                         : "Aim: move · stick: rotate/distance · trigger: align to guide · stick click: "+(h.freePlacement?"surface help":"free placement");
                 }
+            }
+            else if(keyboardFirst)
+            {
+                Instruction="Grip cyan handle to align the real keyboard window · two grips resize";
+                if(gripPressed&&(other?.target==keyboard.Placement||!Conflicts(other?.target,keyboard.Placement)))
+                    Begin(h,keyboard.Placement,null,aim,ray.GetPoint(distance));
             }
             else if(levelFirst)
             {
@@ -308,7 +322,7 @@ namespace SpatialModeling
                     (MoveIndividualParts ? "grip: arrange part" : "grip: move whole build");
                 if (gripPressed && (other?.target==target || !Conflicts(other?.target, target))) Begin(h, target, MoveIndividualParts ? hitPart : null, aim, ray.GetPoint(distance));
             }
-            h.hasHit = previewRouted || levelFirst || tableFirst || hitScreen || hitPart != null;
+            h.hasHit = previewRouted || keyboardFirst || levelFirst || tableFirst || hitScreen || hitPart != null;
             h.pointerDistance = distance;
             return true;
         }
@@ -461,8 +475,9 @@ namespace SpatialModeling
                 var pose = FollowPlacementRay(new Pose(h.stableAim.position, h.stableAim.rotation), h.rayRelative,
                     h.depth,h.preserveRotation,h.placementRotation,h.rotationOffset);
                 var unconstrained=pose;
-                if(arrangement!=null) pose=arrangement.Apply(h.target,new Pose(h.target.position,h.target.rotation),pose,h.alignRequested,h.freePlacement);
-                if(arrangement!=null) h.rotationAxis=arrangement.RotationAxis;
+                if(arrangement!=null && !(KeyboardPassthrough.Current?.IsPlacement(h.target)??false)) pose=arrangement.Apply(h.target,new Pose(h.target.position,h.target.rotation),pose,h.alignRequested,h.freePlacement);
+                if(KeyboardPassthrough.Current?.IsPlacement(h.target)??false) h.rotationAxis=Vector3.up;
+                else if(arrangement!=null) h.rotationAxis=arrangement.RotationAxis;
                 if(h.alignRequested || (arrangement!=null && arrangement.Surfaces.IsLevel(h.target)
                     && (Quaternion.Angle(unconstrained.rotation,pose.rotation)>.01f || Vector3.Distance(unconstrained.position,pose.position)>.0001f)))
                 {
@@ -471,6 +486,8 @@ namespace SpatialModeling
                 h.alignRequested=false;
                 h.largestDisplayStep = Mathf.Max(h.largestDisplayStep, Vector3.Distance(h.target.position, pose.position));
                 h.target.SetPositionAndRotation(pose.position, pose.rotation);
+                if(scene.Table!=null && h.target==scene.Table.Menu)
+                    scene.Table.FaceMenuTowardUser(Camera.main.transform.position);
                 h.part?.RememberArrangement();
                 if (h.timingSeconds >= 2) LogGrabTiming(h);
             }
@@ -495,6 +512,7 @@ namespace SpatialModeling
                 Near(screen.RaycastSurface(currentRay, out float screenDistance), screenDistance);
                 if (scene.Table != null) Near(scene.Table.RaycastControls(currentRay, out float menuDistance), menuDistance);
                 if (arrangement != null) Near(arrangement.Surfaces.RaycastLevel(currentRay, out float levelDistance) != null, levelDistance);
+                if(KeyboardPassthrough.Current!=null) Near(KeyboardPassthrough.Current.RaycastHandle(currentRay,out float keyboardDistance),keyboardDistance);
                 if (PreviewInteraction.Current != null) Near(PreviewInteraction.Current.RaycastVisual(currentRay, out float previewDistance), previewDistance);
                 endpoint=currentRay.GetPoint(pointerDistance);
             }
@@ -525,7 +543,7 @@ namespace SpatialModeling
             hand.placementRotation=target.rotation;
             // Arrange a model/level by aiming, without wrist pitch/roll tilting it.
             // Screen/menu keep their accepted legacy mapping; sticks/two hands rotate deliberately.
-            hand.preserveRotation=arrangement!=null && ((scene!=null && target==scene.Placement) || part!=null || arrangement.Surfaces.IsLevel(target));
+            hand.preserveRotation=(KeyboardPassthrough.Current?.IsPlacement(target)??false) || (arrangement!=null && ((scene!=null && target==scene.Placement) || part!=null || arrangement.Surfaces.IsLevel(target)));
             hand.rotationAxis=Vector3.up;
             hand.freePlacement=hand.alignRequested=hand.turnLatched=false;
             hand.rayRelative = RelativeRayPose(pose, new Pose(target.position, target.rotation));
@@ -588,7 +606,7 @@ namespace SpatialModeling
             var previousScale=pairTarget.lossyScale;
             pairTarget.localScale=pairScale*ratio;
             if(pairTarget==scene.Placement) scene.Table.RememberDisplayScale();
-            if(arrangement!=null) pose=arrangement.Apply(pairTarget,new Pose(pairTarget.position,pairTarget.rotation),pose,
+            if(arrangement!=null && !(KeyboardPassthrough.Current?.IsPlacement(pairTarget)??false)) pose=arrangement.Apply(pairTarget,new Pose(pairTarget.position,pairTarget.rotation),pose,
                 left.alignRequested||right.alignRequested,left.freePlacement||right.freePlacement,previousScale);
             if(left.alignRequested||right.alignRequested || (arrangement!=null && arrangement.Surfaces.IsLevel(pairTarget)
                 && (Quaternion.Angle(unconstrained.rotation,pose.rotation)>.01f || Vector3.Distance(unconstrained.position,pose.position)>.0001f)))
@@ -598,6 +616,8 @@ namespace SpatialModeling
             }
             left.alignRequested=right.alignRequested=false;
             pairTarget.SetPositionAndRotation(pose.position,pose.rotation);
+            if(scene.Table!=null && pairTarget==scene.Table.Menu && Camera.main!=null)
+                scene.Table.FaceMenuTowardUser(Camera.main.transform.position);
             left.part?.RememberArrangement(); right.part?.RememberArrangement();
             Instruction="Two hands: rotate and resize · release one: continue moving · release both: place";
         }

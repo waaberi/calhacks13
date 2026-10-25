@@ -22,7 +22,7 @@ public static class SettingsMenuChecks
     static void Click(TablePlacement table, string name)
     {
         var action = Action(table, name);
-        var ray = new Ray(action.transform.position - action.transform.forward * .25f, action.transform.forward);
+        var ray = CombinedGlassChecks.ControlRay(action.GetComponent<RectTransform>(), .25f);
         Physics.SyncTransforms();
         Check(table.RaycastControls(ray, out float distance) && distance > 0, name + " has a discoverable physical collider");
         Check(table.HoverController(ray, true), name + " dispatches through the shared controller route");

@@ -27,18 +27,19 @@ namespace SpatialModeling
         public Material PreviewMaterial => material;
         public bool MenuDocked { get; private set; } = true;
         const float MenuScale = 0.00055f;
-        const float DockedMenuFactor = 1f / 3f;
+        public const float DockedMenuFactor = 0.55f;
         Transform display, preview, panel;
         bool seeded, pointing, cancelAllowed, menuTracked;
         Pose savedPose;
         float savedSize, savedHeight, savedDistance, savedYaw;
         Text title;
-        enum MenuPage { Arrange, Settings, Planes, Environment, Appearance }
+        enum MenuPage { Arrange, Settings, Planes, Environment, Appearance, Keyboard }
         MenuPage menuPage;
         int planePage;
         string planeNotice;
         public bool SettingsOpen => menuPage == MenuPage.Settings;
         WorkspaceRoomSetup roomSetup;
+        KeyboardPassthrough keyboardWindow;
         Material material;
         readonly List<XRInputSubsystem> subsystems = new List<XRInputSubsystem>();
         readonly List<TableAction> buttons = new List<TableAction>();
@@ -279,6 +280,17 @@ namespace SpatialModeling
             panel.gameObject.SetActive(seeded && tracked);
         }
 
+        // Called exclusively by the active grab owner after aim-driven movement.
+        // World-placed menus retain their release orientation through head motion.
+        public void FaceMenuTowardUser(Vector3 head)
+        {
+            if (panel == null || MenuDocked) return;
+            var forward = panel.position - head;
+            if (forward.sqrMagnitude < .0001f) return;
+            var up = Mathf.Abs(Vector3.Dot(forward.normalized, Vector3.up)) > .98f ? Vector3.forward : Vector3.up;
+            panel.rotation = Quaternion.LookRotation(forward, up);
+        }
+
         public void PinMenu()
         {
             if (panel == null || !panel.gameObject.activeInHierarchy) return;
@@ -309,16 +321,14 @@ namespace SpatialModeling
         public bool RaycastControls(Ray ray, out float distance)
         {
             distance = 4f;
-            RaycastHit panelHit = default;
             bool hit = panel != null && panel.gameObject.activeInHierarchy &&
-                panel.GetComponent<Collider>().Raycast(ray, out panelHit, distance);
-            if(hit && !GlassTheme.ContainsWorld(panel,panelHit.point)) hit=false;
-            if (hit) distance = panelHit.distance;
+                GlassRaycast.Hit(panel.GetComponent<RectTransform>(),ray,out distance,out _);
+            if (!hit) distance = 4f;
             foreach (var action in buttons)
             {
                 if (action == null || !action.gameObject.activeInHierarchy) continue;
-                if (action.GetComponent<Collider>().Raycast(ray, out var result, distance) && GlassTheme.ContainsWorld(action.transform,result.point))
-                { distance = result.distance; hit = true; }
+                if (GlassRaycast.Hit(action.GetComponent<RectTransform>(),ray,out var actionDistance,out _) && actionDistance <= distance)
+                { distance = actionDistance; hit = true; }
             }
             return hit;
         }
@@ -330,8 +340,8 @@ namespace SpatialModeling
             foreach (var action in buttons)
             {
                 if (action == null || !action.gameObject.activeInHierarchy) continue;
-                if (action.GetComponent<Collider>().Raycast(ray, out var result, distance) && GlassTheme.ContainsWorld(action.transform,result.point))
-                { distance = result.distance; selected = action; }
+                if (GlassRaycast.Hit(action.GetComponent<RectTransform>(),ray,out var actionDistance,out _) && actionDistance <= distance)
+                { distance = actionDistance; selected = action; }
             }
             if(selected==null) return false;
             // Page callbacks may destroy/rebuild this action. Retain the hit
@@ -345,9 +355,14 @@ namespace SpatialModeling
         {
             if (panel != null) return;
             if(roomSetup==null) roomSetup=gameObject.AddComponent<WorkspaceRoomSetup>();
+            if(keyboardWindow==null)keyboardWindow=GetComponent<KeyboardPassthrough>()??gameObject.AddComponent<KeyboardPassthrough>();
             panel = new GameObject("P2 left-hand placeable menu", typeof(RectTransform), typeof(Canvas), typeof(RoundedGlassImage)).transform;
             panel.localScale = Vector3.one * MenuScale * (MenuDocked ? DockedMenuFactor : 1f);
             panel.gameObject.AddComponent<GlassRoot>();
+            // Same gentle cylindrical treatment as the Blender view, scaled to
+            // this narrower canvas. Text, controls and pointer hits share the arc.
+            var curve=panel.gameObject.AddComponent<GlassCurvedCanvas>();
+            curve.Radius=2800f;
             var canvas = panel.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
             var arrangement=GetComponent<WorkspaceArrangement>() ?? FindFirstObjectByType<WorkspaceArrangement>();
@@ -375,6 +390,7 @@ namespace SpatialModeling
                 ("Return to left hand", DockMenu)
             };
             if(compact) actions=new (string, Action)[] {
+                ("Surface detection: "+(arrangement.AssistEnabled?"ON":"OFF"),()=>{arrangement.ToggleAssist();RefreshMenu();}),
                 ("Undo placement",arrangement.UndoPlacement),
                 ("Add horizontal plane",()=>arrangement.Surfaces.BeginPlane("horizontal")),
                 ("Add vertical plane",()=>arrangement.Surfaces.BeginPlane("vertical")),
@@ -385,7 +401,7 @@ namespace SpatialModeling
                 ("Show room geometry",()=>{ arrangement.Surfaces.ToggleDetected(); RefreshMenu(); }),
                 ("Auto surfaces on/off",arrangement.Surfaces.ToggleAutomatic),
                 ("Environment setup",()=>SetupMenu(true)), ("Manage planes",()=>ChangeMenu(MenuPage.Planes)),
-                ("Surface help on/off",arrangement.ToggleAssist), ("Actual size",RestoreActualSize),
+                ("Actual size",RestoreActualSize),
                 (FindFirstObjectByType<BlenderScreen>()?.PositionLocked == true ? "Unlock Blender screen" : "Lock Blender screen",
                     ()=>{ FindFirstObjectByType<BlenderScreen>()?.TogglePositionLock(); RefreshMenu(); }),
                 ("Pointer: " + (PreviewInteraction.Current?.PrimaryHand==UnityEngine.XR.XRNode.LeftHand?"Left":"Right"),()=>{
@@ -393,6 +409,7 @@ namespace SpatialModeling
                     if(preview!=null) preview.SetPointerHand(preview.PrimaryHand==UnityEngine.XR.XRNode.RightHand?UnityEngine.XR.XRNode.LeftHand:UnityEngine.XR.XRNode.RightHand);
                     RefreshMenu();
                 }),
+                ("Blender view: "+(BlenderViewAppearance.Opaque?"opaque":"transparent"),()=>{BlenderViewAppearance.ToggleOpaque();RefreshMenu();}),
                 ("Appearance / accessibility",()=>ChangeMenu(MenuPage.Appearance)),
                 ("Voice transcription: " + ((GetComponent<VoiceUiAdapter>() ?? FindFirstObjectByType<VoiceUiAdapter>())?.ShowTranscription == true ? "ON" : "OFF"),()=>{
                     var adapter=GetComponent<VoiceUiAdapter>() ?? FindFirstObjectByType<VoiceUiAdapter>();
@@ -404,7 +421,13 @@ namespace SpatialModeling
                     if(adapter!=null)adapter.SetSelectionPopups(!adapter.SelectionPopups);
                     RefreshMenu();
                 }),
+                ("Physical keyboard",()=>ChangeMenu(MenuPage.Keyboard)),
                 ("Back to arrange",()=>ChangeMenu(MenuPage.Arrange))
+            };
+            if(compact && menuPage==MenuPage.Keyboard) actions=new (string,Action)[] {
+                ("Keyboard window: "+(keyboardWindow.Requested?"ON":"OFF"),()=>{keyboardWindow.Toggle();RefreshMenu();}),
+                ("Place keyboard window",()=>{keyboardWindow.PlaceFromHead();RefreshMenu();}),
+                ("Back to Settings",()=>ChangeMenu(MenuPage.Settings))
             };
             if(compact && menuPage==MenuPage.Appearance) actions=new (string,Action)[] {
                 ($"Text size: {GlassTheme.TextScale:0.##}×",()=>{GlassTheme.CycleText();RefreshMenu();}),
@@ -463,16 +486,18 @@ namespace SpatialModeling
                 action.Click=()=>ChangeMenu(menuPage==MenuPage.Settings?MenuPage.Arrange:MenuPage.Settings);
                 buttons.Add(action);
             }
+            curve.ApplyToChildren();
             panel.gameObject.SetActive(seeded && (!MenuDocked || menuTracked));
         }
 
         string MenuHeading(WorkspaceArrangement arrangement)
         {
+            if(menuPage==MenuPage.Keyboard) return "Physical laptop keyboard\n"+keyboardWindow.State+"\nManual real-room window · not automatic keyboard tracking";
             if(menuPage==MenuPage.Appearance) return "Appearance\nReadable glass · settings saved on this PC\nText and targets enlarge together";
             if(menuPage==MenuPage.Environment) return roomSetup.Heading;
             if(menuPage==MenuPage.Settings) return "Settings\nRoom geometry: "+(arrangement.Surfaces.ShowDetected?"shown":"hidden")+
                 " · auto surfaces: "+(arrangement.Surfaces.AutomaticEnabled?"on":"off")+
-                "\nSurface help: "+(arrangement.AssistEnabled?"on":"off")+"\n"+ScaleLabel;
+                "\nSurface detection: "+(arrangement.AssistEnabled?"on":"off")+"\n"+ScaleLabel;
             if(menuPage==MenuPage.Planes) return "Horizontal / vertical planes\n"+(string.IsNullOrEmpty(planeNotice)?"Manual corrections stay independent":planeNotice)+"\nPage "+(planePage+1)+" · "+arrangement.Surfaces.PlaneTargets.Count+" planes";
             return $"Arrange space · {(MenuDocked ? "left hand" : "in space")}\n{arrangement.SurfaceState}\n{ScaleLabel}";
         }

@@ -23,6 +23,8 @@ namespace SpatialModeling
         public bool CapturesScroll { get; private set; }
         const string PointerHandPreference = "SpatialModeling.PreviewPointerLeft";
         public bool OwnsControllerButtons => inputEnabled || focusRequested || windowResuming || endAfterRelease || NativeInputOwned;
+        public bool ModelEditingActive => OwnsControllerButtons || guideShown || spatialRequested || pendingNativeCommand!=null
+            || (Drawing!=null&&Drawing.EnabledForInput);
         public XRNode PrimaryHand { get; private set; } = XRNode.RightHand;
         public void SetPointerHand(XRNode hand)
         {
@@ -34,7 +36,15 @@ namespace SpatialModeling
         public PreviewSpatialDrawing Drawing { get; private set; }
         BlenderScreen screen;
         HostScene scene;
-        RectTransform panel, keyboard, modelToolsPanel;
+        RectTransform panel, keyboard, modelToolsPanel, guidePanel;
+        Text guideText;
+        bool guideShown;
+        int guidePage;
+        Action pendingNativeCommand;
+        Action<string> pendingNativeFailure;
+        float pendingNativeUntil;
+        public bool NeedsNativeCommandHandoff => OwnsControllerButtons || pendingNativeCommand != null
+            || (Drawing != null && Drawing.NativeUiTransitionPending);
         RectTransform shortcutPanel, numberPanel, windowPanel, mouseOptionsPanel;
         readonly List<Button> basicKeys = new List<Button>(), fullKeys = new List<Button>(), shortcutButtons = new List<Button>();
         readonly List<Button> numberFields = new List<Button>();
@@ -131,6 +141,7 @@ namespace SpatialModeling
             if (numberPanel != null) Destroy(numberPanel.gameObject);
             if (windowPanel != null) Destroy(windowPanel.gameObject);
             if (mouseOptionsPanel != null) Destroy(mouseOptionsPanel.gameObject);
+            if (guidePanel != null) Destroy(guidePanel.gameObject);
         }
 
         void Update()
@@ -147,6 +158,7 @@ namespace SpatialModeling
             if (numberPanel != null) numberPanel.gameObject.SetActive(shown && numbersShown);
             if (windowPanel != null) windowPanel.gameObject.SetActive(shown && windowsShown);
             if (mouseOptionsPanel != null) mouseOptionsPanel.gameObject.SetActive(shown && mouseOptionsShown);
+            if (guidePanel != null) guidePanel.gameObject.SetActive(shown && guideShown);
             if (!shown || scene == null || !scene.IsCurrent) Suspend();
             if (focusRequested && !endAfterRelease && Drawing != null && Drawing.IsNativeUiOwned)
             {
@@ -187,6 +199,7 @@ namespace SpatialModeling
             }
             if (endAfterRelease && !releaseQueued && session.Length != 0 && token.Length != 0)
             { Enqueue(new JObject { ["type"] = "release" }); releaseQueued = true; }
+            FlushNativeCommand();
             if (inputEnabled && Time.unscaledTime >= nextHeartbeat)
             { nextHeartbeat = Time.unscaledTime + .25f; Enqueue(new JObject { ["type"] = "heartbeat" }); }
             RefreshInputIndicator();
@@ -213,6 +226,7 @@ namespace SpatialModeling
 
         public void Suspend()
         {
+            CancelNativeCommand("Editing handoff cancelled because input or tracking changed; issue the command again when ready");
             ReleaseNative();
             if (inputEnabled || focusRequested || windowResuming || NativeInputOwned) RequestEndNativeUi();
             windowAuthority.Clear(); windowResuming = windowReleaseQueued = inputResync = windowsShown = false;
@@ -239,7 +253,7 @@ namespace SpatialModeling
                 if (button != null && button.gameObject.activeInHierarchy
                     && Hit(button.GetComponent<RectTransform>(), ray, out float d) && d <= distance)
                 { distance = d; found = true; }
-            foreach (var overlay in new[] { panel, keyboard, modelToolsPanel, shortcutPanel, numberPanel, windowPanel, mouseOptionsPanel })
+            foreach (var overlay in new[] { panel, keyboard, modelToolsPanel, shortcutPanel, numberPanel, windowPanel, mouseOptionsPanel, guidePanel })
                 if (overlay != null && overlay.gameObject.activeInHierarchy && Hit(overlay, ray, out float d) && d <= distance)
                 { distance = d; found = true; }
             if (screen != null && screen.TryPreviewPoint(ray, out _, out float imageDistance) && imageDistance <= distance)
@@ -285,7 +299,7 @@ namespace SpatialModeling
             if (modelToolsPanel != null && modelToolsPanel.gameObject.activeInHierarchy && Hit(modelToolsPanel, ray, out var modelDistance)
                 && modelDistance <= nearest)
             { ReleasePointer(); distance = modelDistance; return true; }
-            foreach (var overlay in new[] { shortcutPanel, numberPanel, windowPanel, mouseOptionsPanel })
+            foreach (var overlay in new[] { shortcutPanel, numberPanel, windowPanel, mouseOptionsPanel, guidePanel })
                 if (overlay != null && overlay.gameObject.activeInHierarchy && Hit(overlay, ray, out var overlayDistance) && overlayDistance <= nearest)
                 { ReleasePointer(); distance = overlayDistance; return true; }
             if (panel != null && panel.gameObject.activeInHierarchy && Hit(panel, ray, out var panelDistance) && panelDistance <= nearest)
@@ -453,8 +467,56 @@ namespace SpatialModeling
             else FocusNativeUi();
             RefreshInputIndicator();
         }
+        public void BeginModelEditing()
+        {
+            guideShown = true; guidePage = 0; RefreshGuide();
+            if (screen == null) screen = FindFirstObjectByType<BlenderScreen>();
+            if (screen != null && !screen.Visible) screen.Toggle();
+            if (!inputEnabled && !focusRequested && !windowResuming) FocusNativeUi();
+            else Notice = "Edit in Blender: point at its viewport or menus and use the front trigger. Open the guide for steps.";
+        }
+        public void EndModelEditing()
+        {
+            guideShown = false;
+            Suspend();
+            Notice = "Arrange space · grip moves the VR display; Blender geometry stays unchanged";
+        }
+        // One explicit command may cross the release barrier. Never queue a
+        // second writer, replay rejected input, or confirm/cancel a native modal.
+        public void HandoffNativeCommand(Action execute, Action<string> failed)
+        {
+            if (pendingNativeCommand != null)
+            { failed?.Invoke("Wait for the previous edit handoff to finish"); return; }
+            if (Drawing == null || Drawing.NativeModalActive || Drawing.Session.Busy || Drawing.HasDraft)
+            { failed?.Invoke("Finish or cancel the active Blender operation or VR drawing draft before this edit; Enter / Escape are available"); return; }
+            pendingNativeCommand = execute; pendingNativeFailure = failed;
+            pendingNativeUntil = Time.unscaledTime + 8f;
+            Drawing.SetEnabled(false); Drawing.SetObjectToolsEnabled(false);
+            spatialRequested = objectsRequested = false;
+            keyboardShown = modelToolsShown = numbersShown = shortcutsShown = windowsShown = false;
+            ReleaseNative(); RequestEndNativeUi();
+            Notice = "Releasing Blender input before the 3D edit; waiting for native confirmation";
+        }
+        void CancelNativeCommand(string reason)
+        {
+            var failed = pendingNativeFailure;
+            pendingNativeCommand = null; pendingNativeFailure = null;
+            if (failed != null) { Notice = reason; failed(reason); }
+        }
+        void FlushNativeCommand()
+        {
+            if (pendingNativeCommand == null) return;
+            if (Time.unscaledTime > pendingNativeUntil)
+            { CancelNativeCommand("Blender input cleanup was not confirmed; no edit was sent. Check the model and enable input again if needed"); return; }
+            if (endAfterRelease || Drawing == null || !Drawing.NativeCommandReady) return;
+            var execute = pendingNativeCommand;
+            pendingNativeCommand = null; pendingNativeFailure = null;
+            Notice = "Blender input released · sending the requested 3D edit once";
+            execute();
+        }
         void FocusNativeUi()
         {
+            if (pendingNativeCommand != null) { Notice = "Wait for the 3D edit handoff to finish"; return; }
             if (endAfterRelease) { Notice = "Waiting for native input cleanup before focusing again"; return; }
             lastInputFailure = "";
             if (state == null || (bool?)state["enabled"] != true || session.Length == 0)
@@ -836,6 +898,7 @@ namespace SpatialModeling
             AddButton(panel, "Full keyboard", 3, 1, () => OpenKeyboard(true));
             AddButton(panel, "Windows / dialogs", 4, 1, OpenWindows);
             AddButton(panel, "Next window", 5, 1, NextWindow);
+            BuildEditingGuide();
             mouseOptionsPanel = MakePanel("Optional mouse modes", new Vector2(0, -200), new Vector2(1840, 320));
             AddButton(mouseOptionsPanel, "Mouse left", 0, 0, () => { ReleaseNative(); questControls = false; mouseButton = "left"; });
             AddButton(mouseOptionsPanel, "Mouse right", 1, 0, () => { ReleaseNative(); questControls = false; mouseButton = "right"; });
@@ -887,6 +950,29 @@ namespace SpatialModeling
             // Controls are built after the screen's initial curve pass. Keep every
             // new panel, label and hit contour on that same cylinder.
             screen.Placement.GetComponent<GlassCurvedCanvas>()?.ApplyToChildren();
+        }
+
+        void BuildEditingGuide()
+        {
+            guidePanel = MakePanel("Blender editing guide", new Vector2(0, -100), new Vector2(1840, 640));
+            guidePanel.localPosition += Vector3.back * 10f;
+            AddButton(guidePanel, "Previous guide", 0, 0, () => { guidePage = (guidePage + 2) % 3; RefreshGuide(); });
+            AddButton(guidePanel, "Next guide", 1, 0, () => { guidePage = (guidePage + 1) % 3; RefreshGuide(); });
+            AddButton(guidePanel, "Start Blender editing", 2, 0, () => { guideShown = false; FocusNativeUi(); });
+            AddButton(guidePanel, "Close editing guide", 5, 0, () => guideShown = false);
+            guideText = MakeText(guidePanel, new Vector2(0, -36), new Vector2(1740, 440), "", 29);
+            guideText.alignment = TextAnchor.MiddleLeft;
+            RefreshGuide(); guidePanel.gameObject.SetActive(false);
+        }
+        void RefreshGuide()
+        {
+            if (guideText == null) return;
+            string[] pages = {
+                "1 / 3 · EDIT THE REAL BLENDER MODEL\n\nClose this guide, then point at Blender's viewport or native menus. Front trigger clicks; hold and aim to drag.\n\nSelect an object. Use Blender's Object / Add menus or left toolbar to move, rotate, scale and create geometry. These edits update the 3D model.\n\nLock screen position for side-grip right-click. Stick tilt scrolls / zooms; hold stick and tilt to pan. Grip on unlocked displays arranges the VR view only.",
+                "2 / 3 · MESH EDITING AND TYPING\n\nSelect a mesh in Blender, then choose Edit Mode in Blender's top-left mode menu. Select vertices / edges / faces and choose Blender's Mesh menu or toolbar tools.\n\nKeyboard opens letters and numbers; Full keyboard adds function / numpad keys. Click the intended Blender editor before typing. G / R / S start move / rotate / scale; Tab changes mode. Enter confirms, Escape cancels.\n\nA laptop keyboard is usable when Windows focus is on the captured Blender window.",
+                "3 / 3 · DIRECT VR DRAWING AND VOICE\n\nIn Blender choose a CAD sketch and its Line, Circle or Corner Rectangle tool. Return to Draw in VR. Input releases safely before the VR controller places two points on the native sketch plane.\n\nVoice edits automatically release preview input before sending one native edit. Finish / cancel a running Blender tool first. Input stays OFF afterward; enable it to return to Blender menus.\n\nTriggering a floating 3D object selects it for voice. Gripping it arranges its VR display; it does not change Blender geometry."
+            };
+            guideText.text = pages[guidePage];
         }
 
         void BuildModelTools()

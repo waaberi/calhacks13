@@ -53,7 +53,9 @@ namespace SpatialModeling
             vh.Clear();var rect=GetPixelAdjustedRect();if(rect.width<=0||rect.height<=0)return;
             float radius=Mathf.Min(Radius,Mathf.Min(rect.width,rect.height)*.5f);
             Color fill=color;
-            if(GlassTheme.ReducedTransparency||GlassTheme.HighContrast) fill.a=1;
+            bool opaque=GlassTheme.ReducedTransparency||GlassTheme.HighContrast
+                ||(BlenderViewAppearance.Opaque&&GetComponentInParent<BlenderViewAppearance>()!=null);
+            if(opaque) fill.a=1;
             if(GlassTheme.HighContrast) fill= new Color(fill.r*.65f,fill.g*.65f,fill.b*.65f,1);
             const int count=4*(Steps+1);
             void Add(Vector2 p)
@@ -61,7 +63,7 @@ namespace SpatialModeling
                 var vertex=UIVertex.simpleVert;vertex.position=p;vertex.color=fill;
                 vertex.uv0=new Vector2((p.x-rect.xMin)/rect.width,(p.y-rect.yMin)/rect.height);
                 vertex.uv1=new Vector4(rect.width,rect.height,radius,
-                    GlassTheme.ReducedTransparency||GlassTheme.HighContrast ? -1:IsPanel?1:Emphasized?2:0);
+                    opaque ? -1:IsPanel?1:Emphasized?2:0);
                 vh.AddVert(vertex);
             }
             for(int corner=0;corner<4;corner++)for(int j=0;j<=Steps;j++)

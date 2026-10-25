@@ -11,6 +11,18 @@ using UnityEngine.UI;
 
 public static class CombinedGlassChecks
 {
+    // Aim at the actual rendered/hit-test center of curved controls. Flat
+    // Transform.position points no longer describe their displayed surface.
+    public static Ray ControlRay(RectTransform rect,float distance=.4f)
+    {
+        var curve=rect.GetComponentInParent<GlassCurvedCanvas>();
+        if(curve==null)return new Ray(rect.position-rect.forward*distance,rect.forward);
+        var flat=curve.transform.InverseTransformPoint(rect.TransformPoint(rect.rect.center));
+        var point=curve.transform.TransformPoint(curve.Bend(flat));
+        float angle=flat.x/curve.Radius;
+        var normal=curve.transform.TransformDirection(new Vector3(Mathf.Sin(angle),0,Mathf.Cos(angle)));
+        return new Ray(point-normal*distance,normal);
+    }
     const BindingFlags Private=BindingFlags.Instance|BindingFlags.NonPublic;
     static void Check(bool value,string reason){if(!value)throw new Exception("COMBINED_GLASS: "+reason);}
     static object Get(object owner,string name)=>owner.GetType().GetField(name,Private).GetValue(owner);
@@ -45,23 +57,23 @@ public static class CombinedGlassChecks
             table.SeedFromHead(new Vector3(0,1.65f,0),Vector3.forward);table.Place();
             table.UpdateLeftHandMenu(new Pose(new Vector3(-.3f,1.15f,.3f),Quaternion.identity),new Vector3(0,1.65f,0),true);
             var dockedMenuScale=table.Menu.localScale;table.PinMenu();
-            Check(Vector3.Distance(table.Menu.localScale,dockedMenuScale*3f)<.000001f,"compact production menu expands to the existing full scale when pinned");
+            Check(Vector3.Distance(table.Menu.localScale,dockedMenuScale/TablePlacement.DockedMenuFactor)<.000001f,"compact production menu expands to the existing full scale when pinned");
             var page=typeof(TablePlacement).GetNestedType("MenuPage",BindingFlags.NonPublic);
             void Settings()=>Invoke(table,"ChangeMenu",Enum.Parse(page,"Settings"));
             TableAction[] Actions()=>table.Menu.GetComponentsInChildren<TableAction>(true);
             var arrangeNames=Actions().Select(a=>a.name).ToArray();
-            foreach(var name in new[]{"Undo placement","Add horizontal plane","Add vertical plane","Manage planes","Actual size","Return to left hand","Clear selection"})
+            foreach(var name in new[]{"Surface detection: ON","Undo placement","Add horizontal plane","Add vertical plane","Manage planes","Actual size","Return to left hand","Clear selection"})
                 Check(arrangeNames.Contains(name),"arrange control preserved: "+name);
             foreach(var name in new[]{"Select object","Pin menu here","Recover workspace"})
                 Check(!arrangeNames.Contains(name),"human-requested menu action removed: "+name);
             Settings();
-            Check(Vector3.Distance(table.Menu.localScale,dockedMenuScale*3f)<.000001f,"page rebuild preserves the full pinned menu scale");
-            foreach(var name in new[]{"Show room geometry","Auto surfaces on/off","Environment setup","Manage planes","Surface help on/off","Actual size","Lock Blender screen","Pointer: Right","Back to arrange","Appearance / accessibility","Voice transcription: OFF"})
+            Check(Vector3.Distance(table.Menu.localScale,dockedMenuScale/TablePlacement.DockedMenuFactor)<.000001f,"page rebuild preserves the full pinned menu scale");
+            foreach(var name in new[]{"Show room geometry","Auto surfaces on/off","Environment setup","Manage planes","Actual size","Lock Blender screen","Pointer: Right","Back to arrange","Appearance / accessibility","Voice transcription: OFF","Blender view: "+(BlenderViewAppearance.Opaque?"opaque":"transparent")})
                 Check(Actions().Any(a=>a.name==name),"Settings control preserved: "+name);
             void Toggle(string label)
             {
                 var action=Actions().Single(a=>a.name==label);var rect=action.GetComponent<RectTransform>();
-                Physics.SyncTransforms();var ray=new Ray(rect.position-rect.forward*.4f,rect.forward);
+                Physics.SyncTransforms();var ray=ControlRay(rect,.4f);
                 Check(table.HoverController(ray,true),"actual menu collider dispatches "+label);
             }
             Toggle("Voice transcription: OFF");

@@ -7,6 +7,9 @@ public static class GlassBuild
         GlassStabilityChecks.Run();
         GlassControllerChecks.Run();
         GlassEventRaycastChecks.Run();
+        HandheldMenuChecks.Run();
+        BlenderViewAppearanceChecks.Run();
+        KeyboardPassthroughChecks.Run();
         P25Build.Windows();
         CombinedGlassChecks.Run();
         Debug.Log("P3_GLASS_BUILD_RESULT Succeeded cumulative_P1_P2_P25=True physical_acceptance=False");
