@@ -539,3 +539,92 @@ def test_the_examples_pass_the_hand_written_checks():
                         ("lease.release", leases.release_problem)):
         for path in sorted((CONTRACTS / "examples").glob(f"{name}*.json")):
             assert check(json.loads(path.read_text("utf-8"))) is None, path.name
+
+
+class DeferredStore(session_store.MemoryStore):
+    """Hold reducer replies while the actual session/document changes."""
+
+    def __init__(self):
+        super().__init__(lease_ttl_ms=None)
+        self.waiting = []
+
+    def acquire_async(self, owner_id, mode, targets, done, names=None):
+        self.waiting.append((owner_id, mode, targets, done))
+
+    def decide(self):
+        owner, mode, targets, done = self.waiting.pop(0)
+        try:
+            lease = self.acquire(owner, mode, targets)
+        except session_store.SessionError as error:
+            done(None, error)
+        else:
+            done(lease, None)
+
+
+@pytest.mark.parametrize("change,code", [
+    ("document", "wrong_document"), ("session", "wrong_session"),
+    ("generation", "stale_revision"), ("links", "stale_revision"),
+    ("disconnect", "permission_denied"), ("permission", "permission_denied"),
+])
+def test_delayed_grant_rechecks_live_authority_and_releases_stale_reservation(change, code):
+    from types import SimpleNamespace as NS
+
+    store = DeferredStore()
+    actor = {"actor_id": "a" * 32, "name": "Talia", "role": "vr"}
+    store.join(actor)
+    sent = []
+    conn = NS(can_edit=True, send=sent.append)
+    # Identity-keyed lookup without a hashable connection fixture.
+    class Participants:
+        def get(self, key):
+            return actor if key is conn and change_state["connected"] else None
+    change_state = {"connected": True}
+    document = {"id": "d" * 32, "open_epoch": "e" * 32}
+    editor = FakeEditor()
+    sess = NS(store=store, participants=Participants(), session_id="b" * 32,
+              host_epoch="c" * 32, document=lambda: document, leases_changed=lambda: None)
+    manager = leases.Leases(sess, editor)
+    msg = protocol.message("lease.acquire", {
+        "session_id": sess.session_id, "host_epoch": sess.host_epoch,
+        "document_id": document["id"], "open_epoch": document["open_epoch"],
+        "actor_id": actor["actor_id"], "mode": "shared", "targets": [SHAFT]})
+    assert manager.acquire(msg, conn) is None
+    assert manager.acquire(msg, conn) is None  # pending retry is not another reducer call
+    assert len(store.waiting) == 1
+    if change == "document": document["open_epoch"] = "f" * 32
+    if change == "session": sess.host_epoch = "f" * 32
+    if change == "generation": editor.objects[SHAFT]["generation"] += 1
+    if change == "links": editor.links[SHAFT] = [PLATE]
+    if change == "disconnect": change_state["connected"] = False
+    if change == "permission": conn.can_edit = False
+    store.decide()
+    assert len(sent) == 1
+    assert sent[0]["type"] == "error" and sent[0]["payload"]["code"] == code
+    assert store.leases() == []
+
+
+def test_delayed_reply_does_not_resurrect_evicted_request_history():
+    from types import SimpleNamespace as NS
+    store = DeferredStore()
+    actor = {"actor_id": "a" * 32, "name": "Talia", "role": "vr"}
+    store.join(actor)
+    class Conn:
+        can_edit = True
+        def send(self, msg): pass
+    conn = Conn()
+    document = {"id": "d" * 32, "open_epoch": "e" * 32}
+    sess = NS(store=store, participants={conn: actor}, session_id="b" * 32,
+              host_epoch="c" * 32, document=lambda: document, leases_changed=lambda: None)
+    manager = leases.Leases(sess, FakeEditor(), max_requests=1)
+    def request():
+        return protocol.message("lease.acquire", {
+            "session_id": sess.session_id, "host_epoch": sess.host_epoch,
+            "document_id": document["id"], "open_epoch": document["open_epoch"],
+            "actor_id": actor["actor_id"], "mode": "shared", "targets": [SHAFT]})
+    first, second = request(), request()
+    manager.acquire(first, conn)
+    manager.acquire(second, conn)
+    store.decide()
+    store.decide()
+    assert len(manager.requests) == 1 and first["id"] not in manager.requests
+    assert manager.acquire(first, conn)["payload"]["code"] == "duplicate_request"

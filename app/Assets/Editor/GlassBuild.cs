@@ -3,6 +3,7 @@ public static class GlassBuild
 {
     public static void Windows()
     {
+        MultiUserIntegrationChecks.Run();
         GlassChecks.Run();
         GlassStabilityChecks.Run();
         GlassControllerChecks.Run();
