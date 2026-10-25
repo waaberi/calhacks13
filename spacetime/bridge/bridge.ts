@@ -133,8 +133,9 @@ class Pipe {
   }
 }
 
+let listening = false; // join: the local port stays open across SpacetimeDB reconnects
+
 function start(token: { roomId: string; proof: string }): void {
-  let opened = false;
   conn = DbConnection.builder()
     .withUri(URL)
     .withDatabaseName(DATABASE)
@@ -167,8 +168,8 @@ function start(token: { roomId: string; proof: string }): void {
               console.log(`Couldn't open the room: ${e?.message ?? e}`);
               process.exit(1);
             }
-          } else if (!opened) {
-            opened = true;
+          } else if (!listening) {
+            listening = true;
             listen(token);
           }
         })
