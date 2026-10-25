@@ -232,7 +232,8 @@ namespace SpatialModeling
             // mapping and P2 placement controls keep their original writers.
             var preview = PreviewInteraction.Current;
             float previewDistance = 0;
-            bool previewRouted = preview != null && preview.RouteControllerHand(h.node, ray, h.armed && triggerNow,
+            bool previewRouted = preview != null && h.target == null && !(table != null && table.IsPointing)
+                && preview.RouteControllerHand(h.node, ray, h.armed && triggerNow,
                 gripNow || h.target != null || (table != null && table.IsPointing), axis,
                 Mathf.Min(Mathf.Min(hitPart != null ? partDistance : 4f, tableHit ? tableDistance : 4f),
                     level != null ? levelDistance : 4f), out previewDistance, h.stickDown);

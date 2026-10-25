@@ -27,7 +27,7 @@ public static class P25WindowUiChecks
     static void Check(bool ok, string why) { if (!ok) throw new Exception("P25_WINDOW_UI: " + why); }
     public static void Run()
     {
-        Chooser(); SelectionSequence(); Handoff(); Revocation(); InputIndicator(); ControllerControls();
+        Chooser(); SelectionSequence(); Handoff(); Revocation(); InputIndicator(); ControllerControls(); WorkspaceRouting();
         Debug.Log("P25_WINDOW_UI_CHECK PASS actual chooser/pages/stale-choice/bounded-refresh/no-image-recovery/current-sequence/stamped-handoff/lease-retention/typed-staleness/mode-exit/overlay; actual OS popup capture unverified");
     }
 
@@ -77,6 +77,39 @@ public static class P25WindowUiChecks
         Check(f.Events.Any(e => (string)e["type"] == "release") && !(bool)Get(f.Preview, "mouseHeld") && !(bool)Get(f.Preview, "panShift")
             && (bool)Get(f.Preview, "endAfterRelease") && f.Sent.Count == 0, "tracking interruption releases temporary pan input and retains native lease through cleanup ACK");
         Debug.Log("P225_CONTROLLER_UI_CHECK PASS actual_ray_button_feedback_toggle_edges_lock_pose_front_left_side_right_stick_pan_scroll_tracking_cleanup");
+    }
+
+    static void WorkspaceRouting()
+    {
+        using var f = new Fixture();
+        Set(f.Host, "root", f.Host.transform);
+        var interaction = f.Host.gameObject.AddComponent<WorkspaceInteraction>();
+        Set(interaction, "scene", f.Host); Set(interaction, "screen", f.Screen);
+        var handType = typeof(WorkspaceInteraction).GetNestedType("Hand", BindingFlags.NonPublic);
+        var hand = Activator.CreateInstance(handType, true);
+        handType.GetField("node").SetValue(hand, XRNode.RightHand);
+        handType.GetField("armed").SetValue(hand, true);
+        var ray = new Ray(f.Image.transform.position - Vector3.forward * 2, Vector3.forward);
+        var route = typeof(WorkspaceInteraction).GetMethod("RouteHand", Private);
+        void Route(bool grip, bool trigger) => route.Invoke(interaction, new object[] { hand, null,
+            new Pose(ray.origin, Quaternion.identity), ray, grip, trigger, grip, trigger, Vector2.up, false });
+        f.Click("Lock screen position"); f.Events.Clear();
+        handType.GetField("target").SetValue(hand, f.Host.transform);
+        Route(true, true);
+        Check(f.Events.Count == 0 && !f.Sent.Any(m => (string)m["type"] == "command"),
+            "holding a workspace object over the locked image cannot also right-click or drag Blender");
+        handType.GetField("target").SetValue(hand, null);
+        handType.GetField("stickDown").SetValue(hand, true);
+        Route(false, false);
+        Check(f.Events.Any(e => (string)e["button"] == "middle" && (string)e["action"] == "down")
+            && f.Events.Any(e => (string)e["key"] == "SHIFT" && (string)e["action"] == "down")
+            && !f.Events.Any(e => (string)e["type"] == "scroll"),
+            "production workspace routing forwards held stick state for pan without wheel events");
+        handType.GetField("stickDown").SetValue(hand, false); Route(false, false);
+        Check(f.Events.Any(e => (string)e["button"] == "middle" && (string)e["action"] == "up")
+            && f.Events.Any(e => (string)e["key"] == "SHIFT" && (string)e["action"] == "up"),
+            "production workspace routing balances pan releases");
+        Debug.Log("P225_P3_ROUTING_CHECK PASS workspace_hold_excludes_native_click actual_stick_state balanced_pan no_wheel");
     }
 
     static void InputIndicator()

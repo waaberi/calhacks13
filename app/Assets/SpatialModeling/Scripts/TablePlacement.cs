@@ -375,7 +375,7 @@ namespace SpatialModeling
                 ("Surface help on/off",arrangement.ToggleAssist), ("Actual size",RestoreActualSize),
                 (FindFirstObjectByType<BlenderScreen>()?.PositionLocked == true ? "Unlock Blender screen" : "Lock Blender screen",
                     ()=>{ FindFirstObjectByType<BlenderScreen>()?.TogglePositionLock(); RefreshMenu(); }),
-                ("Pointer left / right",()=>{
+                ("Pointer: " + (PreviewInteraction.Current?.PrimaryHand==UnityEngine.XR.XRNode.LeftHand?"Left":"Right"),()=>{
                     var preview=PreviewInteraction.Current;
                     if(preview!=null) preview.SetPointerHand(preview.PrimaryHand==UnityEngine.XR.XRNode.RightHand?UnityEngine.XR.XRNode.LeftHand:UnityEngine.XR.XRNode.RightHand);
                     RefreshMenu();
