@@ -11,6 +11,17 @@ namespace SpatialModeling
         public long? Revision;
     }
 
+    public sealed class ActorInfo { public string Id = "", Name = "", Role = ""; }
+
+    public sealed class LeaseInfo
+    {
+        public string Id = "", Mode = "";
+        public ActorInfo Owner = new ActorInfo();
+        public List<string> Targets = new List<string>();
+    }
+
+    public sealed class ActivityNote { public string ActorName = "", Op = "", Outcome = "", Summary = "", Source = ""; }
+
     // #96: what the voice and menu code needs from the host connection.
     public partial class HostScene
     {
@@ -18,6 +29,17 @@ namespace SpatialModeling
         public event Action ConnectionLost;
         public event Action DocumentChanged;
         public event Action<CommandAnswer> CommandAnswered;
+        public event Action SessionChanged;
+        public event Action<ActivityNote> ActivityReceived;
+
+        readonly List<ActorInfo> participants = new List<ActorInfo>();
+        readonly List<LeaseInfo> leases = new List<LeaseInfo>();
+        public IReadOnlyList<ActorInfo> Participants => participants;
+        public IReadOnlyList<LeaseInfo> Leases => leases;
+        public string MyActorId => actorId;
+        // A scene is shown but the connection isn't current (disconnected, not responding): edits are off.
+        public bool SceneIsStale => haveScene && !(link != null && link.SocketOpen && connected && status == Status.Connected);
+
         // P4 voice (#146): the host resolver's messages, and errors answering any request (not only commands).
         public event Action Welcomed;
         public event Action<string, string> VoiceCandidatesReceived;   // (re, payload JSON)
@@ -55,6 +77,7 @@ namespace SpatialModeling
                 case HostEventKind.VoiceGrammar: VoiceGrammarReceived?.Invoke(e.Re, e.Text); break;
                 case HostEventKind.Closed:
                     canEdit = false; welcomed = false;
+                    participants.Clear(); leases.Clear(); SessionChanged?.Invoke();
                     if (wasConnected) ConnectionLost?.Invoke();
                     // contracts/README.md, Outcomes: a connection lost before the result is an unknown outcome.
                     // Report it (never replay it), so the sender can say "check the model".
@@ -70,6 +93,15 @@ namespace SpatialModeling
                     break;
                 case HostEventKind.Result:
                     Answer(e.Re, e.Op, e.Outcome, e.Code, e.Text, e.Revision);
+                    break;
+                case HostEventKind.Session:
+                    participants.Clear(); participants.AddRange(e.Participants);
+                    leases.Clear(); leases.AddRange(e.Leases);
+                    SessionChanged?.Invoke();
+                    break;
+                case HostEventKind.Activity:
+                    ActivityReceived?.Invoke(new ActivityNote
+                    { ActorName = e.ActorName, Op = e.Op, Outcome = e.Outcome, Summary = e.Text, Source = e.Source });
                     break;
                 case HostEventKind.Error:
                     if (e.Re.Length > 0) { Answer(e.Re, null, "rejected", e.Code, e.Text, null); RequestFailed?.Invoke(e.Re, e.Code); }
@@ -146,6 +178,9 @@ namespace SpatialModeling
                     into.Add(new KeyValuePair<string, string>(pair.Key, pair.Value.name));
             }
         }
+        // The name of any object in the scene, shown or not (a camera, an empty); null if there is none.
+        public string ObjectName(string id) => id != null && objects.TryGetValue(id, out var go) && go != null ? go.name : null;
+
         public bool TryGetBounds(string id, out Bounds bounds)
         {
             bounds = default;

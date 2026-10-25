@@ -181,6 +181,8 @@ namespace SpatialModeling
                     case "result":
                         Post(DecodeResult(p, msg["re"]?.Type == JTokenType.String ? (string)msg["re"] : ""));
                         break;
+                    case "session.update": Post(DecodeSession(p)); break;
+                    case "activity": Post(DecodeActivity(p)); break;
                     // P4 voice (#146): the host resolver's answers, passed on as JSON text for VoiceCore to parse.
                     case "voice.candidates":
                     case "voice.grammar":
@@ -210,7 +212,43 @@ namespace SpatialModeling
                 return msg;
             }
         }
+        static ActorInfo Actor(JToken t)
+        {
+            var o = t as JObject;
+            return new ActorInfo { Id = (string)o?["actor_id"] ?? "", Name = (string)o?["name"] ?? "", Role = (string)o?["role"] ?? "" };
+        }
 
+        // The complete lists of participants and leases; they replace the previous ones.
+        static HostEvent DecodeSession(JObject p)
+        {
+            if (p == null) throw new FormatException("no payload");
+            var e = new HostEvent(HostEventKind.Session);
+            if (p["participants"] is JArray ps) foreach (var a in ps) e.Participants.Add(Actor(a));
+            if (p["leases"] is JArray ls)
+                foreach (var l in ls)
+                {
+                    var lease = new LeaseInfo { Id = (string)l["lease_id"] ?? "", Mode = (string)l["mode"] ?? "", Owner = Actor(l["owner"]) };
+                    if (l["targets"] is JArray ts) foreach (var t in ts) lease.Targets.Add((string)t);
+                    e.Leases.Add(lease);
+                }
+            return e;
+        }
+
+        static HostEvent DecodeActivity(JObject p)
+        {
+            if (p == null) throw new FormatException("no payload");
+            var a = Actor(p["actor"]);
+            return new HostEvent(HostEventKind.Activity)
+            {
+                ActorId = a.Id,
+                ActorName = a.Name,
+                ActorRole = a.Role,
+                Op = (string)p["op"] ?? "",
+                Outcome = (string)p["outcome"] ?? "",
+                Source = (string)p["source"] ?? "",
+                Text = (string)p["summary"] ?? ""
+            };
+        }
         static HostEvent DecodeResult(JObject p, string re)
         {
             if (p == null) throw new FormatException("no payload");
@@ -372,7 +410,7 @@ namespace SpatialModeling
         }
     }
 
-    enum HostEventKind { Opened, Closed, Welcome, Scene, Error, Warning, InvalidScene, Message, Result, VoiceCandidates, VoiceGrammar }
+    enum HostEventKind { Opened, Closed, Welcome, Scene, Error, Warning, InvalidScene, Message, Result, VoiceCandidates, VoiceGrammar, Session, Activity }
 
     sealed class HostEvent
     {
@@ -386,6 +424,9 @@ namespace SpatialModeling
         public string Re = "", Op = "", Outcome = "";                                    // Result, Error
         public string SessionId = "", HostEpoch = "", ActorId = "";   // Welcome (DocumentId and OpenEpoch above)
         public bool CanEdit;                                                              // Welcome
+        public string ActorName = "", ActorRole = "", Source = "";                        // Activity
+        public readonly List<ActorInfo> Participants = new List<ActorInfo>();             // Session
+        public readonly List<LeaseInfo> Leases = new List<LeaseInfo>();                   // Session
         public readonly List<string> Removed = new List<string>();
         public readonly List<ObjectRecord> Objects = new List<ObjectRecord>();
 
