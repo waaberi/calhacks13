@@ -64,6 +64,17 @@ namespace SpatialModeling
             if(removed){components.Clear();ActiveId=order.LastOrDefault()??"";Epoch++;}
             if(!admitSelection||!(model["selection"] is JObject selected))return;
             var snapshot=Snapshot();
+            // Older hosts return an empty selection object after clearing the
+            // native active object. It is an explicit empty Object-mode state,
+            // not a partial update that may retain a previously selected ID.
+            // Only admit it through the same transaction admission gate as
+            // any other native selection; missing selection is still unknown.
+            if(selected.Count==0&&(string)model["mode"]=="OBJECT"&&(string)model["active_object_id"]=="")
+            {
+                order.Clear();generations.Clear();components.Clear();Component="object";ActiveId="";
+                if(!JToken.DeepEquals(snapshot,Snapshot()))Epoch++;
+                return;
+            }
             if(selected["objects"] is JArray nativeObjects)
             {
                 order.Clear();generations.Clear();

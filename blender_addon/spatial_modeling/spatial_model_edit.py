@@ -369,12 +369,25 @@ def read_state(context, sync=None):
     state = {"available": False, "reason": "", "native_tool": "", "mode": context.mode,
              "component": "", "active_object_id": "", "generation": 0,
              "topology_token": "", "vertices": [], "edges": [], "faces": [], "triangles": [],
-             "live_supported": context.mode in ("OBJECT", "EDIT_MESH"), "tool": "", "settings": {}, "selection": {}}
+             "live_supported": context.mode in ("OBJECT", "EDIT_MESH"), "tool": "", "settings": {},
+             "selection": {"component": "object", "indices": [], "objects": [], "active_id": ""}}
     try:
         tool, reason = _tool(context)
         component = _component(context) if context.mode in ("OBJECT", "EDIT_MESH") else ""
         state.update(native_tool=tool, component=component)
         obj = getattr(context, "active_object", None)
+        if obj is None:
+            # Selection is authoritative even without an active object. An
+            # unavailable edit tool must not look like an omitted selection
+            # field and leave a viewer's previous selected target latched.
+            selected = {"component": component or "object", "indices": [],
+                        "objects": [{"id": o.get("spatial_modeling_id", ""),
+                                     "generation": (sync.generation(o.get("spatial_modeling_id", "")) or 0) if sync else 0}
+                                    for o in getattr(context, "selected_objects", []) if o.get("spatial_modeling_id", "")],
+                        "active_id": ""}
+            selected["selection_token"] = hashlib.sha256(repr(selected).encode()).hexdigest()
+            state["selection"] = selected
+            state["selection_token"] = selected["selection_token"]
         if obj is not None:
             identity = obj.get("spatial_modeling_id", "")
             state["active_object_id"] = identity

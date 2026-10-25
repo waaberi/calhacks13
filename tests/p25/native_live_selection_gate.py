@@ -12,7 +12,18 @@ import bpy
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "blender_addon"))
-from spatial_modeling import document, edits, host, leases, live_edit, modeling_tools, protocol, session, spatial_model_edit, sync
+from spatial_modeling import (
+    document,
+    edits,
+    host,
+    leases,
+    live_edit,
+    modeling_tools,
+    protocol,
+    session,
+    spatial_model_edit,
+    sync,
+)
 
 
 def run(output):
@@ -97,6 +108,11 @@ def run(output):
                 assert bpy.context.active_object is None and not bpy.context.selected_objects
                 unavailable = spatial_model_edit.read_state(bpy.context, sync)
                 assert not unavailable["available"] and unavailable["settings"] == {}
+                assert unavailable["selection"]["objects"] == []
+                assert unavailable["selection"]["active_id"] == ""
+                assert unavailable["selection"]["component"] == "object"
+                assert unavailable["selection"]["indices"] == []
+                assert unavailable["selection"]["selection_token"] == unavailable["selection_token"]
                 near(matrix(), transformed)
                 transact("object.selection", {}, selected=True)
                 assert bpy.context.active_object == sync.find_object(oid)

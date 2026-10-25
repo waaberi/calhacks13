@@ -102,6 +102,35 @@ def test_state_serialization_failure_does_not_escape_preview_handler():
     assert state["vertices"] == state["edges"] == state["faces"] == state["triangles"] == []
 
 
+@pytest.mark.parametrize("tool", ["builtin.move", "builtin.rotate", "builtin.scale", "builtin.select_box"])
+def test_no_active_object_exports_authoritative_empty_selection_without_enabling_editing(monkeypatch, tool):
+    monkeypatch.setattr(native, "_tool", lambda _context: (tool, ""))
+    monkeypatch.setattr(native, "_component", lambda _context: "object")
+    context = NS(mode="OBJECT", active_object=None, selected_objects=[])
+    state = native.read_state(context)
+    assert not state["available"] and state["live_supported"]
+    assert state["reason"] == "Select an object in the Blender panel first."
+    assert state["native_tool"] == tool and state["active_object_id"] == ""
+    assert state["generation"] == 0 and state["topology_token"] == "" and state["settings"] == {}
+    assert state["selection"] == {"component": "object", "objects": [], "indices": [],
+                                  "active_id": "", "selection_token": state["selection_token"]}
+    assert len(state["selection_token"]) == 64
+    assert native.read_state(context)["selection"] == state["selection"]
+    assert context.active_object is None and context.selected_objects == []
+
+
+def test_selected_objects_without_active_object_do_not_invent_an_active_target(monkeypatch):
+    monkeypatch.setattr(native, "_tool", lambda _context: ("builtin.scale", ""))
+    monkeypatch.setattr(native, "_component", lambda _context: "object")
+    obj = {"spatial_modeling_id": "a" * 32}
+    context = NS(mode="OBJECT", active_object=None, selected_objects=[obj])
+    state = native.read_state(context, NS(generation=lambda _id: 17))
+    assert state["selection"]["objects"] == [{"id": "a" * 32, "generation": 17}]
+    assert state["selection"]["active_id"] == "" and state["active_object_id"] == ""
+    assert not state["available"] and state["settings"] == {}
+    assert context.active_object is None and context.selected_objects == [obj]
+
+
 @pytest.mark.parametrize("mode,component", [("OBJECT", "object"), ("EDIT_MESH", "vertex"), ("EDIT_MESH", "edge")])
 def test_live_individual_extrude_reports_face_mode_before_native_geometry(monkeypatch, mode, component):
     monkeypatch.setattr(native, "_tool", lambda _context: ("builtin.extrude_individual", ""))
