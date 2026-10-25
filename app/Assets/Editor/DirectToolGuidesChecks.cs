@@ -49,6 +49,7 @@ public static class DirectToolGuidesChecks
         var frame=Frame("mesh.loop_cut","edge",new[]{11});frame.Acknowledged=new JObject{["cuts"]=1,["slide"]=.5};
         var result=DirectToolGuides.Build(frame);var ring=result.Segments.Where(s=>s.Kind=="quad ring preview").ToArray();
         Check(ring.Length==2&&result.Limitation=="","one seed traverses exactly two visible opposite-quad links");
+        var direction=result.Segments.First(s=>s.Kind=="positive slide direction");Check(Vector3.Dot(direction.B-direction.A,Vector3.up)>0,"positive slide arrow points from native seed rail endpoint zero toward endpoint one, matching increasing backend interpolation t");
         foreach(var segment in ring){Check(Mathf.Abs(segment.A.y-.085f)<.00001f&&Mathf.Abs(segment.B.y-.085f)<.00001f,"slide applies backend oriented t += slide*(1-t) on each rail");Check(Mathf.Abs(segment.A.z)<.00001f&&Mathf.Abs(segment.B.z)<.00001f,"quad cut stays on actual native face plane");}
         frame.Acknowledged=new JObject{["cuts"]=2,["slide"]=-.5};result=DirectToolGuides.Build(frame);ring=result.Segments.Where(s=>s.Kind=="quad ring preview").ToArray();Check(ring.Length==4,"multiple cuts use every exact quad link");
         var ys=ring.SelectMany(s=>new[]{s.A.y,s.B.y}).Distinct().OrderBy(v=>v).ToArray();Check(ys.Length==2&&Mathf.Abs(ys[0]-(-.11333333f))<.00001f&&Mathf.Abs(ys[1]-(-.05666666f))<.00001f,"negative slide matches native t += slide*t");
@@ -75,6 +76,12 @@ public static class DirectToolGuidesChecks
         ((JObject)frame.Model["settings"])["variant"]="LAST";result=DirectToolGuides.Build(frame);Near(result.Points.First(p=>p.Kind=="merge LAST destination").Position,new Vector3(0,-.17f,0),"Merge LAST uses final captured native pick, not array index");
         frame.Model["selection"]["order_complete"]=false;result=DirectToolGuides.Build(frame);Check(result.Limitation.Length>0&&!result.Points.Any(p=>p.Kind.StartsWith("merge ",StringComparison.Ordinal)),"incomplete native order never invents First/Last destination");
         ((JObject)frame.Model["settings"])["variant"]="CURSOR";result=DirectToolGuides.Build(frame);Check(!result.Points.Any(p=>p.Kind.StartsWith("merge ",StringComparison.Ordinal)),"unexported cursor never creates a fake destination");
+        ((JObject)frame.Model["settings"])["variant"]="DISTANCE";((JObject)frame.Model["settings"])["distance_m"]=.0004;
+        result=DirectToolGuides.Build(frame);Check(result.Label.Contains("Distance threshold 0.4 mm")&&!result.Label.Contains("Blender accepted"),"idle merge-by-distance states exact captured threshold without claiming applied geometry distance");
+        frame.Held=true;frame.Acknowledged=new JObject{["variant"]="DISTANCE",["distance_m"]=.0003};result=DirectToolGuides.Build(frame);Check(result.Label.Contains("Blender accepted · distance threshold 0.3 mm"),"acknowledged merge threshold is labelled as an accepted parameter");
+        frame.Tool="mesh.dissolve";frame.Acknowledged=null;((JObject)frame.Model["settings"])["variant"]="LIMITED";((JObject)frame.Model["settings"])["angle_limit"]=Math.PI/36;
+        result=DirectToolGuides.Build(frame);Check(result.Label.Contains("Angle limit 5°"),"limited dissolve states exact captured angle limit in degrees");
+        frame.Tool="mesh.knife";((JObject)frame.Model["settings"])["cut_through"]=true;((JObject)frame.Model["settings"])["selected_only"]=true;result=DirectToolGuides.Build(frame);Check(result.Label.Contains("Cut through ON · selected only ON"),"Knife projected edit options remain explicit");
     }
     static void RealResourcesAndAppearance()
     {

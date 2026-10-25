@@ -120,8 +120,9 @@ namespace SpatialModeling
         {
             var a=f.Acknowledged;if(a==null)return f.Held||f.Waiting?"Waiting for Blender":"";
             var parts=new List<string>();
-            foreach(var pair in new[]{new[]{"normal_distance_m","normal"},new[]{"thickness_m","thickness"},new[]{"width_m","width"},new[]{"depth_m","depth"}})
+            foreach(var pair in new[]{new[]{"normal_distance_m","normal"},new[]{"thickness_m","thickness"},new[]{"width_m","width"},new[]{"depth_m","depth"},new[]{"distance_m","distance threshold"}})
                 if(a[pair[0]]!=null)parts.Add(Metric(a,pair[0],pair[1]));
+            if(a["angle_limit"]!=null)parts.Add("angle limit "+Number((double)a["angle_limit"]*180/Math.PI)+"°");
             if(a["normal_distance_m"]==null&&Wire(a["translation_m"],out var move))parts.Add("X "+Number(move.x*1000)+" / Y "+Number(move.z*1000)+" / Z "+Number(move.y*1000)+" mm");
             if(a["scale"] is JArray scale&&scale.Count==3)parts.Add("X ×"+Number((double)scale[0])+" / Y ×"+Number((double)scale[1])+" / Z ×"+Number((double)scale[2]));
             if(a["rotation"] is JArray rotation&&rotation.Count==4)parts.Add("shortest rotation "+Number(2*Math.Acos(Math.Min(1,Math.Abs((double)rotation[0])))*180/Math.PI)+"°");
@@ -193,6 +194,8 @@ namespace SpatialModeling
             {
                 string variant=(string)settings["variant"]??(string)settings["domain"]??"native setting";
                 action=tool.Substring(5)+" · "+variant+" · "+selected.Count+" "+component+" selected\nHold trigger and move to apply once; release = one Undo";
+                if(tool=="mesh.merge"&&variant=="DISTANCE"&&settings["distance_m"]!=null)action+="\nDistance threshold "+Number((double)settings["distance_m"]*1000)+" mm";
+                if(tool=="mesh.dissolve"&&variant=="LIMITED"&&settings["angle_limit"]!=null)action+="\nAngle limit "+Number((double)settings["angle_limit"]*180/Math.PI)+"°";
                 if(tool=="mesh.merge"&&component=="vertex"&&selected.Count>0)
                 {
                     bool ordered=(bool?)f.Model["selection"]?["order_complete"]==true;
