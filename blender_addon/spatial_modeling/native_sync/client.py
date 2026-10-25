@@ -306,6 +306,13 @@ class NativeClient:
         snapshot = self.document.capture(self.capture_path)
         return snapshot.sha256, snapshot
 
+    def _can_capture(self):
+        # Authors may finish a native Edit Mode operation without leaving Edit
+        # Mode. The adapter flushes settled BMesh data into the checkpoint. A
+        # received foreign graph still requires the stricter is_idle() gate.
+        can_capture = getattr(self.document, "can_capture", self.document.is_idle)
+        return can_capture()
+
     def _start_upload(self, pending):
         # An announced Host head is not yet this peer's native baseline. Local
         # edits remain based on the last applied/acknowledged checkpoint, so a
@@ -438,7 +445,7 @@ class NativeClient:
             return
         now = self.clock()
         if self.has_native_document or self.initial_local_work:
-            pending = self.watcher.poll(now, self.document.is_idle(), self._export)
+            pending = self.watcher.poll(now, self._can_capture(), self._export)
             if pending is not None:
                 if self._incoming_conflict:
                     self.watcher.reject(pending.request_id, "local_changes_before_receive")
@@ -463,5 +470,5 @@ class NativeClient:
                 and now - max(self._last_upload, self._last_query) > 15):
             self._send("native.query", {**self._fields(), "request_id": self.watcher.pending.request_id})
             self._last_query = now
-        if self._finish_requested and not self.watcher.has_local_changes and self.document.is_idle():
+        if self._finish_requested and not self.watcher.has_local_changes and self._can_capture():
             self._release()

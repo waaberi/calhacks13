@@ -461,3 +461,24 @@ def test_failed_preapply_audit_retains_actual_document_without_starting_apply(tm
     feed(client, b"incoming update", revision=1)
     assert doc.data == before and doc.applies == applies and not client.applying
     assert "not applied" in client.error
+
+
+def test_author_can_publish_and_finish_settled_edit_mode_but_foreign_apply_waits(tmp_path):
+    client, doc, sent, now = setup(tmp_path)
+    edit_turn(client)
+    doc.safe = False  # is_idle=False represents a local object remaining in Edit Mode
+    doc.can_capture = lambda: True  # settled BMesh data can be captured without a modal
+    pending = edited(client, doc, now, b"completed native Edit Mode operation")
+    assert pending is not None and sent[-1]["type"] == "native.begin"
+    assert client.finish_edit_turn()
+    client.receive("native.receipt", {"request_id": pending.request_id, "outcome": "applied",
+                                      "revision": 1, "checkpoint_hash": digest(b"host accepted")})
+    now[0] += .3
+    client.tick()
+    assert sent[-1]["type"] == "lease.release" and not client.is_editing
+    before = doc.applies
+    feed(client, b"next author's foreign checkpoint", revision=2)
+    assert doc.applies == before and client._download is not None
+    doc.safe = True
+    client.tick()
+    assert doc.applies == before + 1

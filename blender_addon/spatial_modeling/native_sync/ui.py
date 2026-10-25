@@ -97,6 +97,7 @@ class SPATIAL_PT_native_client(bpy.types.Panel):
             layout.label(text=client.error, icon="ERROR")
         layout.label(text="Use normal Blender tools during your edit turn.")
         layout.label(text="Undo/Redo stays native and synchronizes after settling.")
+        layout.label(text="Incoming changes wait until local Edit Mode has finished.")
         row = layout.row(align=True)
         row.operator(SPATIAL_OT_native_take_turn.bl_idname)
         row.operator(SPATIAL_OT_native_finish_turn.bl_idname)
