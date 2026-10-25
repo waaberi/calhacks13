@@ -1,4 +1,9 @@
-"""Apply replication only to an owned collection in a separate empty session."""
+"""Apply replication only to an owned collection in a separate empty session.
+
+When the host allows Client edits the objects are selectable (live_edit.py turns
+local transforms into requests); `held` objects keep their local transform until
+the host has answered.
+"""
 
 import json
 
@@ -17,11 +22,45 @@ class Mirror:
         bpy.context.scene.collection.children.link(self.collection)
         self.collection[OWNER] = True
         self.collection.hide_select = True
+        self.editable = False
+        self.held = set()  # object IDs whose local change isn't on the host yet
         self.objects = {}
         self.records = {}
         self.sketches = {}
         self.sketch_records = {}
         self.document = None
+
+    def set_editable(self, editable):
+        """Let the user select (and so transform/delete) mirrored objects, or not."""
+        self.editable = bool(editable)
+        self.collection.hide_select = not self.editable
+        for obj in self.objects.values():
+            if _alive(obj):
+                obj.hide_select = not self.editable
+                if not self.editable:
+                    obj.select_set(False)
+
+    def local_transforms(self):
+        """Object ID -> world transform of each mirrored object still in the scene."""
+        out = {}
+        for oid, obj in self.objects.items():
+            if _alive(obj):
+                loc, rot, scale = obj.matrix_world.decompose()
+                out[oid] = {"location": list(loc), "rotation": [rot.w, rot.x, rot.y, rot.z],
+                            "scale": list(scale)}
+        return out
+
+    def deleted(self):
+        """Object IDs whose mirrored object the user deleted locally."""
+        return {oid for oid, obj in self.objects.items() if not _alive(obj)}
+
+    def revert(self, oid):
+        """Forget a local change: the next apply() restores the host's record."""
+        self.held.discard(oid)
+        obj = self.objects.get(oid)
+        if obj is not None and not _alive(obj):
+            del self.objects[oid]  # recreated by apply()
+        self.records.pop(oid, None)  # forces the mesh to be written again
 
     def apply(self, state):
         bpy.context.scene.unit_settings.system = "METRIC"
@@ -30,6 +69,11 @@ class Mirror:
             self._remove(oid)
         for oid, record in state.objects.items():
             obj = self.objects.get(oid)
+            if obj is not None and not _alive(obj):
+                if oid in self.held:
+                    continue  # deleted locally; the delete request is on its way
+                del self.objects[oid]
+                obj = None
             mesh_record = record.get("mesh")
             changed = mesh_record != self.records.get(oid, {}).get("mesh")
             # Blender cannot switch an Empty's data to a mesh (or vice versa).
@@ -70,9 +114,11 @@ class Mirror:
                 mat.node_tree.nodes.get("Principled BSDF").inputs["Base Color"].default_value = rgba
             obj.hide_viewport = not record.get("visible", True)
             obj.hide_render = not record.get("visible", True)
-            obj.hide_select = True
+            obj.hide_select = not self.editable
             # Preserve hierarchy metadata; world transforms stay flat, as in Unity.
             obj["remote_parent_id"] = record.get("parent") or ""
+            if oid in self.held:
+                continue  # keep the user's local transform until the host answers
             transform = record["transform"]
             obj.matrix_world = Matrix.LocRotScale(Vector(transform["location"]),
                                                  Quaternion(transform["rotation"]),
@@ -128,6 +174,9 @@ class Mirror:
 
     def _remove(self, oid):
         obj = self.objects.pop(oid)
+        self.held.discard(oid)
+        if not _alive(obj):
+            return  # already deleted locally
         mesh = obj.data
         materials = list(mesh.materials) if mesh is not None else []
         bpy.data.objects.remove(obj, do_unlink=True)
@@ -144,3 +193,12 @@ class Mirror:
             self._remove_sketch(sid)
         if self.collection.name in bpy.data.collections:
             bpy.data.collections.remove(self.collection)
+
+
+def _alive(obj):
+    """False once the user has deleted this object locally (its Python reference died)."""
+    try:
+        obj.name  # noqa: B018 - raises ReferenceError for a removed ID
+    except ReferenceError:
+        return False
+    return True

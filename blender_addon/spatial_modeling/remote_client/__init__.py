@@ -1,12 +1,15 @@
 """Client role. Connect explicitly from a separate empty Blender.
 
-The mirror is read-only: every edit is a request to the host (requests.py), and
-the local scene changes only when the host's scene.update arrives.
+Every edit is a request to the host (requests.py). When the host allows Client
+edits, the user can also transform or delete mirrored objects directly in the
+viewport: live_edit.py turns those local changes into the same requests, and the
+mirror keeps them until the host answers (a refusal puts the host's version back).
 """
 
 import copy
 import queue
 
+from .live_edit import LiveEdits
 from .presence import Presence
 from .requests import EditBlocked, RequestTracker
 from .state import SceneState
@@ -14,6 +17,7 @@ from .state import SceneState
 state = SceneState()
 presence = Presence()
 requests = RequestTracker()
+live = LiveEdits()
 _link = _mirror = None
 _draw_handle = None
 _can_edit = False
@@ -79,6 +83,7 @@ def connect(address, token, version, name="Blender viewer", port=8767, tls=True)
     _mirror = Mirror()
     state = SceneState()
     requests = RequestTracker()
+    live.reset()
     try:
         _link = ReadOnlyLink(address, token, version, name, port, tls)
     except Exception:
@@ -109,6 +114,7 @@ def poll():
                 break
             if kind in ("scene.snapshot", "scene.update"):
                 state.receive(payload, kind == "scene.snapshot")
+                _mirror.held = set(live.held) | _dragged()
                 _mirror.apply(state)
             elif kind == "welcome":
                 presence.welcomed(payload)
@@ -155,11 +161,66 @@ def poll():
         _can_edit = False
         presence.clear()
         state.stale("Host is not responding — last scene is stale")
+    if _link is not None:
+        _live_tick()
     for window in bpy.context.window_manager.windows:
         for area in window.screen.areas:
             if area.type in ("PREFERENCES", "VIEW_3D"):
                 area.tag_redraw()
     return 0.02
+
+
+def _transforming():
+    """True while the user is dragging something (G/R/S, a gizmo or the tweak tool)."""
+    import bpy
+    for window in bpy.context.window_manager.windows:
+        for op in getattr(window, "modal_operators", ()):
+            if op.bl_idname.startswith("TRANSFORM_OT"):
+                return True
+    return False
+
+
+def _dragged():
+    """Mirrored objects the user is dragging right now: an update must not snap them back."""
+    if _mirror is None or not _mirror.editable or not _transforming():
+        return set()
+    return {oid for oid, obj in _mirror.objects.items()
+            if oid not in _mirror.deleted() and obj.select_get()}
+
+
+def _live_tick():
+    """Send local viewport changes to the host; put back what the host refused."""
+    editable = controlled_edit_enabled()
+    if editable != _mirror.editable:
+        _mirror.set_editable(editable)
+    live.settle(requests.requests, (state.document or {}).get("revision"))
+    reapply = bool(live.revert)
+    for oid in live.revert:
+        _mirror.revert(oid)
+    live.revert.clear()
+    if not editable:
+        # Can't send now (disconnected, host refused edits, stale scene): local
+        # changes can't reach the host, so show the host's version again.
+        for oid in live.held | _mirror.deleted():
+            _mirror.revert(oid)
+            reapply = True
+        live.held.clear()
+    elif not _transforming():
+        chosen = live.next_request(state.objects, _mirror.local_transforms(), _mirror.deleted())
+        _mirror.held = set(live.held)
+        if chosen is not None and edit_blocked() is None:
+            oid, op, label, args = chosen
+            try:
+                live.sent[send_edit(op, label, args, oid)] = oid
+                live.error = ""
+            except EditBlocked as e:
+                live.error = str(e)
+                live.held.discard(oid)
+                _mirror.revert(oid)
+                reapply = True
+    if reapply and state.document is not None:
+        _mirror.held = set(live.held)
+        _mirror.apply(state)
 
 
 def disconnect():
@@ -172,6 +233,7 @@ def disconnect():
     _link = None
     requests.disconnected()
     _can_edit = False
+    live.reset()
     presence.clear()
     if bpy.app.timers.is_registered(poll):
         bpy.app.timers.unregister(poll)

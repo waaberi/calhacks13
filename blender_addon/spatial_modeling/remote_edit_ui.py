@@ -232,6 +232,10 @@ class SPATIAL_PT_client_edits(bpy.types.Panel):
         else:
             layout.label(text="Edits go to the host; this copy updates when it answers.",
                          icon="INFO")
+            layout.label(text="Move (G), rotate (R), scale (S) or delete (X) objects directly.",
+                         icon="OBJECT_DATA")
+        if remote_client.live.error:
+            layout.label(text=remote_client.live.error, icon="ERROR")
         if any(r.state == "unknown" for r in remote_client.requests.requests.values()):
             layout.operator(SPATIAL_OT_client_checked.bl_idname, icon="CHECKMARK")
 
