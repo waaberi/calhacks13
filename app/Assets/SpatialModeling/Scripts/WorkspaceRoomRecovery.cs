@@ -24,6 +24,15 @@ namespace SpatialModeling
             public string id,room,kind;
         }
         RoomRecoveryIndex roomRecovery;
+        [Serializable] public sealed class VerifiedRoomCheckpoint
+        {
+            public int version=1;
+            public string room,floor,verification,verified_at_utc;
+            public List<string> anchors=new List<string>();
+        }
+        VerifiedRoomCheckpoint verifiedRoomCheckpoint;
+        bool verifiedCheckpointRead,verifiedCheckpointDurable;
+        Guid verifiedRoomIdentity,verifiedFloorIdentity;
         bool roomRecoveryRead;
         int roomRecoveryDiagnosticLoads;
         RoomRawCompletionObserver rawRoomCompletion;
@@ -35,6 +44,7 @@ namespace SpatialModeling
         public static bool RoomLocalizationCanStart(double remainingSeconds,int requests)
             => requests<2 && remainingSeconds>=RoomLocalizationTimeoutSeconds;
         string RoomRecoveryPath => Path.Combine(Application.persistentDataPath,"saved-room-references.json");
+        string VerifiedRoomPath => Path.Combine(Application.persistentDataPath,"verified-room-checkpoint.json");
 
         // Keep retrying a temporarily unavailable Link service at a bounded rate.
         // This is recovery, never a request to launch system scan/setup.
@@ -45,6 +55,7 @@ namespace SpatialModeling
             if(roomRecoveryRead) return;
             roomRecoveryRead=true;
             roomRecovery=new RoomRecoveryIndex();
+            ReadVerifiedRoomCheckpoint();
             try
             {
                 var path=RoomRecoveryPath;
@@ -61,6 +72,92 @@ namespace SpatialModeling
                 }
             }
             catch(Exception error) {Debug.LogWarning("WORKSPACE_ROOM_RECOVERY references unavailable "+error.GetType().Name);}
+            if(verifiedRoomCheckpoint!=null)
+            {
+                var retained=new RoomRecoveryIndex();
+                foreach(var id in verifiedRoomCheckpoint.anchors)retained.anchors.Add(new RoomRecoveryReference{
+                    id=id,room=verifiedRoomCheckpoint.room,kind=id==verifiedRoomCheckpoint.floor?"Floor":null});
+                roomRecovery=MergeRoomRecovery(roomRecovery,retained);
+            }
+        }
+        public static VerifiedRoomCheckpoint ValidateVerifiedRoom(VerifiedRoomCheckpoint value)
+        {
+            if(value==null||value.version!=1||value.verification!="fresh_tracked_floor_contains_head"
+                ||!Guid.TryParse(value.room,out var room)||room==Guid.Empty||!Guid.TryParse(value.floor,out var floor)||floor==Guid.Empty
+                ||!DateTimeOffset.TryParse(value.verified_at_utc,out _)||value.anchors==null||value.anchors.Count==0||value.anchors.Count>4096)return null;
+            var result=new VerifiedRoomCheckpoint{room=room.ToString(),floor=floor.ToString(),verification=value.verification,verified_at_utc=value.verified_at_utc};
+            var seen=new HashSet<Guid>();foreach(var id in value.anchors)
+            {if(!Guid.TryParse(id,out var anchor)||anchor==Guid.Empty||!seen.Add(anchor))return null;result.anchors.Add(anchor.ToString());}
+            return seen.Contains(floor)?result:null;
+        }
+        public static RoomRecoveryIndex MergeRoomRecovery(RoomRecoveryIndex previous,RoomRecoveryIndex incoming)
+        {
+            previous=ValidateRoomRecovery(previous);incoming=ValidateRoomRecovery(incoming);
+            var result=ValidateRoomRecovery(previous);var byId=new Dictionary<string,RoomRecoveryReference>();
+            foreach(var row in result.anchors)byId[row.id]=row;
+            foreach(var row in incoming.anchors)
+            {
+                if(byId.TryGetValue(row.id,out var existing)){existing.room=row.room;if(row.kind!=null)existing.kind=row.kind;}
+                else {result.anchors.Add(row);byId[row.id]=row;}
+            }
+            return result.anchors.Count>4096?previous:result;
+        }
+        public static VerifiedRoomCheckpoint ReadVerifiedRoomFile(string path)
+        {try{return File.Exists(path)?ValidateVerifiedRoom(JsonUtility.FromJson<VerifiedRoomCheckpoint>(File.ReadAllText(path))):null;}catch(Exception){return null;}}
+        public static bool PersistVerifiedRoomFile(string path,VerifiedRoomCheckpoint value)
+        {
+            value=ValidateVerifiedRoom(value);if(value==null)return false;
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(path));var temporary=path+".tmp";File.WriteAllText(temporary,JsonUtility.ToJson(value));
+                if(File.Exists(path))File.Replace(temporary,path,path+".previous");else File.Move(temporary,path);return true;
+            }
+            catch(Exception){return false;}
+        }
+        void ReadVerifiedRoomCheckpoint()
+        {
+            if(verifiedCheckpointRead)return;verifiedCheckpointRead=true;
+            var paths=new[]{VerifiedRoomPath,VerifiedRoomPath+".previous",Environment.GetEnvironmentVariable("CALHACKS_VERIFIED_ROOM_CHECKPOINT")};
+            foreach(var path in paths)
+            {
+                if(string.IsNullOrWhiteSpace(path))continue;
+                try
+                {
+                    if(!File.Exists(path))continue;
+                    var value=ReadVerifiedRoomFile(path);if(value==null)continue;
+                    verifiedRoomCheckpoint=value;verifiedRoomIdentity=Guid.Parse(value.room);verifiedFloorIdentity=Guid.Parse(value.floor);
+                    verifiedCheckpointDurable=path==VerifiedRoomPath;
+                    Debug.Log("WORKSPACE_ROOM_CONTINUITY checkpoint_loaded=True references="+value.anchors.Count+" current_tracking_required=True");return;
+                }
+                catch(Exception error){Debug.LogWarning("WORKSPACE_ROOM_CONTINUITY checkpoint_read_failed="+error.GetType().Name+" prior_preserved=True");}
+            }
+        }
+        bool SelectCurrentRoom(IReadOnlyList<WorkspaceRoomLocalization.FloorCandidate> floors,Pose head,bool ready,double now,out Guid room,out string reason)
+        {
+            ReadVerifiedRoomCheckpoint();
+            return WorkspaceRoomLocalization.TrySelectRoomWithContinuity(floors,head,ready,now,verifiedRoomIdentity,verifiedFloorIdentity,out room,out reason);
+        }
+        void RememberVerifiedRoom(Guid room,IReadOnlyList<WorkspaceRoomLocalization.FloorCandidate> floors,Pose head,double now)
+        {
+            WorkspaceRoomLocalization.FloorCandidate selected=default;
+            foreach(var floor in floors)if(floor.Room==room&&floor.Anchor!=Guid.Empty
+                &&WorkspaceRoomLocalization.ContainsHead(floor,head.position,now,WorkspaceRoomLocalization.DefaultLimits)){selected=floor;break;}
+            if(selected.Anchor==Guid.Empty)return;
+            if(verifiedRoomIdentity==room&&verifiedFloorIdentity==selected.Anchor&&verifiedCheckpointDurable)return;
+            var value=new VerifiedRoomCheckpoint{room=room.ToString(),floor=selected.Anchor.ToString(),verification="fresh_tracked_floor_contains_head",verified_at_utc=DateTimeOffset.UtcNow.ToString("O")};
+            if(verifiedRoomCheckpoint!=null&&verifiedRoomIdentity==room&&verifiedFloorIdentity==selected.Anchor)value.anchors.AddRange(verifiedRoomCheckpoint.anchors);
+            foreach(var anchor in anchors)if(anchor.Room==room&&!value.anchors.Contains(anchor.Anchor.Uuid.ToString()))value.anchors.Add(anchor.Anchor.Uuid.ToString());
+            value=ValidateVerifiedRoom(value);if(value==null)return;
+            verifiedRoomCheckpoint=value;verifiedRoomIdentity=room;verifiedFloorIdentity=selected.Anchor;verifiedCheckpointDurable=false;
+            if(!Application.isPlaying)return;
+            try
+            {
+                verifiedCheckpointDurable=PersistVerifiedRoomFile(VerifiedRoomPath,value);
+                if(!verifiedCheckpointDurable){Debug.LogWarning("WORKSPACE_ROOM_CONTINUITY checkpoint_write_failed=True legacy_references_preserved=True retry_pending=True");return;}
+                Debug.Log("WORKSPACE_ROOM_CONTINUITY fresh_checkpoint_saved=True references="+value.anchors.Count+" poses_saved=False");
+                SaveRoomRecovery();
+            }
+            catch(Exception error){Debug.LogWarning("WORKSPACE_ROOM_CONTINUITY checkpoint_write_failed="+error.GetType().Name+" legacy_references_preserved=True");}
         }
         public static RoomRecoveryIndex ValidateRoomRecovery(RoomRecoveryIndex value)
         {
@@ -300,12 +397,12 @@ namespace SpatialModeling
                         || !plane.TryGetBoundaryPointsCount(out int count) || count<3 || count>16384) continue;
                     using(var points=new NativeArray<Vector2>(count,Allocator.Temp))
                         if(plane.TryGetBoundaryPoints(points)) floors.Add(new WorkspaceRoomLocalization.FloorCandidate {
-                            Room=item.Room!=Guid.Empty?item.Room:item.Anchor.Uuid,Tracked=true,SampleTime=now,
+                            Room=item.Room!=Guid.Empty?item.Room:item.Anchor.Uuid,Anchor=item.Anchor.Uuid,Tracked=true,SampleTime=now,
                             WorldPose=SceneToWorld(sceneTrackingWorld,new Pose(pose.Position.Value,pose.Rotation.Value)),Boundary=points.ToArray()});
                 }
                 catch(Exception) { }
             }
-            if(!WorkspaceRoomLocalization.TrySelectRoom(floors,new Pose(Camera.main.transform.position,Camera.main.transform.rotation),
+            if(!SelectCurrentRoom(floors,new Pose(Camera.main.transform.position,Camera.main.transform.rotation),
                 true,now,out var currentRoom,out _)) return;
             var selected=floors.Find(item=>item.Room==currentRoom);
             int associated=0;
@@ -374,17 +471,20 @@ namespace SpatialModeling
                     using(var points=new NativeArray<Vector2>(count,Allocator.Temp))
                     {
                         if(!plane.TryGetBoundaryPoints(points)) continue;
-                        floors.Add(new WorkspaceRoomLocalization.FloorCandidate {Room=item.Room,Tracked=true,SampleTime=now,
+                        floors.Add(new WorkspaceRoomLocalization.FloorCandidate {Room=item.Room,Anchor=item.Anchor.Uuid,Tracked=true,SampleTime=now,
                             WorldPose=SceneToWorld(sceneTrackingWorld,new Pose(pose.Position.Value,pose.Rotation.Value)),Boundary=points.ToArray()});
                     }
                 }
                 catch(Exception) { /* A partial SDK component cannot replace the current room. */ }
             }
-            return WorkspaceRoomLocalization.TrySelectRoom(floors,
+            return SelectCurrentRoom(floors,
                 new Pose(Camera.main.transform.position,Camera.main.transform.rotation),true,now,out _,out _);
         }
         bool ApplyRoomLoad(List<RoomAnchor> next,List<OVRAnchor> rooms)
+            =>ApplyRoomLoadForGeneration(next,rooms,generation);
+        bool ApplyRoomLoadForGeneration(List<RoomAnchor> next,List<OVRAnchor> rooms,int expectedGeneration)
         {
+            if(disposed||!AutomaticEnabled||expectedGeneration!=generation)return false;
             if(next.Count==0 || !next.Exists(item=>item.Room!=Guid.Empty))
             {
                 message=anchors.Count>0 ? "Room reload empty · retaining saved anchors and retrying"
@@ -398,27 +498,60 @@ namespace SpatialModeling
                 Debug.Log("WORKSPACE_ROOM_RECOVERY unlocalized_replacement_preserved=True retained_anchors="+anchors.Count);
                 return false;
             }
-            // A partial reply must not erase other still-tracked anchors from
-            // the same saved room. Their current SDK poses are checked each frame.
-            var nextRooms=new HashSet<Guid>();
-            foreach(var item in next) if(item.Room!=Guid.Empty) nextRooms.Add(item.Room);
+            // Keep previous room identities and handles even when another room
+            // is discovered. Fresh eligibility still chooses what can be shown.
+            next=new List<RoomAnchor>(next);
             foreach(var item in anchors)
             {
-                if(!nextRooms.Contains(item.Room)) continue;
                 int index=next.FindIndex(value=>value.Anchor.Uuid==item.Anchor.Uuid);
                 if(index<0) next.Add(item);
                 else if(CurrentRoomAnchor(item) && !CurrentRoomAnchor(next[index])) next[index]=item;
             }
+            return CommitRoomAnchorSet(next,rooms,expectedGeneration,stage=>ReadScanGeometry(next,stage));
+        }
+        void ReleaseRoomGeometryStage(RoomGeometryStage stage)
+        {
+            foreach(var mesh in stage.Meshes)if(!scanMeshes.Contains(mesh)){DestroyObject(mesh.Root);DestroyObject(mesh.Mesh);}
+            bool materialOwned=stage.Material==scanMaterial;
+            foreach(var mesh in scanMeshes)if(mesh.Root!=null&&mesh.Root.GetComponent<MeshRenderer>()?.sharedMaterial==stage.Material)materialOwned=true;
+            if(stage.Material!=null&&!materialOwned)DestroyObject(stage.Material);
+        }
+        bool CommitRoomAnchorSet(List<RoomAnchor> next,List<OVRAnchor> rooms,int expectedGeneration,Action<RoomGeometryStage> readGeometry)
+        {
             var previous=new List<RoomAnchor>(anchors);
+            var priorRooms=new HashSet<Guid>(knownRooms);var priorBoundaries=new Dictionary<Guid,Vector2[]>(scanBoundaries);
+            var priorMeshes=new List<ScanMesh>(scanMeshes);var priorMaterial=scanMaterial;
+            var stage=new RoomGeometryStage();
+            try
+            {
+                readGeometry(stage);
+                if(disposed||!AutomaticEnabled||expectedGeneration!=generation)
+                {ReleaseRoomGeometryStage(stage);Debug.Log("WORKSPACE_ROOM_RECOVERY staged_generation_discarded=True newer_owner_preserved=True");return false;}
+            }
+            catch(Exception error)
+            {
+                ReleaseRoomGeometryStage(stage);
+                if(expectedGeneration==generation)message="Room replacement incomplete · retaining the previous saved room";
+                Debug.LogWarning("WORKSPACE_ROOM_RECOVERY staged_load_rolled_back=True reason="+error.GetType().Name);return false;
+            }
+            // Publishing is synchronous and allocation-free with respect to SDK
+            // state. No old resources are released before the complete stage and
+            // generation checks above have passed.
             anchors.Clear();anchors.AddRange(next);
-            foreach(var item in previous)
-                if(!anchors.Exists(value=>value.Anchor.Equals(item.Anchor))) item.Anchor.Dispose();
-            detected.Clear();surfaces.Clear();invalidLogged.Clear();evidenceWritten=false;
-            knownRooms.Clear();localizedRoom=Guid.Empty;
-            foreach(var room in rooms) knownRooms.Add(room.Uuid);
-            foreach(var item in anchors) if(item.Room!=Guid.Empty) knownRooms.Add(item.Room);
-            roomCount=knownRooms.Count;
-            ClearScanGeometry();ReadScanGeometry();
+            scanBoundaries.Clear();foreach(var entry in stage.Boundaries)scanBoundaries[entry.Key]=entry.Value;
+            foreach(var entry in priorBoundaries)if(!scanBoundaries.ContainsKey(entry.Key)&&anchors.Exists(a=>a.Anchor.Uuid==entry.Key))scanBoundaries[entry.Key]=entry.Value;
+            scanMeshes.Clear();scanMeshes.AddRange(stage.Meshes);scanMaterial=stage.Material;
+            foreach(var mesh in priorMeshes)
+                if(!scanMeshes.Exists(value=>value.Anchor.Anchor.Uuid==mesh.Anchor.Anchor.Uuid)&&anchors.Exists(a=>a.Anchor.Uuid==mesh.Anchor.Anchor.Uuid))
+                {if(scanMaterial==null)scanMaterial=priorMaterial;mesh.Root.GetComponent<MeshRenderer>().sharedMaterial=scanMaterial;scanMeshes.Add(mesh);}
+            knownRooms.Clear();knownRooms.UnionWith(priorRooms);
+            foreach(var room in rooms)knownRooms.Add(room.Uuid);
+            foreach(var item in anchors)if(item.Room!=Guid.Empty)knownRooms.Add(item.Room);
+            roomCount=knownRooms.Count;invalidLogged.Clear();evidenceWritten=false;
+            foreach(var mesh in priorMeshes)if(!scanMeshes.Contains(mesh)){DestroyObject(mesh.Root);DestroyObject(mesh.Mesh);}
+            if(priorMaterial!=null&&priorMaterial!=scanMaterial)DestroyObject(priorMaterial);
+            foreach(var item in previous)if(!anchors.Exists(value=>value.Anchor.Equals(item.Anchor)))
+                try{item.Anchor.Dispose();}catch(Exception){Debug.LogWarning("WORKSPACE_ROOM_RECOVERY retired_handle_release_deferred=True");}
             message="Saved room anchors loaded";
             SaveRoomRecovery();
             return true;
@@ -429,8 +562,9 @@ namespace SpatialModeling
             foreach(var item in anchors)
                 if(item.Room!=Guid.Empty) value.anchors.Add(new RoomRecoveryReference {
                     id=item.Anchor.Uuid.ToString(),room=item.Room.ToString(),kind=item.Kind});
-            value=ValidateRoomRecovery(value);
+            ReadRoomRecovery();value=MergeRoomRecovery(roomRecovery,value);
             if(value.anchors.Count==0) return;
+            if(verifiedRoomCheckpoint!=null&&!verifiedCheckpointDurable)return;
             roomRecovery=value;roomRecoveryRead=true;
             PersistRoomRecoveryIndex(value);
         }

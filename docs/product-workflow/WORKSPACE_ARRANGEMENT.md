@@ -194,6 +194,35 @@ world coordinates. New-document/epoch changes clear placement undo history.
 
 ## Verification and limits
 
+Saved room **loaded**, **currently usable**, and **physically accepted** are separate
+states. Discovery can return overlapping saved room definitions. The app keeps
+their references and handles; it does not select an arbitrary first room or erase
+the last successful room when a replacement cannot localize.
+
+A private UUID-only verified-room checkpoint records the last room and exact floor
+anchor that passed fresh tracked headset containment. Across reloads and build
+upgrades, an overlapping second room may retain that verified identity only when
+the same floor has a new tracked pose and still contains the worn, focused headset.
+Stale, removed, moved-outside or different-floor identities cannot qualify. Without
+verified continuity, overlapping matches remain unresolved. Saved world poses and
+room geometry are never replayed as tracking evidence.
+
+The checkpoint is persisted atomically before discovery may rewrite legacy recovery
+references; the previous durable checkpoint is kept as a backup. Discovery merges
+UUID references rather than replacing the last room's index. A malformed or partial
+checkpoint fails closed as a whole. Legacy reference-row filtering is only a
+compatibility recovery aid and never itself establishes verified continuity.
+Replacement geometry is staged separately: a failed or superseded generation
+releases its own temporary resources and cannot clear current planes or a newer
+owner's room meshes/materials. Retained data is only displayed through current
+headset/floor eligibility and current anchor tracking.
+
+An explicitly supplied `CALHACKS_VERIFIED_ROOM_CHECKPOINT` may import private,
+independently proven identity metadata for a pre-checkpoint build upgrade. It is
+not a default room choice and still requires current SDK containment. Private
+checkpoint/evidence files must stay outside source and public packages. These
+software checks do not establish physical scan alignment.
+
 The current saved-room recovery uses an explicit five-second localization timeout
 on every SDK path. The installed OpenXR shim converts the SDK's default zero to
 zero nanoseconds, so a default value cannot be relied on to wait for localization.

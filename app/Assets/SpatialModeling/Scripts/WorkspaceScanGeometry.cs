@@ -11,6 +11,12 @@ namespace SpatialModeling
         readonly Dictionary<Guid,Vector2[]> scanBoundaries = new Dictionary<Guid,Vector2[]>();
         sealed class ScanMesh { public RoomAnchor Anchor; public GameObject Root; public Mesh Mesh; }
         readonly List<ScanMesh> scanMeshes = new List<ScanMesh>();
+        sealed class RoomGeometryStage
+        {
+            public readonly Dictionary<Guid,Vector2[]> Boundaries=new Dictionary<Guid,Vector2[]>();
+            public readonly List<ScanMesh> Meshes=new List<ScanMesh>();
+            public Material Material;
+        }
         Material scanMaterial;
         Guid localizedRoom;
         public string GeometrySummary => scanBoundaries.Count + " polygons / " + scanMeshes.Count + " scan meshes";
@@ -23,9 +29,9 @@ namespace SpatialModeling
             if(scanMaterial!=null) DestroyObject(scanMaterial);
             scanMaterial=null;
         }
-        void ReadScanGeometry()
+        void ReadScanGeometry(IReadOnlyList<RoomAnchor> source,RoomGeometryStage stage)
         {
-            foreach(var item in anchors)
+            foreach(var item in source??anchors)
             {
                 try
                 {
@@ -33,7 +39,7 @@ namespace SpatialModeling
                         && plane.TryGetBoundaryPointsCount(out int count) && count>=3 && count<=16384)
                     {
                         using(var points=new NativeArray<Vector2>(count,Allocator.Temp))
-                            if(plane.TryGetBoundaryPoints(points)) scanBoundaries[item.Anchor.Uuid]=points.ToArray();
+                            if(plane.TryGetBoundaryPoints(points)) stage.Boundaries[item.Anchor.Uuid]=points.ToArray();
                     }
                     if(!item.Anchor.TryGetComponent<OVRTriangleMesh>(out var triangles)
                         || !triangles.TryGetCounts(out int vertices,out int faces) || vertices<=0 || faces<=0
@@ -45,23 +51,23 @@ namespace SpatialModeling
                         // TryGetMesh already performs Meta's scene handedness/winding conversion.
                         // Its vertices belong to the scene anchor, not to the head or workspace.
                         var mesh=MakeScanMesh(positions.ToArray(),indices.ToArray());
-                        if(scanMaterial==null)
+                        if(stage.Material==null)
                         {
                             var shader=Resources.Load<Shader>("WorkspaceRoomScan");
                             if(shader==null) throw new InvalidOperationException("Room scan shader missing");
-                            scanMaterial=new Material(shader);
+                            stage.Material=new Material(shader);
                         }
                         var root=new GameObject("Meta captured scene mesh",typeof(MeshFilter),typeof(MeshRenderer));
                         root.GetComponent<MeshFilter>().sharedMesh=mesh;
-                        var renderer=root.GetComponent<MeshRenderer>(); renderer.sharedMaterial=scanMaterial;
+                        var renderer=root.GetComponent<MeshRenderer>(); renderer.sharedMaterial=stage.Material;
                         renderer.shadowCastingMode=ShadowCastingMode.Off;renderer.receiveShadows=false;
                         root.SetActive(false);
-                        scanMeshes.Add(new ScanMesh {Anchor=item,Root=root,Mesh=mesh});
+                        stage.Meshes.Add(new ScanMesh {Anchor=item,Root=root,Mesh=mesh});
                     }
                 }
                 catch(Exception error) { Debug.LogWarning("WORKSPACE_SCAN geometry unavailable " + error.GetType().Name); }
             }
-            Debug.Log("WORKSPACE_SCAN source=MetaScene " + GeometrySummary + " rectangular_scan_fallback=False");
+            Debug.Log("WORKSPACE_SCAN source=MetaScene " + stage.Boundaries.Count+" polygons / "+stage.Meshes.Count+" scan meshes staged=True rectangular_scan_fallback=False");
         }
         void UpdateScanMeshes()
         {

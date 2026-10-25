@@ -233,7 +233,7 @@ namespace SpatialModeling
                     if (!Current()) return;
                     await WaitForRoomReplacement(next,Current);
                     if (!Current()) return;
-                    ApplyRoomLoad(next,rooms);
+                    ApplyRoomLoadForGeneration(next,rooms,version);
                     return;
                 }
                 foreach (var room in rooms)
@@ -308,7 +308,7 @@ namespace SpatialModeling
                 if (!Current()) return;
                 await WaitForRoomReplacement(next,Current);
                 if (!Current()) return;
-                ApplyRoomLoad(next,rooms);
+                ApplyRoomLoadForGeneration(next,rooms,version);
             }
             catch (Exception error)
             {
@@ -631,15 +631,16 @@ namespace SpatialModeling
                     if (surface.Size.x <= .01f || surface.Size.y <= .01f) continue;
                     candidates.Add((item.Room,surface));
                     if(kind=="Floor") floors.Add(new WorkspaceRoomLocalization.FloorCandidate {
-                        Room=item.Room,WorldPose=surface.Pose,Boundary=surface.Boundary,Tracked=true,SampleTime=now });
+                        Room=item.Room,Anchor=item.Anchor.Uuid,WorldPose=surface.Pose,Boundary=surface.Boundary,Tracked=true,SampleTime=now });
                 }
                 catch (Exception error) { if(invalidLogged.Add(item.Anchor.Uuid)) Debug.LogWarning("WORKSPACE_SURFACES invalid surface " + error.GetType().Name); }
             }
-            bool localized=WorkspaceRoomLocalization.TrySelectRoom(floors,
+            bool localized=SelectCurrentRoom(floors,
                 Camera.main!=null?new Pose(Camera.main.transform.position,Camera.main.transform.rotation):Pose.identity,
                 roomHeadReady,now,out Guid currentRoom,out string eligibility);
             if(eligibility!=lastRoomEligibility)
             {lastRoomEligibility=eligibility;Debug.Log("WORKSPACE_ROOM_ELIGIBILITY "+eligibility);}
+            if(localized&&Camera.main!=null)RememberVerifiedRoom(currentRoom,floors,new Pose(Camera.main.transform.position,Camera.main.transform.rotation),now);
             foreach (var item in candidates)
             {
                 if(!localized || !WorkspaceRoomLocalization.BelongsToRoom(item.room,currentRoom,Guid.Empty)) continue;
