@@ -53,7 +53,7 @@ flowchart LR
 - **[Blender add-on](blender_addon/spatial_modeling/)** (Python): one add-on with two roles, Host and Client. It needs nothing beyond the Python that ships with Blender. Every object gets a stable ID that survives renames, Undo and save/reopen.
 - **[VR app](app/)** (Unity 6, OpenXR, XR Interaction Toolkit): the room, the table, controller input, the hand menu and the Blender screen panel.
 - **[VoiceCore](voice/VoiceCore/)** (C#): local speech recognition with Whisper, voice command parsing and follow-up questions. It remembers the parts of a command it already has and asks only for what's missing.
-- **[SpacetimeDB](spacetime/)** (TypeScript module): the session's authority. Its `acquire` reducer decides who may edit which object, and its tables hold who is connected, the current leases, refusals and a log of applied edits that survives a restart. On Maincloud it also relays the second Blender's TLS connection between networks. The [session board](spacetime/README.md#the-session-board) subscribes to it and shows every decision live.
+- **[SpacetimeDB](spacetime/)** (TypeScript module): the session's authority. Its `acquire` reducer decides who may edit which object, and its tables hold who is connected, the current leases, the names of leased objects and every refusal. On Maincloud it also relays the second Blender's TLS connection between networks. The [session board](spacetime/README.md#the-session-board) subscribes to it and shows every decision live.
 - **[Wire format](contracts/README.md):** every message has a JSON Schema and an example, and CI checks both.
 
 ## Using it
