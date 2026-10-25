@@ -137,6 +137,9 @@ namespace SpatialModeling
         bool talking, waitingResult, playing;   // feedback: holding talk, waiting for a result, a prompt is playing
         float resultDeadline;
         InputAction talk, confirm, cancel, leftGrip;
+        // The controllers' own aim rays (the same poses P2's WorkspaceInteraction reads), so pointing a controller at an
+        // object makes it "this" for a voice command. Index 0 = right hand, 1 = left hand.
+        readonly InputAction[] aimGripPose = new InputAction[2], aimPose = new InputAction[2];
 
         void Awake()
         {
@@ -192,6 +195,15 @@ namespace SpatialModeling
             confirm.started += _ => { if (!leftGrip.IsPressed()) ConfirmDelete(); };
             cancel.started += _ => CancelPressed();
             talk.Enable(); confirm.Enable(); cancel.Enable(); leftGrip.Enable();
+            string[] hands = { "RightHand", "LeftHand" };
+            for (int i = 0; i < 2; i++)
+            {
+                aimGripPose[i] = new InputAction("VoiceGrip" + hands[i], InputActionType.Value,
+                    "<XRController>{" + hands[i] + "}/devicePose", expectedControlType: "Pose");
+                aimPose[i] = new InputAction("VoiceAim" + hands[i], InputActionType.Value,
+                    "<XRController>{" + hands[i] + "}/{Pointer}", expectedControlType: "Pose");
+                aimGripPose[i].Enable(); aimPose[i].Enable();
+            }
         }
 
         void Start()
@@ -265,6 +277,7 @@ namespace SpatialModeling
         void OnDestroy()
         {
             talk?.Dispose(); confirm?.Dispose(); cancel?.Dispose(); leftGrip?.Dispose();
+            for (int i = 0; i < 2; i++) { aimGripPose[i]?.Dispose(); aimPose[i]?.Dispose(); }
             if (mic != null) Microphone.End(micDevice);
             input?.Dispose();
         }
@@ -404,18 +417,33 @@ namespace SpatialModeling
             }
         }
 
+        // "This" is the object a controller points at (the nearest hit of either controller's aim ray); with no controller
+        // pointing at anything it is the object in the middle of the view, as before (Mac, the simulator, no tracking).
         void UpdatePointer()
         {
             var cam = Camera.main;
             if (cam == null) return;
-            var ray = new Ray(cam.transform.position, cam.transform.forward);
             var shown = new List<KeyValuePair<string, string>>();
             host.GetShownObjects(shown);
             string best = null; float bestDist = float.MaxValue;
+            Transform origin = cam.transform.parent;   // the tracking origin, as WorkspaceInteraction uses it
+            for (int i = 0; i < 2; i++)
+            {
+                if (!WorkspaceInteraction.TryReadControllerPair(aimGripPose[i], aimPose[i], null,
+                        out _, out Pose localAim, out _, out _)) continue;
+                Pose aim = WorkspaceInteraction.ToWorldPose(origin, localAim);
+                NearestHit(shown, new Ray(aim.position, aim.rotation * Vector3.forward), ref best, ref bestDist);
+            }
+            if (best == null)
+                NearestHit(shown, new Ray(cam.transform.position, cam.transform.forward), ref best, ref bestDist);
+            if (best != pointerId) { pointerId = best; Handle(session.SetPointerTarget(best)); }
+        }
+
+        void NearestHit(List<KeyValuePair<string, string>> shown, Ray ray, ref string best, ref float bestDist)
+        {
             foreach (var o in shown)
                 if (host.TryGetBounds(o.Key, out Bounds b) && b.IntersectRay(ray, out float d) && d < bestDist)
                 { best = o.Key; bestDist = d; }
-            if (best != pointerId) { pointerId = best; Handle(session.SetPointerTarget(best)); }
         }
 
         // Mac testing without a mic: type a phrase (e.g. "rotate this ninety degrees around z") and press Enter.
