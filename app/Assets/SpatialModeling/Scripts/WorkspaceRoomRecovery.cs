@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 using System.Threading.Tasks;
 using Unity.Collections;
 using UnityEngine;
@@ -23,6 +24,7 @@ namespace SpatialModeling
         }
         RoomRecoveryIndex roomRecovery;
         bool roomRecoveryRead;
+        int roomRecoveryDiagnosticLoads;
         string RoomRecoveryPath => Path.Combine(Application.persistentDataPath,"saved-room-references.json");
 
         // Keep retrying a temporarily unavailable Link service at a bounded rate.
@@ -112,16 +114,142 @@ namespace SpatialModeling
                     if(!current()) return;
                     Debug.Log("WORKSPACE_ROOM_RECOVERY UUID compatibility count="+recovered.Count+" success="+legacy);
                 }
+                bool diagnostic=roomRecoveryDiagnosticLoads++<2;
+                var preparations=new List<Task<RoomAnchor?>>();
+                int index=0;
                 foreach(var anchor in recovered)
                 {
-                    if(next.Exists(item=>item.Anchor.Uuid==anchor.Uuid) || !references.TryGetValue(anchor.Uuid,out var reference)
-                        || !anchor.TryGetComponent<OVRLocatable>(out var locatable)) continue;
-                    await locatable.SetEnabledAsync(true);
-                    if(!current()) return;
-                    if(locatable.IsEnabled) next.Add(new RoomAnchor {Anchor=anchor,Locatable=locatable,
-                        Room=Guid.Parse(reference.room),Kind=reference.kind});
+                    bool duplicate=next.Exists(item=>item.Anchor.Uuid==anchor.Uuid);
+                    bool matched=references.TryGetValue(anchor.Uuid,out var reference);
+                    if(diagnostic) Debug.Log("WORKSPACE_ROOM_RECOVERY anchor="+index+" uuid_match="+matched+" duplicate="+duplicate);
+                    if(!duplicate) preparations.Add(PrepareRecoveredRoomAnchor(anchor,reference,current,diagnostic,index));
+                    index++;
                 }
+                var prepared=await Task.WhenAll(preparations);
+                if(!current()) return;
+                foreach(var item in prepared) if(item.HasValue) next.Add(item.Value);
+                AssociateRecoveredSceneElements(next);
+                Debug.Log("WORKSPACE_ROOM_RECOVERY prepared="+next.Count+" matched_references="+
+                    next.FindAll(item=>references.ContainsKey(item.Anchor.Uuid)).Count);
             }
+        }
+        async Task<RoomAnchor?> PrepareRecoveredRoomAnchor(OVRAnchor anchor,RoomRecoveryReference reference,
+            Func<bool> current,bool diagnostic,int index)
+        {
+            double until=Time.realtimeSinceStartupAsDouble+3;
+            OVRLocatable locatable=default;
+            OVRTask<bool> enable=default;
+            bool component=false,enablePending=false,lastEnableResult=false;
+            int requests=0,samples=0;
+            try
+            {
+                if(diagnostic)
+                {
+                    var supported=new List<OVRPlugin.SpaceComponentType>();
+                    bool enumerated=anchor.GetSupportedComponents(supported);
+                    Debug.Log("WORKSPACE_ROOM_RECOVERY anchor="+index+" supported_read="+enumerated+" components="+string.Join(",",supported)+
+                        " "+RecoveredAnchorNativeStatus(anchor));
+                }
+                while(current() && Time.realtimeSinceStartupAsDouble<until)
+                {
+                    samples++;
+                    component=anchor.TryGetComponent(out locatable);
+                    if(component && locatable.IsEnabled)
+                    {
+                        string kind=reference?.kind;
+                        if(string.IsNullOrEmpty(kind) && anchor.TryGetComponent<OVRSemanticLabels>(out var semantic))
+#pragma warning disable CS0618
+                            kind=ClassifyLabels(semantic.Labels);
+#pragma warning restore CS0618
+                        var item=new RoomAnchor {Anchor=anchor,Locatable=locatable,
+                            Room=reference!=null?Guid.Parse(reference.room):Guid.Empty,Kind=kind};
+                        if(diagnostic) Debug.Log("WORKSPACE_ROOM_RECOVERY anchor="+index+" locatable=True enabled=True tracked="+
+                            CurrentRoomAnchor(item)+" samples="+samples+" enable_requests="+requests+" enable_result="+lastEnableResult+" kind="+kind);
+                        return item;
+                    }
+                    if(enablePending && enable.IsCompleted)
+                    {lastEnableResult=enable.GetResult();enablePending=false;}
+                    if(component && !enablePending && requests<2)
+                    {enable=locatable.SetEnabledAsync(true,timeout:1);enablePending=true;requests++;}
+                    await Task.Delay(16);
+                }
+                Debug.LogWarning("WORKSPACE_ROOM_RECOVERY anchor="+index+" readiness_timeout locatable="+component+
+                    " enabled="+(component&&locatable.IsEnabled)+" enable_requests="+requests+" enable_pending="+enablePending+
+                    " enable_result="+lastEnableResult+" samples="+samples+(diagnostic?" "+RecoveredAnchorNativeStatus(anchor):""));
+                return null;
+            }
+            finally {if(enablePending) enable.Dispose();}
+        }
+        static string RecoveredAnchorNativeStatus(OVRAnchor anchor)
+        {
+            try
+            {
+                // Diagnostic access to the SDK's existing runtime handle only;
+                // never synthesize a handle or component to bypass SDK readiness.
+                var property=typeof(OVRAnchor).GetProperty("Handle",BindingFlags.Instance|BindingFlags.NonPublic);
+                if(property==null) return "handle_read=unavailable";
+                ulong handle=(ulong)property.GetValue(anchor);
+                bool uuidRead=OVRPlugin.GetSpaceUuid(handle,out var uuid);
+                var method=typeof(OVRPlugin).GetMethod("GetSpaceComponentStatusInternal",BindingFlags.Static|BindingFlags.NonPublic);
+                if(method==null) return "handle_nonzero="+(handle!=0)+" native_uuid_read="+uuidRead;
+                object[] arguments={handle,OVRPlugin.SpaceComponentType.Locatable,false,false};
+                var result=method.Invoke(null,arguments);
+                return "handle_nonzero="+(handle!=0)+" native_uuid_read="+uuidRead+" native_uuid_matches_wrapper="+
+                    (uuidRead&&uuid==anchor.Uuid)+" locatable_status="+result+" enabled="+arguments[2]+" pending="+arguments[3];
+            }
+            catch(Exception error) {return "native_status_unavailable="+error.GetType().Name;}
+        }
+        // Some Link compatibility responses return current scene elements rather
+        // than the requested historical UUIDs. Never assign their membership by
+        // result order. Associate only fresh classified geometry that lies within
+        // the actual unique FLOOR polygon currently containing the wearer.
+        void AssociateRecoveredSceneElements(List<RoomAnchor> next)
+        {
+            if(!RoomHeadReady() || Camera.main==null) return;
+            UpdateSceneTrackingFrame(true);
+            double now=Time.realtimeSinceStartupAsDouble;
+            var floors=new List<WorkspaceRoomLocalization.FloorCandidate>();
+            foreach(var item in next)
+            {
+                if(item.Kind!="Floor" || !CurrentRoomAnchor(item)) continue;
+                try
+                {
+                    if(!item.Locatable.TryGetSceneAnchorPose(out var pose) || !item.Anchor.TryGetComponent<OVRBounded2D>(out var plane)
+                        || !plane.TryGetBoundaryPointsCount(out int count) || count<3 || count>16384) continue;
+                    using(var points=new NativeArray<Vector2>(count,Allocator.Temp))
+                        if(plane.TryGetBoundaryPoints(points)) floors.Add(new WorkspaceRoomLocalization.FloorCandidate {
+                            Room=item.Room!=Guid.Empty?item.Room:item.Anchor.Uuid,Tracked=true,SampleTime=now,
+                            WorldPose=SceneToWorld(sceneTrackingWorld,new Pose(pose.Position.Value,pose.Rotation.Value)),Boundary=points.ToArray()});
+                }
+                catch(Exception) { }
+            }
+            if(!WorkspaceRoomLocalization.TrySelectRoom(floors,new Pose(Camera.main.transform.position,Camera.main.transform.rotation),
+                true,now,out var currentRoom,out _)) return;
+            var selected=floors.Find(item=>item.Room==currentRoom);
+            int associated=0;
+            for(int i=0;i<next.Count;i++)
+            {
+                var item=next[i];
+                if(item.Room!=Guid.Empty || string.IsNullOrEmpty(item.Kind) || !CurrentRoomAnchor(item)) continue;
+                try
+                {
+                    if(!item.Locatable.TryGetSceneAnchorPose(out var pose)) continue;
+                    var world=SceneToWorld(sceneTrackingWorld,new Pose(pose.Position.Value,pose.Rotation.Value));
+                    var center=world.position;
+                    if(item.Anchor.TryGetComponent<OVRBounded2D>(out var plane))
+                        center+=world.rotation*new Vector3(plane.BoundingBox.center.x,plane.BoundingBox.center.y,0);
+                    else if(item.Anchor.TryGetComponent<OVRBounded3D>(out var volume)) center+=world.rotation*volume.BoundingBox.center;
+                    if(!RecoveryPointWithinFloor(selected,center)) continue;
+                    item.Room=currentRoom;next[i]=item;associated++;
+                }
+                catch(Exception) { }
+            }
+            if(associated>0) Debug.Log("WORKSPACE_ROOM_RECOVERY fresh_floor_associated="+associated+" membership_source=current_SDK_geometry");
+        }
+        public static bool RecoveryPointWithinFloor(WorkspaceRoomLocalization.FloorCandidate floor,Vector3 center)
+        {
+            var local=Quaternion.Inverse(floor.WorldPose.rotation)*(center-floor.WorldPose.position);
+            return WorkspaceRoomLocalization.InsideActualBoundary(floor.Boundary,new Vector2(local.x,local.y),.05f);
         }
         async Task WaitForRoomReplacement(List<RoomAnchor> next,Func<bool> current)
         {

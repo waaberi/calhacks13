@@ -33,6 +33,14 @@ public static class RoomRecoveryChecks
         Check(WorkspaceSurfaces.ValidateRoomRecovery(references).anchors.Count==2,"bad/duplicate/unknown-room UUIDs never enter recovery");
         Check(WorkspaceSurfaces.RoomRetryDelay(1)==15 && WorkspaceSurfaces.RoomRetryDelay(3)==45
             && WorkspaceSurfaces.RoomRetryDelay(1000)==60,"retries continue beyond three attempts without a busy query loop");
+        var currentFloor=new WorkspaceRoomLocalization.FloorCandidate {Room=floor,Tracked=true,SampleTime=10,
+            WorldPose=new Pose(new Vector3(3,0,-4),Quaternion.Euler(90,37,0)),
+            Boundary=new[]{new Vector2(-2,-2),new Vector2(2,-2),new Vector2(2,0),Vector2.zero,new Vector2(0,2),new Vector2(-2,2)}};
+        var inside=currentFloor.WorldPose.position+currentFloor.WorldPose.rotation*new Vector3(-1,1,-.8f);
+        var outside=currentFloor.WorldPose.position+currentFloor.WorldPose.rotation*new Vector3(1,1,-.8f);
+        Check(WorkspaceSurfaces.RecoveryPointWithinFloor(currentFloor,inside)
+            && !WorkspaceSurfaces.RecoveryPointWithinFloor(currentFloor,outside),
+            "unmatched current semantic geometry is associated through the actual concave floor and one origin conversion");
 
         var go=new GameObject("Room empty-reload regression");go.SetActive(false);
         var provider=go.AddComponent<WorkspaceSurfaces>();
