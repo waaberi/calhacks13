@@ -113,8 +113,10 @@ def _validate_file(path):
 
 
 class NativeDocument:
-    def __init__(self):
+    def __init__(self, schedule=None):
         self._transaction = None
+        self._schedule = schedule or (lambda callback, delay: bpy.app.timers.register(
+            callback, first_interval=delay))
 
     @property
     def busy(self):
@@ -217,7 +219,7 @@ class NativeDocument:
             chosen = scenes.get(active_scene_uuid) or next(iter(scenes.values()))
             for window, previous in old_windows:
                 window.scene = scenes.get(previous.get(UUID_PROPERTY), chosen)
-            bpy.app.timers.register(self._remove_old, first_interval=.02)
+            self._schedule(self._remove_old, .02)
         except Exception as error:  # noqa: BLE001 - transaction cleanup owns every staged native ID
             transaction["new"] = {ptr: item for ptr, item in _pointer_map().items() if ptr not in old}
             self._fail(error)
@@ -230,7 +232,7 @@ class NativeDocument:
             current = _pointer_map()
             bpy.data.batch_remove(ids={current[ptr] for ptr in transaction["old"] if ptr in current})
             transaction["removed"] = True
-            bpy.app.timers.register(self._finish, first_interval=.02)
+            self._schedule(self._finish, .02)
         except Exception as error:  # noqa: BLE001 - preserve the pre-transaction undo checkpoint
             self._fail(error)
 
@@ -279,7 +281,7 @@ class NativeDocument:
         for window, previous in transaction["windows"]:
             if _alive(previous):
                 window.scene = previous
-        bpy.app.timers.register(self._discard_staged, first_interval=.02)
+        self._schedule(self._discard_staged, .02)
 
     def _discard_staged(self):
         transaction = self._transaction
