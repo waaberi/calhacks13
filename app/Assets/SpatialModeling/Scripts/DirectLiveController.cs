@@ -256,9 +256,21 @@ namespace SpatialModeling
             float moveArrowLimit=nearest;
             if(ownMoveFence)
             {
-                moveArrowLimit=nearest+.35f;
+                // Handles render over their own selected mesh, including a
+                // thick model whose front is far from its tool pivot. Admit
+                // that visible handle within the existing 4m interaction range;
+                // every independent surface still remains an occlusion fence.
+                moveArrowLimit=4f;
+                if(preview.RaycastUiOnly(ray,out float previewUiDistance))moveArrowLimit=Mathf.Min(moveArrowLimit,previewUiDistance);
                 var blender=UnityEngine.Object.FindFirstObjectByType<BlenderScreen>();
                 if(blender!=null&&blender.RaycastSurface(ray,out float menuDistance))moveArrowLimit=Mathf.Min(moveArrowLimit,menuDistance);
+                if(scene.Table!=null)
+                {
+                    if(scene.Table.RaycastControls(ray,out float handMenuDistance))moveArrowLimit=Mathf.Min(moveArrowLimit,handMenuDistance);
+                    if(scene.Table.Guide!=null&&scene.Table.Guide.Raycast(ray,out float guideDistance))moveArrowLimit=Mathf.Min(moveArrowLimit,guideDistance);
+                }
+                var workspace=scene.GetComponent<WorkspaceArrangement>();
+                if(workspace?.Surfaces!=null&&workspace.Surfaces.RaycastLevel(ray,out float planeDistance)!=null)moveArrowLimit=Mathf.Min(moveArrowLimit,planeDistance);
                 foreach(var other in scene.ObjectViews)
                 {
                     if(other==null||other==view||!other.gameObject.activeInHierarchy)continue;
@@ -364,6 +376,8 @@ namespace SpatialModeling
                 ["target_id"]=picked.ObjectId,["targets"]=new JArray(Selection.ObjectIds),
                 ["selection"]=new JObject { ["component"]=pickedComponent,["indices"]=new JArray(Selection.Indices) },
                 ["topology_token"]=frozenModel["topology_token"],["settings"]=settings };
+            Debug.Log("P25_LIVE_GESTURE tool="+DiagnosticFlag(tool)+" handle="+(translationGestureFrame!=null?"move_axis":gestureHandle?"tool_handle":"body")
+                +" constraint="+(gizmoConstraint==null?"native":string.Concat(gizmoConstraint.Select(value=>value?"1":"0"))));
             var displayMaps=new JObject();foreach(var pair in maps)displayMaps[pair.Key]=MatrixArray(pair.Value);
             operation["display_maps"]=displayMaps;
             var camera=Camera.main;
@@ -783,7 +797,10 @@ namespace SpatialModeling
         {
             distance=float.PositiveInfinity;if(!enabled)return false;
             var view=scene.PickObject(ray,out float meshDistance);
-            bool handle=TryHandle(ray,20,out _,out _,out float handleDistance);
+            // A visual query must never replace a captured arrow/normal/ring
+            // with the other hand's hover while a gesture or its ACK is live.
+            bool handle=false;float handleDistance=0;
+            if(!held&&!Busy)handle=TryHandle(ray,20,out _,out _,out handleDistance);
             if(view!=null)distance=meshDistance;if(handle)distance=Mathf.Min(distance,handleDistance);
             return !float.IsPositiveInfinity(distance);
         }
@@ -929,6 +946,9 @@ namespace SpatialModeling
                 translationPickFrame=TranslationFrame(view);
                 if(DirectTranslationHandles.TryPick(translationPickFrame,ray,moveArrowLimit>0?moveArrowLimit:nearest,out var pickedArrow))
                 {translationAxis=pickedArrow.Axis;translationPickedArrow=hit=true;distance=pickedArrow.Distance;axis=translationPickFrame.Axis(translationAxis);constraint=new[]{translationAxis==0,translationAxis==1,translationAxis==2};}
+                // The visible arrow wins its hit. A nearer plane intersection
+                // along the same oblique ray must not silently replace its axis.
+                if(hit)return true;
             }
             else for(int i=0;i<3;i++)
             {
