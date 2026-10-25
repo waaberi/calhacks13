@@ -82,6 +82,30 @@ try:
     cube = bpy.data.objects["Cube"]
     cube.select_set(True)
     bpy.context.view_layer.objects.active = cube
+    original_vertices = [list(vertex.co) for vertex in cube.data.vertices]
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.ed.undo_push(message="Before authored Edit Mode move")
+    bpy.ops.transform.translate(value=(.125, 0, 0))
+    bpy.ops.ed.undo_push(message="Authored Edit Mode move")
+    assert document.can_capture() and not document.is_idle()
+    edit_snapshot = document.capture(out / "settled-edit-mode.blend")
+    assert bpy.context.object.mode == "EDIT"
+    edited_vertices = [list(vertex.co) for vertex in bpy.data.objects["Cube"].data.vertices]
+    assert edited_vertices != original_vertices
+    bpy.ops.ed.undo()
+    bpy.data.objects["Cube"].update_from_editmode()
+    assert [list(vertex.co) for vertex in bpy.data.objects["Cube"].data.vertices] == original_vertices
+    bpy.ops.ed.redo()
+    bpy.data.objects["Cube"].update_from_editmode()
+    assert [list(vertex.co) for vertex in bpy.data.objects["Cube"].data.vertices] == edited_vertices
+    assert edit_snapshot.data and bpy.context.object.mode == "EDIT"
+    bpy.ops.object.mode_set(mode="OBJECT")
+    report["checks"].append("settled Edit Mode checkpoint flushes native geometry while preserving mode and Undo/Redo history")
+    bpy.ops.object.select_all(action="DESELECT")
+    cube = bpy.data.objects["Cube"]
+    cube.select_set(True)
+    bpy.context.view_layer.objects.active = cube
     response = bpy.ops.transform.translate("INVOKE_DEFAULT")
     if response == {"RUNNING_MODAL"}:
         assert not document.is_idle()
