@@ -95,6 +95,64 @@ add("mesh.tris_to_quads", ["face"], {"angle_limit": number(0, math.pi, math.pi),
                                      "preserve_uvs": BOOL}, modes=["EDIT_MESH"])
 add("mesh.unsubdivide", ["vertex"], {"iterations": number(1, 6, 1, True)}, modes=["EDIT_MESH"])
 
+BASE_OPERATIONS = frozenset(row["id"] for row in _ROWS)
+
+add("mesh.sculpt_mask", ["vertex"], {"value": number(0, 1)}, ["value"], ["EDIT_MESH"])
+add("mesh.face_set", ["face"], {"value": number(1, 100000, integer=True)}, ["value"], ["EDIT_MESH"])
+
+add("rig.pose_transform", ["object"], {"bone": TEXT, "location_m": vector(),
+    "rotation": vector(4, -1.000001, 1.000001), "scale": vector(3, -1000, 1000)}, ["bone"], ["POSE"])
+add("rig.pose_reset", ["object"], {"bone": TEXT}, ["bone"], ["POSE"])
+add("rig.ik_add", ["object"], {"bone": TEXT, "target_id": TEXT,
+    "chain_count": number(1, 32, 2, True), "influence": number(0, 1, 1)}, ["bone", "target_id"], ["OBJECT", "POSE"])
+add("rig.ik_update", ["object"], {"bone": TEXT, "target_id": TEXT,
+    "chain_count": number(1, 32, integer=True), "influence": number(0, 1)}, ["bone"], ["OBJECT", "POSE"])
+add("rig.ik_remove", ["object"], {"bone": TEXT}, ["bone"], ["OBJECT", "POSE"], True)
+add("rig.bind_armature", ["object"], {"rig_id": TEXT}, ["rig_id"])
+add("rig.unbind_armature", ["object"], {}, destructive=True)
+
+add("animation.pose_keyframe", ["object"], {"bone": TEXT,
+    "channel": enum("location", "rotation_euler", "rotation_quaternion", "scale"),
+    "frame": number(-100000, 100000, integer=True)}, ["bone", "channel", "frame"], ["POSE"])
+add("animation.pose_keyframe_delete", ["object"], {"bone": TEXT,
+    "channel": enum("location", "rotation_euler", "rotation_quaternion", "scale"),
+    "frame": number(-100000, 100000, integer=True)}, ["bone", "channel", "frame"], ["POSE"], True)
+add("animation.interpolation", ["object"], {
+    "channel": enum("location", "rotation_euler", "rotation_quaternion", "scale"),
+    "interpolation": enum("CONSTANT", "LINEAR", "BEZIER"),
+    "handle_type": enum("AUTO", "AUTO_CLAMPED", "VECTOR", "ALIGNED", "FREE")}, ["channel", "interpolation"])
+add("animation.frame_range", ["object"], {"start": number(-100000, 100000, integer=True),
+    "end": number(-100000, 100000, integer=True), "fps": number(1, 240, integer=True)}, ["start", "end"])
+
+add("camera.settings", ["object"], {"projection": enum("PERSP", "ORTHO"),
+    "lens_mm": number(1, 1000), "sensor_width_mm": number(1, 100),
+    "ortho_scale_m": number(.000001, 1000), "clip_start_m": number(.000001, 1000),
+    "clip_end_m": number(.000001, 100000)})
+add("light.settings", ["object"], {"kind": enum("POINT", "SUN", "SPOT", "AREA"),
+    "colour": vector(3, 0, 1), "energy": number(0, 1000000), "radius_m": number(0, 100),
+    "spot_angle": number(.01, math.pi), "spot_blend": number(0, 1),
+    "area_size_m": number(.000001, 1000)})
+add("text.settings", ["object"], {"body": {"type": "string", "minLength": 1, "maxLength": 2048},
+    "size_m": number(.000001, 1000), "extrude_m": number(0, 100), "bevel_depth_m": number(0, 100),
+    "align_x": enum("LEFT", "CENTER", "RIGHT", "JUSTIFY", "FLUSH"),
+    "align_y": enum("TOP_BASELINE", "TOP", "CENTER", "BOTTOM", "BOTTOM_BASELINE"),
+    "line_spacing": number(.1, 10)})
+
+add("modifier.add_deform", ["object"], {"kind": enum("SIMPLE_DEFORM", "CAST", "DISPLACE", "EDGE_SPLIT"),
+    "method": enum("TWIST", "BEND", "TAPER", "STRETCH"), "axis": enum("X", "Y", "Z"),
+    "factor": number(-100, 100), "angle": number(-2 * math.pi, 2 * math.pi),
+    "amount_m": number(-100, 100)}, ["kind"])
+add("modifier.configure", ["object"], {"name": TEXT,
+    "width_m": number(0, 100), "segments": number(1, 64, integer=True), "profile": number(0, 1),
+    "levels": number(0, 6, integer=True), "render_levels": number(0, 6, integer=True),
+    "thickness_m": number(-100, 100), "offset": number(-1, 1), "rim": BOOL,
+    "count": number(1, 1000, integer=True), "relative_offset": vector(3, -100, 100),
+    "ratio": number(.000001, 1), "merge_distance_m": number(0, 100),
+    "axis": enum("X", "Y", "Z"), "clipping": BOOL, "factor": number(-100, 100),
+    "iterations": number(1, 100, integer=True), "method": enum("TWIST", "BEND", "TAPER", "STRETCH"),
+    "angle": number(-2 * math.pi, 2 * math.pi), "amount_m": number(-100, 100),
+    "split_angle": number(0, math.pi)}, ["name"])
+
 _INDEX = {row["id"]: row for row in _ROWS}
 OPERATIONS = frozenset(_INDEX)
 

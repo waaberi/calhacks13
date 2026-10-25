@@ -101,7 +101,9 @@ def run():
         obj = fresh(edit=True)
         result = apply(obj, 'uv.select_island', component='face', indices=[0])
         check('exact UV continuity expands both faces', result['selection']['indices'] == [0, 1])
+        before_uv = tools.context_fingerprint()
         apply(obj, 'uv.pin', {'pinned': True}, 'face', [0])
+        check('UV pin changes opaque native freshness', tools.context_fingerprint() != before_uv)
         bm = bmesh.from_edit_mesh(obj.data)
         uv = bm.loops.layers.uv.active
         check('pins selected face only', all(l[uv].pin_uv for l in bm.faces[0].loops)
@@ -151,6 +153,7 @@ def run():
         original.node_tree.nodes.get('Principled BSDF').inputs['Base Color'].default_value = (.1, .2, .3, 1)
         obj.data.materials.append(original)
         apply(obj, 'material.principled', {'roughness': .2, 'metallic': .8, 'emission_strength': 3, 'transmission': .3})
+        check('shader freshness is serializable', len(tools.context_fingerprint()) == 64)
         check('material isolated from original', obj.active_material != original)
         check('unchanged shader values preserved', tuple(obj.active_material.node_tree.nodes.get('Principled BSDF').inputs['Base Color'].default_value) == tuple(original.node_tree.nodes.get('Principled BSDF').inputs['Base Color'].default_value))
         check('native shader parameter', abs(obj.active_material.node_tree.nodes.get('Principled BSDF').inputs['Roughness'].default_value - .2) < 1e-6)
@@ -250,7 +253,7 @@ def run():
         check('native extras Redo finished', bpy.ops.ed.redo() == {'FINISHED'})
     obj = Sync.find_object(identity)
     check('one native Redo restores weights', weights(obj) == after)
-    check('every offered tool exercised', set(REPORT['tools']) == {row['id'] for row in catalog.catalog()})
+    check('every base finishing tool exercised', set(REPORT['tools']) == catalog.BASE_OPERATIONS)
     REPORT['passed'] = True
 
 

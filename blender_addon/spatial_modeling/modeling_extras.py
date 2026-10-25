@@ -5,10 +5,30 @@ boundary. This module neither opens a document nor changes the user's mode.
 """
 
 import copy
+import hashlib
+import json
 
 from . import tool_catalog_extras as catalog
 
 OPERATIONS = catalog.OPERATIONS
+_IK_TAG = "spatial_modeling_ik"
+_BIND_TAG = "spatial_modeling_armature_modifier"
+_IK_FIELDS = ("chain_count", "influence", "iterations", "use_stretch", "use_rotation")
+_MOD_FIELDS = {
+    'BEVEL': {'width_m': ('width', 'length'), 'segments': ('segments', 'int'), 'profile': ('profile', None)},
+    'SUBSURF': {'levels': ('levels', 'int'), 'render_levels': ('render_levels', 'int')},
+    'SOLIDIFY': {'thickness_m': ('thickness', 'length'), 'offset': ('offset', None), 'rim': ('use_rim', None)},
+    'ARRAY': {'count': ('count', 'int'), 'relative_offset': ('relative_offset_displace', None)},
+    'DECIMATE': {'ratio': ('ratio', None)},
+    'MIRROR': {'merge_distance_m': ('merge_threshold', 'length'), 'clipping': ('use_clip', None)},
+    'WELD': {'merge_distance_m': ('merge_threshold', 'length')},
+    'SMOOTH': {'factor': ('factor', None), 'iterations': ('iterations', 'int')},
+    'SIMPLE_DEFORM': {'method': ('deform_method', None), 'axis': ('deform_axis', None),
+                      'factor': ('factor', None), 'angle': ('angle', None)},
+    'CAST': {'factor': ('factor', None)},
+    'DISPLACE': {'amount_m': ('strength', 'length')},
+    'EDGE_SPLIT': {'split_angle': ('split_angle', None)},
+}
 
 
 def validate_step(tool, params, component=None):
@@ -57,6 +77,90 @@ def _collection(name):
     raise ValueError("The collection is outside the current native scene")
 
 
+def _bone(rig, name):
+    _local(rig, 'ARMATURE')
+    if len(rig.data.bones) > 64:
+        raise ValueError('This rig exceeds the bounded native pose size')
+    bone = rig.pose.bones.get(name)
+    if bone is None or bone.bone.hide or getattr(bone, 'hide', False):
+        raise ValueError('Choose an exact visible native bone')
+    if rig.animation_data and rig.animation_data.drivers:
+        raise ValueError('Driven rigs require their native driver workflow')
+    return bone
+
+
+def _owned_ik(rig):
+    value = rig.get(_IK_TAG)
+    constraints = [(bone, c) for bone in rig.pose.bones for c in bone.constraints]
+    if value is None:
+        if constraints:
+            raise ValueError('Existing foreign bone constraints must remain in their native workflow')
+        return None
+    try:
+        value = json.loads(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError('The native IK ownership record is invalid') from error
+    if not isinstance(value, dict) or set(value) != {'bone', 'name', 'target_id'} or len(constraints) != 1:
+        raise ValueError('The native IK constraint structure changed')
+    bone, constraint = constraints[0]
+    if (bone.name != value['bone'] or constraint.name != value['name'] or constraint.type != 'IK'
+            or not constraint.target or constraint.target.get('spatial_modeling_id') != value['target_id']):
+        raise ValueError('The exact native IK association changed')
+    return bone, constraint, value
+
+
+def _rig_target(editor, rig, identity):
+    target = editor.sync.find_object(identity)
+    if target is None or target == rig or target.library or rig in _ancestors(target):
+        raise ValueError('Choose an independent local IK target')
+    if (any(getattr(m, 'object', None) == rig for m in target.modifiers)
+            or any(getattr(c, 'target', None) == rig for c in target.constraints)):
+        raise ValueError('The IK target depends on the rig and would create a native dependency cycle')
+    return target
+
+
+def _ancestors(obj):
+    result = []
+    current = obj.parent
+    while current is not None and current not in result:
+        result.append(current)
+        current = current.parent
+    return result
+
+
+def _action_curves(action):
+    seen = set()
+    groups = []
+    if hasattr(action, 'fcurves'):
+        groups.append(action.fcurves)
+    for layer in action.layers:
+        for strip in layer.strips:
+            groups.extend(bag.fcurves for bag in getattr(strip, 'channelbags', ()))
+    for group in groups:
+        for curve in group:
+            if curve.as_pointer() not in seen:
+                seen.add(curve.as_pointer())
+                yield curve
+
+
+def _bind_action(obj, action, slot_identifier=None):
+    animation = obj.animation_data_create()
+    animation.action = action
+    if action is not None and slot_identifier:
+        slot = next((s for s in action.slots if s.identifier == slot_identifier), None)
+        if slot is not None:
+            animation.action_slot = slot
+
+
+def _private_action(obj):
+    animation = obj.animation_data_create()
+    if animation.action is not None:
+        slot = animation.action_slot.identifier if animation.action_slot else None
+        action = animation.action.copy()
+        action.use_fake_user = False
+        _bind_action(obj, action, slot)
+
+
 def _selection_vertices(obj, selection):
     import bpy
     if bpy.context.mode == "EDIT_MESH":
@@ -93,6 +197,79 @@ def preflight(editor, target, tool, params, selection=None, outputs=None):
         _local(target, "CURVE")
         if len(target.data.splines) > 128 or sum(len(s.points) + len(s.bezier_points) for s in target.data.splines) > 4096:
             raise ValueError("Curve exceeds bounded editable point count")
+    if tool.startswith(('camera.', 'light.', 'text.')):
+        _local(target, {'camera': 'CAMERA', 'light': 'LIGHT', 'text': 'FONT'}[tool.split('.')[0]])
+    if tool == 'camera.settings':
+        start = params.get('clip_start_m', target.data.clip_start * _unit())
+        end = params.get('clip_end_m', target.data.clip_end * _unit())
+        if start >= end:
+            raise ValueError('The camera near clip must precede its far clip')
+    if tool == 'light.settings':
+        kind = params.get('kind', target.data.type)
+        allowed = {'radius_m': {'POINT', 'SPOT'}, 'spot_angle': {'SPOT'},
+                   'spot_blend': {'SPOT'}, 'area_size_m': {'AREA'}}
+        if any(key in params and kind not in kinds for key, kinds in allowed.items()):
+            raise ValueError('Those light properties do not apply to the requested light type')
+    if tool.startswith('modifier.'):
+        _local(target, 'MESH')
+        if tool == 'modifier.configure':
+            modifier = target.modifiers.get(params['name'])
+            if modifier is None or modifier.type not in _MOD_FIELDS:
+                raise ValueError('Choose an existing supported native modifier')
+            if set(params) - {'name'} - set(_MOD_FIELDS[modifier.type]):
+                raise ValueError('Those parameters do not belong to this modifier kind')
+        elif len(target.modifiers) >= 64:
+            raise ValueError('This object already has 64 native modifiers')
+        else:
+            allowed = {'SIMPLE_DEFORM': {'method', 'axis', 'factor', 'angle'}, 'CAST': {'factor'},
+                       'DISPLACE': {'amount_m'}, 'EDGE_SPLIT': {'angle'}}[params['kind']]
+            if set(params) - {'kind'} - allowed:
+                raise ValueError('Those parameters do not belong to this deform modifier')
+    if tool.startswith(('rig.', 'animation.pose_')):
+        if tool in ('rig.bind_armature', 'rig.unbind_armature'):
+            _local(target, 'MESH')
+            if tool == 'rig.bind_armature':
+                rig = editor.sync.find_object(params['rig_id'])
+                _local(rig, 'ARMATURE')
+                if rig == target or target in _ancestors(rig) or any(m.type == 'ARMATURE' for m in target.modifiers):
+                    raise ValueError('Binding needs an independent rig and no existing armature modifier')
+                if not any(group.name in rig.data.bones for group in target.vertex_groups):
+                    raise ValueError('Create exact bone-named vertex groups and weights before binding')
+            else:
+                name = target.get(_BIND_TAG, '')
+                modifier = target.modifiers.get(name)
+                if modifier is None or modifier.type != 'ARMATURE':
+                    raise ValueError('This object has no owned armature binding')
+        else:
+            bone = _bone(target, params['bone'])
+            if bpy.context.mode == 'POSE' and (bpy.context.object != target or len(bpy.context.objects_in_mode) != 1):
+                raise ValueError('Use the existing active single native Pose rig')
+            if tool.startswith('rig.pose_') and bone.constraints:
+                raise ValueError('Pose this constrained bone through its native constraint workflow')
+            if 'rotation' in params and abs(sum(v * v for v in params['rotation']) - 1) > .002:
+                raise ValueError('The pose quaternion must be normalized [w,x,y,z]')
+            if 'scale' in params and any(abs(v) < .001 for v in params['scale']):
+                raise ValueError('Pose scale cannot be zero or nearly singular')
+            if tool.startswith('rig.ik_'):
+                existing = _owned_ik(target)
+                if tool == 'rig.ik_add' and existing:
+                    raise ValueError('Update or remove the existing owned IK before adding another')
+                if tool != 'rig.ik_add' and (existing is None or existing[0] != bone):
+                    raise ValueError('Choose the exact bone with the existing owned IK')
+                if 'target_id' in params:
+                    _rig_target(editor, target, params['target_id'])
+    if tool.startswith('animation.'):
+        if target.animation_data and target.animation_data.drivers:
+            raise ValueError('Driven animation remains in its native driver workflow')
+        if target.animation_data and target.animation_data.nla_tracks:
+            raise ValueError('NLA animation remains in its native track workflow')
+        action = target.animation_data.action if target.animation_data else None
+        if action and (action.library or action.override_library):
+            raise ValueError('Make the native action local before editing its keys')
+        if tool == 'animation.interpolation' and (action is None or not any(c.data_path == params['channel'] for c in _action_curves(action))):
+            raise ValueError('That native channel has no keyframes')
+        if tool == 'animation.frame_range' and params['start'] > params['end']:
+            raise ValueError('The animation range start must not exceed its end')
     if bpy.context.mode == "EDIT_MESH":
         from . import spatial_model_edit
         spatial_model_edit._editable_mesh(bpy.context, target)
@@ -398,6 +575,126 @@ def _curve(obj, tool, params):
     data.update_tag()
 
 
+def _rig(editor, obj, tool, params):
+    if tool == 'rig.bind_armature':
+        modifier = obj.modifiers.new('Armature', 'ARMATURE')
+        modifier.object = editor.sync.find_object(params['rig_id'])
+        modifier.use_vertex_groups = True
+        modifier.use_bone_envelopes = False
+        obj[_BIND_TAG] = modifier.name
+        return
+    if tool == 'rig.unbind_armature':
+        obj.modifiers.remove(obj.modifiers[obj[_BIND_TAG]])
+        del obj[_BIND_TAG]
+        return
+    bone = _bone(obj, params['bone'])
+    if tool.startswith('rig.pose_'):
+        if tool == 'rig.pose_reset':
+            bone.location = (0, 0, 0)
+            bone.rotation_euler = (0, 0, 0)
+            bone.rotation_quaternion = (1, 0, 0, 0)
+            bone.rotation_axis_angle = (0, 0, 1, 0)
+            bone.scale = (1, 1, 1)
+        else:
+            if 'location_m' in params:
+                bone.location = tuple(v / _unit() for v in params['location_m'])
+            if 'rotation' in params:
+                from mathutils import Quaternion
+                rotation = Quaternion(params['rotation']).normalized()
+                if bone.rotation_mode == 'QUATERNION':
+                    bone.rotation_quaternion = rotation
+                elif bone.rotation_mode == 'AXIS_ANGLE':
+                    axis, angle = rotation.to_axis_angle()
+                    bone.rotation_axis_angle = (angle, *axis)
+                else:
+                    bone.rotation_euler = rotation.to_euler(bone.rotation_mode)
+            if 'scale' in params:
+                bone.scale = params['scale']
+    elif tool == 'rig.ik_remove':
+        _, constraint, _ = _owned_ik(obj)
+        bone.constraints.remove(constraint)
+        del obj[_IK_TAG]
+    else:
+        if tool == 'rig.ik_add':
+            constraint = bone.constraints.new('IK')
+            constraint.name = 'Spatial IK'
+            constraint.iterations = 64
+            constraint.use_stretch = False
+            constraint.use_rotation = False
+        else:
+            _, constraint, _ = _owned_ik(obj)
+        if 'target_id' in params:
+            constraint.target = _rig_target(editor, obj, params['target_id'])
+        if 'chain_count' in params:
+            constraint.chain_count = int(params['chain_count'])
+        if 'influence' in params:
+            constraint.influence = params['influence']
+        obj[_IK_TAG] = json.dumps({'bone': bone.name, 'name': constraint.name,
+                                  'target_id': constraint.target.get('spatial_modeling_id')}, sort_keys=True)
+    obj.update_tag(refresh={'OBJECT', 'DATA'})
+
+
+def _animation(obj, tool, params):
+    import bpy
+    if tool == 'animation.frame_range':
+        scene = bpy.context.scene
+        scene.frame_start = int(params['start'])
+        scene.frame_end = int(params['end'])
+        if 'fps' in params:
+            scene.render.fps = int(params['fps'])
+        return
+    _private_action(obj)
+    if tool == 'animation.interpolation':
+        for curve in _action_curves(obj.animation_data.action):
+            if curve.data_path == params['channel']:
+                for point in curve.keyframe_points:
+                    point.interpolation = params['interpolation']
+                    if 'handle_type' in params:
+                        point.handle_left_type = point.handle_right_type = params['handle_type']
+                curve.update()
+    else:
+        bone = obj.pose.bones[params['bone']]
+        operation = bone.keyframe_insert if tool == 'animation.pose_keyframe' else bone.keyframe_delete
+        if not operation(data_path=params['channel'], frame=params['frame'], group=bone.name):
+            raise ValueError('The native pose keyframe operation had no matching result')
+
+
+def _settings(obj, tool, params):
+    data = obj.data
+    if tool == 'camera.settings':
+        mapping = {'projection': ('type', False), 'lens_mm': ('lens', False), 'sensor_width_mm': ('sensor_width', False),
+                   'ortho_scale_m': ('ortho_scale', True), 'clip_start_m': ('clip_start', True), 'clip_end_m': ('clip_end', True)}
+    elif tool == 'light.settings':
+        if 'kind' in params:
+            data.type = params['kind']
+        mapping = {'colour': ('color', False), 'energy': ('energy', False), 'radius_m': ('shadow_soft_size', True),
+                   'spot_angle': ('spot_size', False), 'spot_blend': ('spot_blend', False), 'area_size_m': ('size', True)}
+    else:
+        mapping = {'body': ('body', False), 'size_m': ('size', True), 'extrude_m': ('extrude', True),
+                   'bevel_depth_m': ('bevel_depth', True), 'align_x': ('align_x', False), 'align_y': ('align_y', False),
+                   'line_spacing': ('space_line', False)}
+    for key, (attribute, metric) in mapping.items():
+        if key in params:
+            if not hasattr(data, attribute):
+                raise ValueError('That property does not apply to the selected native data type')
+            setattr(data, attribute, params[key] / _unit() if metric else params[key])
+    data.update_tag()
+
+
+def _modifier(obj, tool, params):
+    if tool == 'modifier.add_deform':
+        modifier = obj.modifiers.new(params['kind'].replace('_', ' ').title(), params['kind'])
+        values = {k: v for k, v in params.items() if k != 'kind'}
+        if params['kind'] == 'EDGE_SPLIT' and 'angle' in values:
+            values['split_angle'] = values.pop('angle')
+    else:
+        modifier = obj.modifiers[params['name']]
+        values = {k: v for k, v in params.items() if k != 'name'}
+    for key, value in values.items():
+        attribute, kind = _MOD_FIELDS[modifier.type][key]
+        setattr(modifier, attribute, value / _unit() if kind == 'length' else int(value) if kind == 'int' else value)
+
+
 def _mesh(editor, obj, tool, params, selection):
     import bmesh
     import bpy
@@ -443,6 +740,14 @@ def _mesh(editor, obj, tool, params, selection):
         elif tool == "mesh.poke":
             result = bmesh.ops.poke(stage, faces=picked, offset=params["offset_m"] / _unit(), center_mode='MEAN_WEIGHTED')
             result_domain, result_items = "face", result["faces"]
+        elif tool in ('mesh.sculpt_mask', 'mesh.face_set'):
+            if tool == 'mesh.sculpt_mask':
+                layer = stage.verts.layers.float.get('.sculpt_mask') or stage.verts.layers.float.new('.sculpt_mask')
+            else:
+                layer = stage.faces.layers.int.get('.sculpt_face_set') or stage.faces.layers.int.new('.sculpt_face_set')
+            _, refreshed = modeling_mesh.elements(stage, selection)
+            for element in refreshed:
+                element[layer] = params['value']
         elif tool == "mesh.tris_to_quads":
             if any(len(f.verts) != 3 for f in picked):
                 raise ValueError("Joining triangles needs selected native triangles")
@@ -528,6 +833,14 @@ def apply_step(editor, target, tool, params, selection=None, outputs=None):
         _collection(params["name"]).objects.unlink(target)
     elif tool.startswith("curve."):
         _curve(target, tool, params)
+    elif tool.startswith('rig.'):
+        _rig(editor, target, tool, params)
+    elif tool.startswith('animation.'):
+        _animation(target, tool, params)
+    elif tool.startswith(('camera.', 'light.', 'text.')):
+        _settings(target, tool, params)
+    elif tool.startswith('modifier.'):
+        _modifier(target, tool, params)
     else:
         raise ValueError("No native finishing executor for " + tool)
     bpy.context.view_layer.update()
@@ -559,11 +872,27 @@ class ExtraBackup:
         material_targets = {step.get('target') for step in steps
                             if isinstance(step.get('target'), str)
                             and step.get('tool', '').startswith('material.')}
-        self.noop = not self.capture_collections and not weight_targets and not material_targets
+        pose_targets = {step.get('target') for step in steps
+                        if isinstance(step.get('target'), str)
+                        and (step.get('tool', '').startswith('rig.') or step.get('tool', '').startswith('animation.pose_'))}
+        ik_targets = {step.get('target') for step in steps
+                      if isinstance(step.get('target'), str) and step.get('tool', '').startswith('rig.ik_')}
+        action_targets = {step.get('target') for step in steps
+                          if isinstance(step.get('target'), str)
+                          and step.get('tool', '').startswith('animation.')
+                          and step.get('tool') not in ('animation.frame', 'animation.frame_range')}
+        self.capture_frame = bool(tools & {'animation.frame_range', 'animation.frame'})
+        self.before_actions = {a.session_uid for a in bpy.data.actions} if action_targets else None
+        self.noop = not any((self.capture_collections, weight_targets, material_targets,
+                             pose_targets, action_targets, self.capture_frame))
         if self.noop:
             return
         self.scene_uid = bpy.context.scene.session_uid
         self.filepath = bpy.data.filepath
+        scene = bpy.context.scene
+        self.frame = (scene.frame_start, scene.frame_end, scene.render.fps, scene.render.fps_base,
+                      scene.frame_current, scene.frame_subframe) if self.capture_frame else None
+        self.object_ids = {o.session_uid: o.get('spatial_modeling_id', '') for o in scene.objects}
         if self.capture_collections and (len(bpy.data.collections) > 256 or len(bpy.context.scene.objects) > 256):
             raise ValueError("Atomic finishing edits require a bounded native scene")
         self.collection_ids = {c.session_uid for c in bpy.data.collections} if self.capture_collections else set()
@@ -575,7 +904,10 @@ class ExtraBackup:
         for obj in bpy.context.scene.objects:
             capture_groups = obj.type == 'MESH' and obj.get('spatial_modeling_id', '') in weight_targets
             capture_material = obj.get('spatial_modeling_id', '') in material_targets
-            if not self.capture_collections and not capture_groups and not capture_material:
+            capture_pose = obj.type == 'ARMATURE' and obj.get('spatial_modeling_id', '') in pose_targets
+            capture_action = obj.get('spatial_modeling_id', '') in action_targets
+            capture_ik = obj.get('spatial_modeling_id', '') in ik_targets
+            if not any((self.capture_collections, capture_groups, capture_material, capture_pose, capture_action)):
                 continue
             groups = [(g.name, g.lock_weight) for g in obj.vertex_groups] if capture_groups else []
             if len(groups) > 64:
@@ -598,6 +930,12 @@ class ExtraBackup:
                                  "collections": tuple(obj.users_collection), "groups": groups,
                                  "capture_groups": capture_groups,
                                  "capture_material": capture_material,
+                                 "pose": _pose_state(obj, capture_ik) if capture_pose else None,
+                                 "capture_action": capture_action,
+                                 "had_animation": obj.animation_data is not None,
+                                 "action": obj.animation_data.action if obj.animation_data else None,
+                                 "action_slot": (obj.animation_data.action_slot.identifier
+                                                 if obj.animation_data and obj.animation_data.action_slot else None),
                                  "weights": weights, "active_group": obj.vertex_groups.active_index if groups else 0,
                                  "active_material": obj.active_material_index})
 
@@ -639,6 +977,18 @@ class ExtraBackup:
                     obj.vertex_groups.active_index = record["active_group"]
             if record['capture_material']:
                 obj.active_material_index = record["active_material"]
+            if record['pose'] is not None:
+                remapped = dict(live)
+                for uid, identity in self.object_ids.items():
+                    candidate = self.editor.sync.find_object(identity) if identity else None
+                    if candidate is not None:
+                        remapped[uid] = candidate
+                _restore_pose(obj, record['pose'], remapped)
+            if record['capture_action']:
+                if not record['had_animation']:
+                    obj.animation_data_clear()
+                else:
+                    _bind_action(obj, record['action'], record['action_slot'])
         # Restore links first, then remove only collections created by this recipe.
         for collection, name, viewport, render, children in self.collections:
             if collection.name != name:
@@ -665,7 +1015,167 @@ class ExtraBackup:
                 if collection.session_uid not in self.collection_ids:
                     bpy.data.collections.remove(collection)
         bpy.context.view_layer.update()
+        if self.frame is not None:
+            scene = bpy.context.scene
+            scene.frame_start, scene.frame_end, scene.render.fps, scene.render.fps_base = self.frame[:4]
+            scene.frame_set(self.frame[4], subframe=self.frame[5])
         self.restored = True
 
     def close(self, restored=False):
+        import bpy
+        if self.before_actions is not None:
+            for action in list(bpy.data.actions):
+                if action.session_uid not in self.before_actions and action.users == 0:
+                    bpy.data.actions.remove(action)
         self.closed = True
+
+
+def _pose_state(obj, constraints=False):
+    active = obj.data.bones.active
+    return {'active': active.name if active else None,
+            'bones': [{'name': bone.name, 'mode': bone.rotation_mode,
+                       'location': tuple(bone.location), 'quaternion': tuple(bone.rotation_quaternion),
+                       'euler': tuple(bone.rotation_euler), 'axis_angle': tuple(bone.rotation_axis_angle),
+                       'scale': tuple(bone.scale), 'selected': bone.select,
+                       'constraints': [(c.name, c.type, _constraint_values(c)) for c in bone.constraints]
+                                      if constraints else None}
+                      for bone in obj.pose.bones]}
+
+
+def _constraint_values(constraint):
+    import bpy
+    result = {}
+    for prop in constraint.bl_rna.properties:
+        if prop.identifier in {'rna_type', 'name', 'type'} or prop.is_readonly or prop.type == 'COLLECTION':
+            continue
+        value = getattr(constraint, prop.identifier)
+        result[prop.identifier] = (('__object_uid__', value.session_uid) if isinstance(value, bpy.types.Object)
+                                   else tuple(value) if getattr(prop, 'is_array', False) else value)
+    return result
+
+
+def _restore_pose(obj, state, objects):
+    from . import voice_sequence
+    if {bone.name for bone in obj.pose.bones} != {row['name'] for row in state['bones']}:
+        raise ValueError('The shared backup did not restore the native rig structure')
+    for row in state['bones']:
+        bone = obj.pose.bones[row['name']]
+        bone.rotation_mode = row['mode']
+        bone.location, bone.rotation_quaternion = row['location'], row['quaternion']
+        bone.rotation_euler, bone.rotation_axis_angle, bone.scale = row['euler'], row['axis_angle'], row['scale']
+        bone.select = row['selected']
+        if row['constraints'] is not None:
+            for current in list(bone.constraints):
+                bone.constraints.remove(current)
+            for name, kind, values in row['constraints']:
+                constraint = bone.constraints.new(kind)
+                constraint.name = name
+                voice_sequence._restore_rna(constraint, values, objects)
+    obj.data.bones.active = obj.data.bones.get(state['active']) if state['active'] else None
+    obj.update_tag(refresh={'OBJECT', 'DATA'})
+
+
+def context_fingerprint(objects=None):
+    """Read-only native freshness beyond streamed geometry and object transforms.
+
+    The host can include this digest in its captured AI context and compare it
+    again before execution. No ID is assigned and no input or mode is changed.
+    """
+    import bpy
+    scene = bpy.context.scene
+    if objects is None:
+        objects = list(bpy.context.selected_objects)
+        if bpy.context.active_object is not None and bpy.context.active_object not in objects:
+            objects.append(bpy.context.active_object)
+    result = {'scene': scene.session_uid, 'mode': bpy.context.mode,
+              'active': bpy.context.active_object.session_uid if bpy.context.active_object else None,
+              'selection': sorted(o.session_uid for o in bpy.context.selected_objects),
+              'frame': [scene.frame_current, scene.frame_subframe, scene.frame_start, scene.frame_end,
+                        scene.render.fps, scene.render.fps_base], 'objects': [],
+              'collections': [(c.session_uid, c.name, c.hide_viewport, c.hide_render,
+                               sorted(child.session_uid for child in c.children),
+                               sorted(o.session_uid for o in c.objects)) for c in bpy.data.collections]}
+    for obj in sorted(objects, key=lambda o: o.session_uid):
+        row = {'uid': obj.session_uid, 'data': obj.data.session_uid if obj.data else None,
+               'active_material': obj.active_material_index}
+        if obj.type == 'ARMATURE':
+            row['rest'] = [(b.name, b.parent.name if b.parent else None, list(b.head_local), list(b.tail_local), b.hide)
+                           for b in obj.data.bones]
+            pose = _pose_state(obj, True)
+            for bone in pose['bones']:
+                native = obj.pose.bones[bone['name']]
+                bone['matrix'] = [list(row) for row in native.matrix]
+                bone['constraints'] = [(name, kind, {key: _fingerprint_value(value) for key, value in values.items()})
+                                       for name, kind, values in bone['constraints']]
+            row['pose'] = pose
+        if obj.type == 'MESH':
+            row['groups'] = [(g.name, g.lock_weight) for g in obj.vertex_groups]
+            if obj.data.is_editmode:
+                import bmesh
+                bm = bmesh.from_edit_mesh(obj.data)
+                row['weights'] = _weight_maps(obj, bm)
+                uv_names = bm.loops.layers.uv.keys()
+                row['uv'] = [(name, [(list(l[layer].uv), l[layer].pin_uv)
+                                    for f in bm.faces for l in f.loops])
+                             for name in uv_names for layer in [bm.loops.layers.uv[name]]]
+                row['active_uv'] = bm.loops.layers.uv.active.name if bm.loops.layers.uv.active else None
+                mask, faceset = bm.verts.layers.float.get('.sculpt_mask'), bm.faces.layers.int.get('.sculpt_face_set')
+                row['sculpt'] = ([v[mask] for v in bm.verts] if mask else None,
+                                 [f[faceset] for f in bm.faces] if faceset else None)
+            else:
+                row['weights'] = _weight_maps(obj, None)
+                row['uv'] = [(layer.name, [list(loop.uv) for loop in layer.data]) for layer in obj.data.uv_layers]
+                row['active_uv'] = obj.data.uv_layers.active_index
+        if obj.type == 'CURVE':
+            row['splines'] = [(s.type, s.use_cyclic_u,
+                               [(list(p.co), p.radius, p.tilt) for p in s.points],
+                               [(list(p.co), list(p.handle_left), list(p.handle_right), p.handle_left_type,
+                                 p.handle_right_type, p.radius, p.tilt) for p in s.bezier_points]) for s in obj.data.splines]
+            row['curve'] = [obj.data.dimensions, obj.data.resolution_u, obj.data.bevel_depth,
+                            obj.data.bevel_resolution, obj.data.extrude, obj.data.use_fill_caps, obj.data.fill_mode]
+        if obj.type in ('CAMERA', 'LIGHT', 'FONT'):
+            attrs = {'CAMERA': ('type', 'lens', 'sensor_width', 'ortho_scale', 'clip_start', 'clip_end'),
+                     'LIGHT': ('type', 'color', 'energy', 'shadow_soft_size', 'spot_size', 'spot_blend', 'size'),
+                     'FONT': ('body', 'size', 'extrude', 'bevel_depth', 'align_x', 'align_y', 'space_line')}[obj.type]
+            row['settings'] = {name: _fingerprint_value(getattr(obj.data, name))
+                               for name in attrs if hasattr(obj.data, name)}
+        row['materials'] = []
+        for slot in obj.material_slots:
+            material = slot.material
+            if material is None:
+                row['materials'].append(None)
+                continue
+            item = {'uid': material.session_uid, 'link': slot.link, 'colour': list(material.diffuse_color),
+                    'metallic': material.metallic, 'roughness': material.roughness}
+            if material.node_tree is not None:
+                tree = material.node_tree
+                item['nodes'] = [(node.name, node.bl_idname,
+                                   [(socket.identifier, _fingerprint_value(socket.default_value))
+                                    for socket in node.inputs if hasattr(socket, 'default_value')]) for node in tree.nodes]
+                item['links'] = [(link.from_node.name, link.from_socket.identifier,
+                                  link.to_node.name, link.to_socket.identifier) for link in tree.links]
+            row['materials'].append(item)
+        action = obj.animation_data.action if obj.animation_data else None
+        if action is not None:
+            row['animation'] = [(curve.data_path, curve.array_index,
+                                  [(list(k.co), k.interpolation, list(k.handle_left), list(k.handle_right),
+                                    k.handle_left_type, k.handle_right_type) for k in curve.keyframe_points])
+                                 for curve in _action_curves(action)]
+        result['objects'].append(row)
+    raw = json.dumps(result, sort_keys=True, separators=(',', ':'), allow_nan=False).encode('utf-8')
+    if len(raw) > 8 * 1024 * 1024:
+        raise ValueError('The complete native modeling freshness context exceeds eight MiB')
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _fingerprint_value(value):
+    import bpy
+    if isinstance(value, bpy.types.ID):
+        return {'native_uid': value.session_uid}
+    if isinstance(value, (list, tuple)):
+        return [_fingerprint_value(v) for v in value]
+    if isinstance(value, (set, frozenset)):
+        return sorted(value)
+    if not isinstance(value, (str, bool, int, float, type(None))) and hasattr(value, '__iter__'):
+        return [_fingerprint_value(v) for v in value]
+    return value
