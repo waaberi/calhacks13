@@ -93,11 +93,18 @@ def tick():
                         edit_fixture("host")
                         bpy.ops.ed.undo_push(message="Host native tools")
                         native._observe()
+                    elif action["action"] == "conflict":
+                        # A deliberate out-of-band write proves the final CAS
+                        # also catches native changes missed by an input gate.
+                        bpy.data.objects["NativeSync_Cube"]["native_host_conflict"] = 91
+                        bpy.context.view_layer.update()
+                        native._observe()
                     elif action["action"] == "finish":
                         publish("host-result.json", {"passed": True, "graph": capture_graph(),
                             "leases": sess.store.leases()})
                         stop()
                         return None
+                    publish("action-result.json", {"action": action["action"], "graph": capture_graph()})
                 if not (folder / "ready.json").exists():
                     publish("ready.json", {"port": listener.port, "graph": capture_graph()})
         if time.monotonic() - started > config.get("timeout", 180):

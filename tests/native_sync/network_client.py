@@ -75,6 +75,17 @@ def duplicate_shared():
             and copy.get("uuid") != original.get("uuid"))
 
 
+def edit_mode_shared(expected):
+    actual = status().get("graph")
+    if actual is None or not settled():
+        return False
+    diff = differences(expected, actual)
+    if diff:
+        (folder / "edit-mode-differences.json").write_text(json.dumps({
+            "remote": diff, "local_after_checkpoint": differences(expected, capture_graph())}, indent=2))
+    return not diff
+
+
 def action(name):
     temp = folder / "action.tmp"
     temp.write_text(json.dumps({"action": name}))
@@ -109,6 +120,10 @@ def steps():
     yield "Host native Edit Mode UV modifier material custom-property edits reach Client", lambda: (
         host_changed_and_client_matches(before))
     host_edit = capture_graph()
+    area = next(area for area in bpy.context.window.screen.areas if area.type == "VIEW_3D")
+    area.spaces.active.region_3d.view_distance += 1.25
+    rc.native_client.mark_dirty()
+    yield "Client viewport navigation is local and does not create an edit draft", settled
     assert rc.native_client.take_edit_turn(), rc.native_client.error
     yield "exclusive edit turn refreshes complete original data", lambda: (
         rc.native_client.is_editing and settled())
@@ -152,10 +167,42 @@ def steps():
     yield "Host canonical IDs survive repeated native checkpoints of new Client objects", lambda: (
         duplicate_shared() and status()["native_ids"]["AAA_NativeSync_Copy"]
         == first_ids["AAA_NativeSync_Copy"])
+    bpy.ops.object.select_all(action="DESELECT")
+    bpy.data.objects["NativeSync_Cube"].select_set(True)
+    bpy.context.view_layer.objects.active = bpy.data.objects["NativeSync_Cube"]
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.transform.translate(value=(.04, 0, 0))
+    bpy.context.object.update_from_editmode()
+    topology = capture_graph()
+    (folder / "expected-edit-mode.json").write_text(json.dumps(topology, indent=2))
+    rc.native_client.mark_dirty()
+    yield "completed native Edit Mode operations synchronize without forcing the author out of Edit Mode", lambda: (
+        edit_mode_shared(topology))
+    assert bpy.context.object.mode == "EDIT"
+    bpy.ops.object.mode_set(mode="OBJECT")
+    # The real native graph remains editable after leaving Edit Mode. Stage a
+    # local change, then advance the Host by a different native change first.
+    bpy.data.objects["NativeSync_Cube"]["native_client_conflict_draft"] = 87
+    rc.native_client.mark_dirty()
+    action("conflict")
+    yield "concurrent Host native data changes reject the older Client revision and retain its draft", lambda: (
+        bool(rc.native_client.watcher.rejection)
+        and status().get("graph", {}).get("cube", {}).get("native_properties", {}).get("native_host_conflict") == 91)
+    assert bpy.data.objects["NativeSync_Cube"]["native_client_conflict_draft"] == 87
+    assert "native_client_conflict_draft" not in status()["graph"]["cube"]["native_properties"]
+    assert list(rc.native_client.directory.glob("draft-*.blend")), "A readable native draft file must survive"
+    assert rc.native_client.reload_host(discard=True), rc.native_client.error
+    yield "explicit conflict reload backs up latest local work and applies the checked Host graph", lambda: (
+        settled() and same(status().get("graph", {})))
+    assert list(rc.native_client.directory.glob("before-reload-*.blend"))
+    assert "native_client_conflict_draft" not in bpy.data.objects["NativeSync_Cube"]
+    topology = capture_graph()
     assert rc.native_client.finish_edit_turn()
     yield "finishing edit turn waits for native receipt then releases ownership", lambda: (
         not rc.native_client.lease_id and not status().get("leases") and settled())
     assert same(topology)
+    assert bpy.context.object.mode == "OBJECT"
     rc.disconnect()
     assert same(topology), "Disconnect must preserve the full native document"
     report["checks"].append("disconnect preserves original native document instead of deleting a mirror")

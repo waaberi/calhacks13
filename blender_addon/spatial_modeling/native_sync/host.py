@@ -18,6 +18,12 @@ from .. import protocol
 from .state import Fence, NativeSyncState, Refused
 
 
+def _local_hash(snapshot):
+    # Native transport bytes include this peer's UI. The data-only fingerprint
+    # keeps ordinary viewport navigation out of model revisions and conflicts.
+    return getattr(snapshot, "document_hash", None) or snapshot.sha256
+
+
 class NativeHost:
     def __init__(self, session, document, scene_sync, native_document=None):
         if native_document is None:
@@ -101,6 +107,25 @@ class NativeHost:
                 "document_id": doc["id"], "open_epoch": doc["open_epoch"],
                 "revision": self.state.revision, "checkpoint_hash": self.state.checkpoint_hash}
 
+    @property
+    def has_unknown(self):
+        return self.state is not None and bool(self.state._uncertain)
+
+    def reconcile_unknown(self):
+        """Local Host's explicit checked-document action; never a remote request.
+
+        The current graph is re-exported before accepting new request IDs. Old
+        receipts stay UNKNOWN and can never be executed again.
+        """
+        if not self.has_unknown:
+            return
+        self._capture()
+        for rid in tuple(self.state._uncertain):
+            self.state.reconcile_unknown(rid, revision=self.state.revision,
+                                         checkpoint_hash=self.state.checkpoint_hash)
+        self.error = ""
+        self._announce()
+
     def _capture(self):
         live = getattr(self._srv, "live_edit", None)
         preview = getattr(self._srv, "preview_ui", None)
@@ -115,15 +140,16 @@ class NativeHost:
         self.scene_sync.flush()
         self.document.store()
         snapshot = self.native.capture(self.path)
+        digest = _local_hash(snapshot)
         self.dirty = False
         if self.state is None:
             doc = self.session.document()
             self.state = NativeSyncState(session_id=self.session.session_id,
                 host_epoch=self.session.host_epoch, document_id=doc["id"],
-                open_epoch=doc["open_epoch"], revision=0, checkpoint_hash=snapshot.sha256)
-        elif snapshot.sha256 != self.snapshot.sha256:
-            self.state.sync_head(self.state.revision + 1, snapshot.sha256)
-        changed = self.snapshot is None or snapshot.sha256 != self.snapshot.sha256
+                open_epoch=doc["open_epoch"], revision=0, checkpoint_hash=digest)
+        elif digest != _local_hash(self.snapshot):
+            self.state.sync_head(self.state.revision + 1, digest)
+        changed = self.snapshot is None or digest != _local_hash(self.snapshot)
         self.snapshot = snapshot
         if changed:
             self._announce()
@@ -250,14 +276,15 @@ class NativeHost:
                     self.scene_sync.restore_native_identities(identity_map)
                 self.scene_sync.flush()
                 snapshot = self.native.capture(self.path)
+                digest = _local_hash(snapshot)
                 revision = self.state.revision + 1
                 if self.state.pending is not None and self.state.pending.request_id == rid:
                     receipt = self.state.applied(rid, self._fence(conn, p),
-                        revision=revision, checkpoint_hash=snapshot.sha256)
+                        revision=revision, checkpoint_hash=digest)
                 else:
                     # A disconnect may already have closed this receipt as
                     # UNKNOWN. The fresh native head is still authoritative.
-                    self.state.sync_head(revision, snapshot.sha256)
+                    self.state.sync_head(revision, digest)
                     receipt = self.state.query(rid, fence)
                 self.snapshot = snapshot
                 self.dirty = False
