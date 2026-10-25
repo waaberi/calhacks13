@@ -51,7 +51,7 @@ flowchart LR
 
 - **[Blender add-on](blender_addon/spatial_modeling/)** (Python): one add-on with two roles, Host and Client. It needs nothing beyond the Python that ships with Blender. Every object gets a stable ID that survives renames, Undo and save/reopen.
 - **[VR app](app/)** (Unity 6, OpenXR, XR Interaction Toolkit): the room, the table, controller input, the hand menu and the Blender screen panel.
-- **[VoiceCore](voice/VoiceCore/)** (C#): offline speech recognition with Vosk and a command grammar. It remembers the parts of a command it already has and asks only for what's missing.
+- **[VoiceCore](voice/VoiceCore/)** (C#): local speech recognition with Whisper, voice command parsing and follow-up questions. It remembers the parts of a command it already has and asks only for what's missing.
 - **Secure LAN link:** the second Blender connects over TLS 1.3 using the session token as a pre-shared key. There are no certificates to set up.
 - **[SpacetimeDB](spacetime/):** tracks who is connected, who is editing which object, and a log of applied edits that survives a restart.
 - **[Wire format](contracts/README.md):** every message has a JSON Schema and an example, and CI checks both.
