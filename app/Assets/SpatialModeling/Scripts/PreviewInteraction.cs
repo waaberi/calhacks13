@@ -388,7 +388,7 @@ namespace SpatialModeling
                 }
                 if (stateful)
                 {
-                    string label = b.name == "Lock screen position" ? (selected ? "Screen LOCKED" : "Lock screen position")
+                    string label = b.name == "Lock screen position" ? (selected ? "Screen LOCKED" : "Lock screen")
                         : b.name == "Other hand" ? "Pointer: " + (selected ? "Left" : "Right") : b.name + (selected ? " · ON" : "");
                     b.GetComponentInChildren<Text>().text = label;
                 }
@@ -1043,8 +1043,10 @@ namespace SpatialModeling
         {
             var go = new GameObject(name, typeof(RectTransform), typeof(RoundedGlassImage));
             var rect = go.GetComponent<RectTransform>(); rect.SetParent(screen.Placement, false);
+            if(size.y>=600&&position.y==-200)position.y=-100; // Keep capture/status text below large overlays.
             rect.anchoredPosition = position; rect.sizeDelta = size;
-            GlassTheme.StylePanel(go.GetComponent<Image>());
+            var background=go.GetComponent<Image>();GlassTheme.StylePanel(background);
+            if(position.y>-600){var color=background.color;color.a=.94f;background.color=color;} // Avoid native text bleeding through typing/dialog surfaces.
             return rect;
         }
         Button AddButton(RectTransform parent, string label, int col, int row, Action action, float width = 250, int columns = 7)
@@ -1064,8 +1066,9 @@ namespace SpatialModeling
                 action(); RefreshControlFeedback();
             }); buttons.Add(button);
             GlassTheme.StyleAction(go);
-            string caption=label=="BACKSPACE"?"Backspace":label;
-            MakeText(rect, Vector2.zero, rect.sizeDelta-new Vector2(24,8), caption, columns >= 12 ? 22 : 25);
+            string caption=label=="BACKSPACE"?"Backspace":label=="PAGEUP"?"Page Up":label=="PAGEDOWN"?"Page Down":label=="DECIMAL"?"Num .":label.StartsWith("NUMPAD",StringComparison.Ordinal)?"Num "+label.Substring(6):label;
+            int typeSize=columns>=12?(caption.Length==1?22:19):25;
+            MakeText(rect, Vector2.zero, rect.sizeDelta-new Vector2(24,8), caption,typeSize);
             return button;
         }
         static Text MakeText(Transform parent, Vector2 position, Vector2 size, string value, int fontSize)

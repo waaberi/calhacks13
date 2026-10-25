@@ -60,8 +60,14 @@ public static class GlassStabilityChecks
             {
                 var rect=b.GetComponent<RectTransform>();Check(Mathf.Abs(rect.rect.width-128)<.01f,"all basic keyboard rows use the same key width: "+b.name);
                 float col=rect.anchoredPosition.x/136+6;Check(Mathf.Abs(col-Mathf.Round(col))<.001f,"keyboard action/key rows share thirteen-column alignment: "+b.name);
+                var label=b.GetComponentInChildren<Text>();float preferred=label.cachedTextGeneratorForLayout.GetPreferredWidth(label.text,label.GetGenerationSettings(Vector2.zero))/label.pixelsPerUnit;
+                Check(preferred<=label.rectTransform.rect.width+.5f,"keyboard caption fits one line without split words: "+b.name+" preferred="+preferred+" available="+label.rectTransform.rect.width);
                 Check(keyboard.rect.Contains(rect.anchoredPosition+rect.rect.min)&&keyboard.rect.Contains(rect.anchoredPosition+rect.rect.max),"keyboard key stays within panel: "+b.name);
             }
+            var status=(Text)typeof(BlenderScreen).GetField("status",Private).GetValue(screen);var corners=new Vector3[4];status.rectTransform.GetWorldCorners(corners);
+            float statusTop=corners.Max(c=>screen.Placement.InverseTransformPoint(c).y);
+            Check(keyboard.anchoredPosition.y+keyboard.rect.yMin>statusTop+12,"keyboard never overlaps native capture status text");
+            Check(keyboard.GetComponent<Image>().color.a>=.94f,"typing surface prevents native UI text bleed-through while retaining the glass contour");
         }
         finally{foreach(var go in Resources.FindObjectsOfTypeAll<GameObject>())if(go!=null&&!existing.Contains(go)&&!EditorUtility.IsPersistent(go))UnityEngine.Object.DestroyImmediate(go);}
         Debug.Log("GLASS_GRID_CHECK PASS actual_twelve_controls six_by_two aligned_rows uniform_thirteen_column_keyboard retained_actions inset_text panel_bounds");
