@@ -1,6 +1,7 @@
 """HTTP contract and stale-frame/selection regression tests. No desktop is captured."""
 
 import http.client
+import io
 import json
 import os
 import sys
@@ -8,7 +9,7 @@ import threading
 import time
 import types
 import unittest
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, redirect_stdout
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -400,6 +401,17 @@ class GraphicsWorkerTests(unittest.TestCase):
             self.assertEqual(capture.settings["window_hwnd"], 202)
             self.arrive(capture, np.full((8, 12, 4), 64, np.uint8))
             self.wait_until(lambda: latest.snapshot()[0]["window"] == "Blender 202")
+            self.assertTrue(loop.is_alive())
+
+    def test_capture_that_ended_by_itself_is_joined_logged_and_restarted(self):
+        output = io.StringIO()
+        with redirect_stdout(output), self.workers(fail_stop=True) as (harness, latest, loop):
+            self.wait_until(lambda: harness.captures)
+            harness.captures[0][1].finished = True  # The native thread ended with an error.
+            self.wait_until(lambda: len(harness.captures) == 2)
+            self.assertIn("CAPTURE_STOP_ERROR", output.getvalue())
+            self.arrive(harness.captures[1][0], np.full((8, 12, 4), 64, np.uint8))
+            self.wait_until(lambda: latest.snapshot()[1] is not None)
             self.assertTrue(loop.is_alive())
 
 

@@ -488,7 +488,12 @@ def graphics_capture_loop(api, latest, stop, fps):
                 stop_capture(control)
                 control, _capture = None, None
                 print("CAPTURE_RECOVERY no_new_callback; reopening selected window", flush=True)
-            if control is None or control.is_finished():
+            if control is not None and control.is_finished():
+                # The native thread ended by itself (an error in a frame callback, or the
+                # window closed). windows-capture keeps that error for the join; log it.
+                stop_capture(control)
+                control, _capture = None, None
+            if control is None:
                 try:
                     _capture, control = start(selected, generation)
                 except Exception as exc:  # noqa: BLE001 -- windows-capture raises plain Exception.
