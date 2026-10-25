@@ -21,6 +21,7 @@ public static class LiveControllerChecks
         Selection();Presentation();GestureMath();LiveRoute();SelectionSync();SelectionRecovery();ToolGestures();RotationRingRoute();RotationBoundsFenceRoute();SelectionAndCancellation();SelectionOutlineBound();
         DirectRotationHandlesChecks.Run();
         DirectManipulationFeedbackChecks.Run();
+        DirectToolGuidesChecks.Run();DirectToolUsabilityChecks.Run();
         SurfaceScaleChecks.Run();SurfaceScaleRoute();SurfaceScaleCancellation();
         Debug.Log("LIVE_CONTROLLER_CHECK PASS actual held native-update route/one commit/cancel/selection-only no-geometry/SHIFT multi-selection+input-off/epoch/native Inset+Bevel+LoopCut+surface Knife/native axis handle+settings cancellation/own-echo identity+sequence/affine M0 mirrored nonuniform live+commit+reset+restore; physical acceptance pending");
     }
@@ -190,6 +191,8 @@ public static class LiveControllerChecks
             string native=tool=="mesh.inset"?"builtin.inset_faces":tool=="mesh.bevel"?"builtin.bevel":tool=="mesh.loop_cut"?"builtin.loop_cut":"builtin.knife";
             using var f=new DirectModelEditingChecks.Fixture(native,"EDIT_MESH");var model=(JObject)f.Drawing.NativeState["model_edit"];
             if(tool=="mesh.loop_cut")model["component"]="edge";
+            if(tool=="mesh.loop_cut")
+            {((JArray)model["edges"]).Add(new JObject{["index"]=12,["vertices"]=new JArray(2,3)});((JArray)model["edges"]).Add(new JObject{["index"]=13,["vertices"]=new JArray(3,0)});}
             if(tool=="mesh.knife")model["component"]="vertex";
             NativeLive(f,tool);var settings=(JObject)model["settings"];settings["segments"]=3;settings["cuts"]=2;
             bool Route(bool trigger,float x)
