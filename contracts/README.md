@@ -44,6 +44,11 @@ Every message has this envelope:
 | `lease.acquire` | client → host | request fields, `mode` (`exclusive` or `shared`), `targets` | P3B |
 | `lease.granted` | host → client, answers `lease.acquire` | the `lease` | P3B |
 | `lease.release` | client → host | `lease_id`; no reply on success | P3B |
+| `live.edit.begin` | VR → host | request fields, exclusive `lease`, frozen `targets`, `base_revision`, typed `operation` | Live native editing |
+| `live.edit.update` | VR → host | request fields, `edit_session_id`, next `sequence`, cumulative `parameters` | Live native editing |
+| `live.edit.commit` | VR → host | request fields, `edit_session_id`, latest acknowledged `sequence` | Live native editing |
+| `live.edit.cancel` | VR → host | request fields, `edit_session_id`, optional reason | Live native editing |
+| `live.edit.state` | host → VR | identity, edit session, phase, sequence, revision, generations, selection, notice | Live native editing |
 | `session.update` | host → every client | every participant and every lease | P1, P3B, P5 |
 | `voice.resolve` | client → host | `text` heard, recognizer `confidence`, optional `target` | P4 |
 | `voice.candidates` | host → client, answers `voice.resolve` | `resolution`, `decision` (`run`, `ask` or `reject`), `reason`, `expires_in`, up to 3 `candidates` | P4 |
@@ -51,6 +56,17 @@ Every message has this envelope:
 | `voice.grammar` | host → client, answers `voice.grammar_query` | `version` and `phrases` for the recognizer | P4 |
 
 Voice commands themselves are ordinary `command`s (see [Voice](#voice)). There is no frame message type; see [Blender screen](#blender-screen).
+
+Live gestures reserve the ordinary exclusive lease after acknowledged native input
+release. Each update changes real Blender data, recomputed from an immutable
+starting snapshot; parameters never accumulate against an earlier preview.
+`scene.update.live_edit` identifies the owning actor, session, sequence and phase.
+Native generations remain monotonic through preview and Cancel. Commit reconstructs
+the starting snapshot before one ordinary final undoable edit, so Undo returns to
+the gesture's start, not an intermediate preview. Cancel restores that start
+without adding history. Typed selection-only operations synchronize native
+selection without changing the document step marker or adding Undo. An external
+native geometry change causes a conflict and is never silently overwritten.
 
 ### LAN port
 

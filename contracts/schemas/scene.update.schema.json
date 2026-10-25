@@ -11,6 +11,7 @@
       "required": ["document", "objects", "sketches", "removed"],
       "properties": {
         "document": { "$ref": "envelope.schema.json#/$defs/document" },
+        "live_edit": {"type":"object","required":["id","sequence","phase","actor_id"],"properties":{"id":{"$ref":"envelope.schema.json#/$defs/uuid"},"sequence":{"$ref":"envelope.schema.json#/$defs/revision"},"phase":{"enum":["updated","committed","cancelled"]},"actor_id":{"$ref":"envelope.schema.json#/$defs/uuid"}},"additionalProperties":false},
         "objects": { "type": "array", "items": { "$ref": "scene.snapshot.schema.json#/$defs/object" } },
         "sketches": { "type": "array", "items": { "$ref": "scene.snapshot.schema.json#/$defs/sketch" } },
         "removed": { "type": "array", "items": { "$ref": "envelope.schema.json#/$defs/uuid" }, "uniqueItems": true }

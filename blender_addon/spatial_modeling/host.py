@@ -213,6 +213,8 @@ def _drain():
     _server.drain()
     if hasattr(_server, "preview_ui"):
         _server.preview_ui.poll()
+    if hasattr(_server, "live_edit"):
+        _server.live_edit.poll()
     scene_sync.poll()  # direct edits in this Blender reach clients as scene.update
     gate.poll()  # after an ungated edit of leased data, stop writes (#77)
     _commands.poll()  # after an unknown outcome, retry the fresh snapshot until it goes out
@@ -273,6 +275,8 @@ def _start_server(extra, sess, cmds, lses):
         cmds.editor.voice.attach(srv)  # voice.resolve and voice.grammar_query
     srv = lses.attach(cmds.attach(sess.attach(srv)))
     srv = preview_spatial.attach(srv, sess, lses)
+    from .live_edit import LiveEdits
+    srv = LiveEdits(sess, cmds.editor, lses, undoable).attach(srv)
     srv.start()
     return srv
 
@@ -290,7 +294,8 @@ def start():
         on_change=_session_changed,
         name=prefs.host_name if prefs else None,
         client_can_edit=bool(prefs and prefs.client_edits),
-        capabilities=lambda: {"sketch": sketch.dependency_status()["available"], "preview_spatial": True},
+        capabilities=lambda: {"sketch": sketch.dependency_status()["available"], "preview_spatial": True,
+                              "live_edit": True},
     )
     editor = edits.Editor(scene_sync, undoable, doc, voice=_voice())
     lses = leases.Leases(sess, editor)
@@ -326,6 +331,8 @@ def stop():
     global _server, _session, _document, _commands, _leases, _shown, status, lan_status
     if bpy.app.timers.is_registered(_drain):
         bpy.app.timers.unregister(_drain)
+    if _server is not None and hasattr(_server, "live_edit"):
+        _server.live_edit.stop()
     scene_sync.stop()
     if _server is not None:
         _server.stop()

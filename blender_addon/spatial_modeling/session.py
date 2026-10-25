@@ -231,6 +231,9 @@ class Session:
 
     def broadcast(self, msg, exclude=None):
         """Send msg to every participant except `exclude`, on every listener."""
+        echo = getattr(self, "live_edit_echo", None)
+        if echo is not None and msg.get("type") in ("scene.update", "scene.snapshot"):
+            msg = dict(msg, payload=dict(msg["payload"], live_edit=dict(echo)))
         if self._server is not None:
             self._server.broadcast(msg, exclude)
 

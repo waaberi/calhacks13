@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "live.edit.begin.schema.json",
+  "title": "live.edit.begin",
+  "$ref": "envelope.schema.json",
+  "properties": {
+    "type": {
+      "const": "live.edit.begin"
+    },
+    "payload": {
+      "type": "object",
+      "required": [
+        "session_id",
+        "host_epoch",
+        "document_id",
+        "open_epoch",
+        "actor_id",
+        "base_revision",
+        "lease",
+        "targets",
+        "operation"
+      ],
+      "properties": {
+        "session_id": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "host_epoch": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "document_id": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "open_epoch": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "actor_id": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "base_revision": {
+          "$ref": "envelope.schema.json#/$defs/revision"
+        },
+        "lease": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "targets": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {
+            "$ref": "command.schema.json#/$defs/target"
+          }
+        },
+        "operation": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

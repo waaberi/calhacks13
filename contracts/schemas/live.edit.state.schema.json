@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "live.edit.state.schema.json",
+  "title": "live.edit.state",
+  "$ref": "envelope.schema.json",
+  "properties": {
+    "type": {
+      "const": "live.edit.state"
+    },
+    "payload": {
+      "type": "object",
+      "required": [
+        "session_id",
+        "host_epoch",
+        "document_id",
+        "open_epoch",
+        "actor_id",
+        "edit_session_id",
+        "phase",
+        "sequence",
+        "revision",
+        "generations",
+        "selection",
+        "notice"
+      ],
+      "properties": {
+        "session_id": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "host_epoch": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "document_id": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "open_epoch": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "actor_id": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "edit_session_id": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "phase": {
+          "enum": [
+            "active",
+            "updated",
+            "committed",
+            "cancelled",
+            "conflict"
+          ]
+        },
+        "sequence": {
+          "$ref": "envelope.schema.json#/$defs/revision"
+        },
+        "revision": {
+          "$ref": "envelope.schema.json#/$defs/revision"
+        },
+        "generations": {
+          "type": "object",
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "$ref": "envelope.schema.json#/$defs/revision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "selection": {
+          "type": "object"
+        },
+        "notice": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
