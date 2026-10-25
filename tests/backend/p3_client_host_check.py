@@ -114,7 +114,7 @@ def tick():
             except (PermissionError, json.JSONDecodeError):
                 # Windows can briefly lock a just-published fixture message.
                 # Keep servicing the real server; the overall deadline remains bounded.
-                if time.monotonic() - started > 150:
+                if time.monotonic() - started > config.get("test_timeout", 150):
                     raise
                 return .01
             name = action["action"]
@@ -146,7 +146,7 @@ def tick():
                     store._thread.join(5)
                 bpy.ops.wm.quit_blender()
                 return None
-        if time.monotonic() - started > 150:
+        if time.monotonic() - started > config.get("test_timeout", 150):
             raise TimeoutError("Production Client test did not finish")
         return .01
     except Exception:  # noqa: BLE001 - preserve timer failures before isolated Blender exits
