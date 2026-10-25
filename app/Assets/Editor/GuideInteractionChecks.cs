@@ -42,7 +42,8 @@ public static class GuideInteractionChecks
     static void AllTextFits(SearchableGuidePanel panel)
     {
         foreach(var text in panel.VisualRoot.GetComponentsInChildren<Text>())
-            Check(!text.supportRichText&&Preferred(text)<=text.rectTransform.rect.height+.6f,"full literal text fits: "+text.text);
+            Check(!text.supportRichText&&Preferred(text)<=text.rectTransform.rect.height+.6f,"full literal text fits: "+text.text
+                +" preferredHeight="+Preferred(text)+" rect="+text.rectTransform.rect.width+"x"+text.rectTransform.rect.height+" font="+text.fontSize+" pixelsPerUnit="+text.pixelsPerUnit);
         foreach(var control in panel.Controls)
         {
             var corners=new Vector3[4];control.GetComponent<RectTransform>().GetWorldCorners(corners);
@@ -81,6 +82,14 @@ public static class GuideInteractionChecks
             {
                 PlayerPrefs.SetFloat("SpatialModeling.Glass.TextScale",textScale);panel.Tick();
                 panel.Search(new string('W',100));Check(panel.Query.Length==SearchableGuidePanel.MaximumQueryLength,"query length is bounded");AllTextFits(panel);
+                var queryText=Button(panel,"Search field").GetComponentInChildren<Text>();
+                Check(queryText.text.Replace("\n","")=="Search: "+panel.Query&&queryText.fontSize==25,"long unbroken query displays every original character at unchanged readable font");
+                foreach(string line in queryText.text.Split('\n'))
+                {
+                    var settings=queryText.GetGenerationSettings(Vector2.zero);settings.horizontalOverflow=HorizontalWrapMode.Overflow;
+                    float width=queryText.cachedTextGeneratorForLayout.GetPreferredWidth(line,settings)/queryText.pixelsPerUnit;
+                    Check(width<=queryText.rectTransform.rect.width+.6f,"explicit query line fits full width="+width+" available="+queryText.rectTransform.rect.width);
+                }
                 panel.Search("");
                 foreach(var article in VrGuideCatalog.Articles)
                 {

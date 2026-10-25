@@ -77,6 +77,22 @@ namespace SpatialModeling
             var settings=label.GetGenerationSettings(new Vector2(label.rectTransform.rect.width,0));settings.verticalOverflow=VerticalWrapMode.Overflow;
             return label.cachedTextGeneratorForLayout.GetPreferredHeight(value,settings)/label.pixelsPerUnit;
         }
+        static string WrapSearch(Text label,string value)
+        {
+            // Unity moves an unbroken word to another line before splitting it.
+            // Explicit measured breaks let the full bounded query share the
+            // prefix line, without reducing type size or changing search data.
+            var settings=label.GetGenerationSettings(Vector2.zero);settings.horizontalOverflow=HorizontalWrapMode.Overflow;
+            string result="",line="";float width=label.rectTransform.rect.width;
+            foreach(char character in value)
+            {
+                string next=line+character;
+                if(line.Length>0&&label.cachedTextGeneratorForLayout.GetPreferredWidth(next,settings)/label.pixelsPerUnit>width)
+                {result+=line+"\n";line="";}
+                line+=character;
+            }
+            return result+line;
+        }
         void Ensure()
         {
             if(root!=null)return;
@@ -109,7 +125,9 @@ namespace SpatialModeling
         {
             matches=VrGuideCatalog.Search(Query);resultPage=Mathf.Clamp(resultPage,0,ResultPageCount-1);
             BeginView("Guide · instructions only");
-            Action("Search field","Search: "+(Query.Length==0?"type using the local keys below":Query),new Vector2(0,315),new Vector2(900,74),()=>{});
+            var search=Action("Search field","",new Vector2(0,315),new Vector2(900,74),()=>{});
+            var searchText=search.GetComponentInChildren<Text>();searchText.alignment=TextAnchor.MiddleLeft;
+            searchText.text=WrapSearch(searchText,"Search: "+(Query.Length==0?"type using the local keys below":Query));
             Label(matches.Count+" matching topics · page "+(resultPage+1)+" / "+ResultPageCount,new Vector2(0,260),new Vector2(900,34),24);
             for(int row=0;row<ResultsPerPage;row++)
             {
