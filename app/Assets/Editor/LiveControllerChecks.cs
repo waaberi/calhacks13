@@ -20,6 +20,7 @@ public static class LiveControllerChecks
     {
         Selection();Presentation();GestureMath();LiveRoute();SelectionSync();SelectionRecovery();ToolGestures();RotationRingRoute();RotationBoundsFenceRoute();SelectionAndCancellation();SelectionOutlineBound();
         DirectRotationHandlesChecks.Run();
+        SurfaceScaleChecks.Run();SurfaceScaleRoute();
         Debug.Log("LIVE_CONTROLLER_CHECK PASS actual held native-update route/one commit/cancel/selection-only no-geometry/SHIFT multi-selection+input-off/epoch/native Inset+Bevel+LoopCut+surface Knife/native axis handle+settings cancellation/own-echo identity+sequence/affine M0 mirrored nonuniform live+commit+reset+restore; physical acceptance pending");
     }
     public static void Selection()
@@ -269,6 +270,47 @@ public static class LiveControllerChecks
             "real controller route grabs the ring using actual outer selected-mesh nearest, rather than an artificial 4m allowance");
         Check(Get(live,"rotationGesture") is DirectRotationHandles.Gesture,"outer-fenced controller hit starts an angular ring gesture");
         f.Preview.CancelDirectModelDraft("test cleanup");
+    }
+    static void SurfaceScaleRoute()
+    {
+        foreach(bool multi in new[]{false,true})
+        {
+            using var f=new DirectModelEditingChecks.Fixture("builtin.scale");NativeLive(f,"object.scale");
+            SurfaceScaleChecks.SetBox(f.View,new Vector3(0,.15f,2),new Vector3(.2f,.3f,.2f));
+            var arrangement=f.Host.gameObject.AddComponent<WorkspaceArrangement>();Invoke(arrangement,"Awake");
+            var surfaces=(List<WorkspaceSurfaces.Surface>)Get(arrangement.Surfaces,"surfaces");
+            var desk=new WorkspaceSurfaces.Surface{Name="Desk",Id=Guid.NewGuid(),Pose=new Pose(new Vector3(0,0,2),Quaternion.LookRotation(Vector3.up,Vector3.forward)),Size=new Vector2(4,4)};surfaces.Add(desk);
+            var model=(JObject)f.Drawing.NativeState["model_edit"];model["settings"]["pivot_m"]=new JArray(0,2,.15f);model["settings"]["pivot"]="INDIVIDUAL_ORIGINS";
+            if(multi)
+            {
+                var other=new GameObject("unattached scale control",typeof(MeshFilter),typeof(MeshCollider),typeof(WorkspaceObjectView));other.transform.SetParent(f.View.transform.parent,false);
+                var mesh=f.View.GetComponent<MeshFilter>().sharedMesh;other.GetComponent<MeshFilter>().sharedMesh=mesh;other.GetComponent<MeshCollider>().sharedMesh=mesh;
+                var view=other.GetComponent<WorkspaceObjectView>();view.ObjectId=B;view.Generation=4;view.SetNativePose(new Vector3(.5f,.1f,0),Quaternion.identity,Vector3.one);
+                ((Dictionary<string,GameObject>)Get(f.Host,"objects"))[B]=other;f.Drawing.Session.Objects[B]=new JObject{["id"]=B,["generation"]=4};
+                ((JArray)model["selection"]["objects"]).Add(new JObject{["id"]=B,["generation"]=4});
+            }
+            Invoke(f.Direct,"Update");Physics.SyncTransforms();
+            Ray Ray(float x)=>new Ray(new Vector3(0,.15f,0),new Vector3(x,0,2).normalized);
+            bool Route(bool trigger,float x)=>f.Preview.RouteControllerHand(UnityEngine.XR.XRNode.RightHand,Ray(x),trigger,false,Vector2.zero,4,out _,false);
+            Check(Route(true,0),"actual controller starts scale on a resting object");Route(true,.05f);GrantAndBegin(f);
+            var update=f.Sent.Last(m=>(string)m["type"]=="live.edit.update");var parameters=(JObject)update["payload"]["parameters"];
+            Check(parameters["pivot_m"] is JArray,"single-target native live scale explicitly carries admitted contact pivot");
+            Check(Vector3.Distance(DirectModelEditMath.ToUnity((JArray)parameters["pivot_m"]),new Vector3(0,0,2))<.00003f,"native scale grows from the actual finite desk support rather than object center");
+            if(multi)
+            {
+                var branches=(JObject)parameters["per_target"];
+                Check(branches.Properties().Count()==2,"multi-selection keeps exactly both admitted target branches");
+                Check(Vector3.Distance(DirectModelEditMath.ToUnity((JArray)branches[A]["pivot_m"]),new Vector3(0,0,2))<.00003f,"contacted target uses its own fixed support");
+                Check(Vector3.Distance(DirectModelEditMath.ToUnity((JArray)branches[B]["pivot_m"]),new Vector3(.5f,.1f,0))<.00003f,"unattached target retains its native individual origin even when display maps match");
+                f.Preview.CancelDirectModelDraft("test cleanup");
+            }
+            else
+            {
+                State(f,"updated",1,(string)update["id"]);Route(false,.05f);
+                var commit=f.Sent.Last(m=>(string)m["type"]=="live.edit.commit");State(f,"committed",1,(string)commit["id"]);
+                Check(f.Sent.Count(m=>(string)m["type"]=="live.edit.commit")==1,"contact-based live scale preserves one native commit");
+            }
+        }
     }
     static void SelectionAndCancellation()
     {

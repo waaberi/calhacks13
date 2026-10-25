@@ -30,6 +30,15 @@ window when that window has desktop focus. The manual physical-keyboard window,
 outline, handle and Settings controls have been removed. Room passthrough remains
 available through the existing room-view controls.
 
+## Scaling on a surface
+
+With Surface detection enabled, scaling an object already resting on a current
+finite plane preserves its contact point. A desk-seated cylinder grows upward
+from its base and remains seated when reduced. Direct Object Scale updates
+Blender live and retains native Cancel/Undo/Redo. Two-hand arrangement scaling
+keeps the contact while orientation is unchanged; deliberate rotation and free
+placement retain the existing controls. Floating objects keep their normal pivot.
+
 ## Verification
 
 The cumulative Windows build includes real curved button dispatch, menu scale and

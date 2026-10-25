@@ -52,6 +52,21 @@ at the starting pivot during the held edit. Release gives one native Undo step;
 grip or Escape cancels and restores the start. Rotation rings follow Blender's
 selected transform orientation and the same frozen native/display mapping.
 
+With Surface detection enabled, Object Scale preserves an existing contact with
+a current finite desk, floor or wall plane. A desk-seated cylinder scales from
+its base: height increases upward and shrinking keeps the same resting point.
+The contact pivot is frozen for the gesture and mapped back into native Blender
+coordinates; live updates, Cancel and one Undo/Redo use the normal native route.
+Each contacted object in a selection uses its own contact point. Floating objects
+retain Blender's pivot. Moving/removing the plane or disabling assistance cancels
+an active contact-based native scale. This does not attach nearby floating objects
+or change a voice command's explicitly requested native transform.
+
+Two-hand arrangement scaling also preserves established contact while the
+orientation stays unchanged. Deliberate two-hand rotation and free placement keep
+their existing controls. Arrangement changes affect the VR presentation; direct
+Object Scale edits the actual Blender model.
+
 ## Direct gesture support
 
 | Native tool | Native mode/selection | Controller action and captured properties |

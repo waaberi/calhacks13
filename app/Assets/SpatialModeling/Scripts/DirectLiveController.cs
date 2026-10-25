@@ -21,6 +21,8 @@ namespace SpatialModeling
         public readonly LiveModelEditSession Session = new LiveModelEditSession();
         readonly Dictionary<string,WorkspaceObjectView> views = new Dictionary<string,WorkspaceObjectView>();
         readonly Dictionary<string,Matrix4x4> maps = new Dictionary<string,Matrix4x4>();
+        sealed class ScaleContact { public WorkspaceSurfaces.Surface Surface; public Vector3 NativePoint; }
+        readonly Dictionary<string,ScaleContact> scaleContacts=new Dictionary<string,ScaleContact>();
         readonly List<Vector3> knifePath = new List<Vector3>();
         readonly List<LineRenderer> handles = new List<LineRenderer>();
         readonly List<LineRenderer> selectionLines = new List<LineRenderer>();
@@ -94,6 +96,7 @@ namespace SpatialModeling
                     if(entry.Value==null){cause="selected_view_missing";break;}
                     else if(entry.Value.LivePresentationConflict){cause="selected_presentation_conflict";break;}
                     else if(!DirectModelEditMath.SameMatrix(maps[entry.Key],entry.Value.NativeToDisplayMatrix)){cause="selected_display_map_changed";break;}
+                if(cause==null&&scaleContacts.Count>0&&!ScaleContactsCurrent())cause="scale_contact_plane_changed";
                 if(cause!=null)CancelWithCause("Native document, tool, settings, geometry or placement changed; cancelling live edit",cause);
             }
             if(Session.Busy&&Time.unscaledTime-lastTransportAt>10f){lastTransportAt=Time.unscaledTime;Session.Timeout();}
@@ -128,7 +131,7 @@ namespace SpatialModeling
             {
                 terminalObserved=true;
                 foreach(var view in views.Values)if(view!=null&&boundId!=null)view.EndLivePresentation(boundId,Session.Phase=="committed");
-                boundId=null;held=waiting=false;rotationGesture=null;
+                boundId=null;held=waiting=false;rotationGesture=null;scaleContacts.Clear();
                 if(Session.Phase=="committed")
                 {
                     dirtySelection=false;
@@ -238,7 +241,7 @@ namespace SpatialModeling
             gizmoAxis=handleHit&&!plane?handleAxis:(Vector3?)null;gizmoPlaneNormal=plane?handleAxis:(Vector3?)null;
             rotationGesture=handleHit&&rotationRing?new DirectRotationHandles.Gesture(rotationPickFrame,rotationPick,ray):null;
             context=ToolContext(frozenModel);identity=Identity();operation=null;targets=null;
-            views.Clear();maps.Clear();knifePath.Clear();boundId=null;terminalObserved=false;
+            views.Clear();maps.Clear();scaleContacts.Clear();knifePath.Clear();boundId=null;terminalObserved=false;
             held=true;moved=waiting=false;gestureEpoch++;Selection.InvalidateIntent();return true;
         }
         VoiceUiAdapter FindFirstVoice()=>UnityEngine.Object.FindFirstObjectByType<VoiceUiAdapter>();
@@ -263,6 +266,7 @@ namespace SpatialModeling
                 views[view.ObjectId]=view;maps[view.ObjectId]=view.NativeToDisplayMatrix;
             }
             commonPivot=SelectionPivotDisplay();
+            CaptureScaleContacts(tool);
             var settings=frozenModel["settings"] is JObject nativeSettings?(JObject)nativeSettings.DeepClone():new JObject();
             if((string)frozenModel["native_tool"]=="builtin.extrude_individual")settings["individual"]=true;
             if(gizmoConstraint!=null)settings["constraint_axis"]=new JArray(gizmoConstraint);
@@ -342,7 +346,10 @@ namespace SpatialModeling
                 float factor=Mathf.Exp(Mathf.Clamp(ScalarDrag(displayDelta)*3,-4.6f,4.6f));
                 var selected=gizmoConstraint??new[] {true,true,true};
                 var scale=new JArray(selected[0]?factor:1,selected[1]?factor:1,selected[2]?factor:1);
-                return PerTarget(new JObject { ["scale"]=scale },map=>new JObject { ["scale"]=scale.DeepClone(),["pivot_m"]=NativePivot(map) });
+                var value=ScaleFor(picked.ObjectId,primaryMap,scale,false);
+                if(pickedComponent=="object"&&maps.Count>1)
+                {var branches=new JObject();foreach(var entry in maps)branches[entry.Key]=ScaleFor(entry.Key,entry.Value,scale,true);value["per_target"]=branches;}
+                return value;
             }
             if(tool=="mesh.inset")return new JObject { ["thickness_m"]=Mathf.Abs(MetricDrag(primaryMap,displayDelta,firstRay.direction)),["depth_m"]=0,
                 ["individual"]=(bool?)settings["individual"]??false,["outset"]=(bool?)settings["outset"]??false,
@@ -372,6 +379,37 @@ namespace SpatialModeling
             if(pickedComponent!="object"||maps.Count<2)return primary;
             var values=new JObject();foreach(var entry in maps)values[entry.Key]=compile(entry.Value);
             primary["per_target"]=values;return primary;
+        }
+        void CaptureScaleContacts(string tool)
+        {
+            scaleContacts.Clear();if(pickedComponent!="object"||!tool.EndsWith(".scale",StringComparison.Ordinal))return;
+            var arrangement=scene!=null?scene.GetComponent<WorkspaceArrangement>():null;
+            if(arrangement==null||!arrangement.AssistEnabled||arrangement.Surfaces==null)return;
+            foreach(var entry in views)
+            {
+                var view=entry.Value;var mesh=view.GetComponent<MeshFilter>()?.sharedMesh;
+                if(mesh==null||!mesh.isReadable)continue;
+                var points=new List<Vector3>();foreach(var vertex in mesh.vertices)points.Add(view.transform.TransformPoint(vertex));
+                if(WorkspaceArrangement.TryScaleContact(points,arrangement.Surfaces.Surfaces,out var surface,out var contact))
+                    scaleContacts[entry.Key]=new ScaleContact{Surface=surface,NativePoint=maps[entry.Key].inverse.MultiplyPoint3x4(contact)};
+            }
+        }
+        bool ScaleContactsCurrent()
+        {
+            var arrangement=scene!=null?scene.GetComponent<WorkspaceArrangement>():null;
+            if(arrangement==null||!arrangement.AssistEnabled||arrangement.Surfaces==null)return false;
+            foreach(var contact in scaleContacts.Values)
+            {bool found=false;foreach(var surface in arrangement.Surfaces.Surfaces)if(WorkspaceArrangement.SameScaleSurface(contact.Surface,surface)){found=true;break;}if(!found)return false;}
+            return true;
+        }
+        JObject ScaleFor(string id,Matrix4x4 map,JArray scale,bool branch)
+        {
+            var value=new JObject{["scale"]=scale.DeepClone()};
+            if(scaleContacts.TryGetValue(id,out var contact))value["pivot_m"]=DirectModelEditMath.ToWire(contact.NativePoint);
+            else if(branch)
+                value["pivot_m"]=(string)operation?["settings"]?["pivot"]=="INDIVIDUAL_ORIGINS"&&views.TryGetValue(id,out var view)
+                    ?DirectModelEditMath.ToWire(view.NativePosition):NativePivot(map);
+            return value;
         }
         JObject RotationFor(Matrix4x4 map,Quaternion displayRotation)
         {
@@ -580,6 +618,7 @@ namespace SpatialModeling
                     +" placement="+(scene!=null&&scene.DisplayPlacementReady)+" modal="+drawing.NativeModalActive);
             gestureEpoch++;Selection.InvalidateIntent();held=waiting=moved=false;
             rotationGesture=null;
+            scaleContacts.Clear();
             if(Session.Busy)Session.Cancel(reason);
             Notice=Session.Busy?Session.Notice:reason;HideHandles();
         }

@@ -18,6 +18,9 @@ namespace SpatialModeling
             public Dictionary<WorkspaceObjectView,(Vector3 position,Quaternion rotation)> Parts;
         }
         readonly List<Entry> history = new List<Entry>();
+        sealed class ScaleSupport { public WorkspaceSurfaces.Surface Surface; public Vector3 WorldPoint,LocalPoint; }
+        readonly Dictionary<Transform,ScaleSupport> scaleSupports=new Dictionary<Transform,ScaleSupport>();
+        public const float ScaleContactTolerance=.008f;
         public bool AssistEnabled { get; private set; } = true;
         public bool EditModelAvailable => PreviewInteraction.Current != null;
         public WorkspaceSurfaces Surfaces { get; private set; }
@@ -39,18 +42,19 @@ namespace SpatialModeling
         {
             if(scene==null) return;
             if(document!=scene.DocumentId || epoch!=scene.OpenEpoch)
-            { history.Clear(); HideGuide(); document=scene.DocumentId; epoch=scene.OpenEpoch; }
+            { history.Clear(); scaleSupports.Clear(); HideGuide(); document=scene.DocumentId; epoch=scene.OpenEpoch; }
             // Direct arranging presents a stationary build after the common worn/focused
             // startup gate; users place it by grabbing/releasing, without a Place menu.
             if(scene.DisplayPlacementReady && !scene.Table.NeedsSeed && !scene.Table.IsPlaced)
                 scene.Table.Place();
         }
-        public void ToggleAssist() { AssistEnabled=!AssistEnabled; HideGuide(); }
+        public void ToggleAssist() { AssistEnabled=!AssistEnabled; scaleSupports.Clear(); HideGuide(); }
         public void SelectArrange() { PreviewInteraction.Current?.EndModelEditing(); }
         public void SelectEditModel() { PreviewInteraction.Current?.BeginModelEditing(); }
         public void Remember(Transform target)
         {
             if(target==null) return;
+            scaleSupports.Remove(target);
             var part=target.GetComponent<WorkspaceObjectView>();
             var parts=new Dictionary<WorkspaceObjectView,(Vector3,Quaternion)>();
             var inspectorStates=new Dictionary<WorkspaceObjectView,WorkspaceObjectView.ArrangementState>();
@@ -111,6 +115,49 @@ namespace SpatialModeling
         }
         public static Vector3 Corner(Bounds bounds,int index) => bounds.center+Vector3.Scale(bounds.extents,
             new Vector3((index&1)==0?-1:1,(index&2)==0?-1:1,(index&4)==0?-1:1));
+        // Admission requires existing geometry contact with a current finite
+        // detected/corrected plane. Proximity alone never creates attachment.
+        public static bool TryScaleContact(IReadOnlyList<Vector3> points,IReadOnlyList<WorkspaceSurfaces.Surface> surfaces,
+            out WorkspaceSurfaces.Surface source,out Vector3 contact)
+        {
+            source=default;contact=default;if(points==null||points.Count==0||surfaces==null)return false;
+            bool found=false,ambiguous=false;float best=float.PositiveInfinity;
+            foreach(var surface in surfaces)
+            {
+                if(surface.Size.x<=0||surface.Size.y<=0)continue;
+                var normal=surface.Normal;float minimum=float.PositiveInfinity;
+                foreach(var point in points)minimum=Mathf.Min(minimum,Vector3.Dot(point-surface.Pose.position,normal));
+                if(minimum<-.004f||minimum>ScaleContactTolerance)continue;
+                Vector3 support=Vector3.zero;int count=0;
+                foreach(var point in points)if(Vector3.Dot(point-surface.Pose.position,normal)<=minimum+.001f){support+=point;count++;}
+                if(count==0)continue;support/=count;
+                var projected=support-normal*Vector3.Dot(support-surface.Pose.position,normal);
+                if(Vector3.Distance(WorkspaceSurfaces.ClosestPoint(surface,projected),projected)>.002f)continue;
+                float score=Mathf.Abs(minimum);
+                if(found&&Mathf.Abs(score-best)<.001f&&Vector3.Dot(source.Normal,normal)<.999f){ambiguous=true;continue;}
+                if(found&&score>=best)continue;
+                best=score;source=surface;contact=support;found=true;ambiguous=false;
+            }
+            return found&&!ambiguous;
+        }
+        public static bool SameScaleSurface(WorkspaceSurfaces.Surface a,WorkspaceSurfaces.Surface b)
+            =>a.Id==b.Id&&a.Name==b.Name&&Vector3.Distance(a.Pose.position,b.Pose.position)<.001f
+                &&Quaternion.Angle(a.Pose.rotation,b.Pose.rotation)<.1f&&Vector2.Distance(a.Size,b.Size)<.001f;
+        public static Pose ScaleAboutContact(Pose desired,Vector3 scale,Vector3 localPoint,Vector3 fixedWorldPoint)
+        {
+            desired.position+=fixedWorldPoint-(desired.position+desired.rotation*Vector3.Scale(localPoint,scale));return desired;
+        }
+        static List<Vector3> MeshPoints(Transform target,Matrix4x4 pose)
+        {
+            var points=new List<Vector3>();
+            foreach(var filter in target.GetComponentsInChildren<MeshFilter>(true))
+            {
+                var mesh=filter.sharedMesh;if(mesh==null||!mesh.isReadable)continue;
+                var relative=target.worldToLocalMatrix*filter.transform.localToWorldMatrix;
+                foreach(var vertex in mesh.vertices)points.Add(pose.MultiplyPoint3x4(relative.MultiplyPoint3x4(vertex)));
+            }
+            return points;
+        }
         public static float MinimumDistance(Bounds bounds,Vector3 scale,Pose pose,WorkspaceSurfaces.Surface surface)
         {
             float minimum=float.PositiveInfinity;
@@ -155,7 +202,29 @@ namespace SpatialModeling
             RotationAxis=Vector3.up; // A previous wall contact must not leak its rotation axis into the next grab/level.
             if(Surfaces!=null && Surfaces.IsLevel(target))
             { HideGuide(); return Surfaces.ConstrainLevel(target,desired,bypass || !AssistEnabled); }
-            if(!AssistEnabled || bypass || Surfaces==null) { HideGuide(); return desired; }
+            if(!AssistEnabled || bypass || Surfaces==null) { scaleSupports.Remove(target);HideGuide(); return desired; }
+            bool scaling=previousScale.HasValue&&(previousScale.Value-target.lossyScale).sqrMagnitude>1e-10f;
+            if(!scaling)scaleSupports.Remove(target);
+            if(scaling&&Quaternion.Angle(previous.rotation,desired.rotation)<.5f)
+            {
+                var before=Matrix4x4.TRS(previous.position,previous.rotation,previousScale.Value);
+                if(!scaleSupports.TryGetValue(target,out var support))
+                {
+                    if(TryScaleContact(MeshPoints(target,before),Surfaces.Surfaces,out var surface,out var contact))
+                    {support=new ScaleSupport{Surface=surface,WorldPoint=contact,LocalPoint=before.inverse.MultiplyPoint3x4(contact)};scaleSupports[target]=support;}
+                }
+                if(support!=null)
+                {
+                    bool current=false;foreach(var surface in Surfaces.Surfaces)if(SameScaleSurface(support.Surface,surface)){current=true;break;}
+                    if(current&&Vector3.Distance(before.MultiplyPoint3x4(support.LocalPoint),support.WorldPoint)<.004f)
+                    {
+                        var anchored=ScaleAboutContact(desired,target.lossyScale,support.LocalPoint,support.WorldPoint);
+                        RotationAxis=support.Surface.Normal;DrawGuide(support.Surface,LocalBounds(target),target.lossyScale,anchored);return anchored;
+                    }
+                    scaleSupports.Remove(target);
+                }
+            }
+            else if(scaling)scaleSupports.Remove(target);
             var bounds=LocalBounds(target);
             foreach(var surface in Surfaces.Surfaces)
                 if(Assist(bounds,target.lossyScale,previous,desired,surface,align,out var assisted,out var suggested,previousScale))
