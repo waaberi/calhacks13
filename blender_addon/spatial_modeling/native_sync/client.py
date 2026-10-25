@@ -3,9 +3,10 @@
 This controller owns no socket or bpy call directly. The native document adapter
 performs file operations on Blender's main thread. A refused or disconnected
 upload remains a local draft; an incoming snapshot never overwrites that draft.
-Automatic receives also audit this peer's current saved bytes before applying.
-UI-only byte changes can conservatively pause receiving; explicit backed-up
-reload resolves that case. This is a preservation fence, not a semantic hash.
+Automatic receives also audit this peer's native document fingerprint. Complete
+file SHA256 remains separate wire integrity; legacy adapters without a document
+fingerprint fall back to their own file SHA256. Peer fingerprints are never
+compared across native reserialization processes.
 """
 
 import json
@@ -20,6 +21,11 @@ from .watcher import NativeChangeTracker
 _ID = re.compile(r"[0-9a-f]{32}\Z")
 _HASH = re.compile(r"[0-9a-f]{64}\Z")
 _IDENTITY = ("session_id", "host_epoch", "document_id", "open_epoch")
+
+
+def _local_hash(snapshot):
+    """Own-process data fingerprint, separate from transferred file integrity."""
+    return getattr(snapshot, "document_hash", None) or snapshot.sha256
 
 
 class NativeClient:
@@ -113,7 +119,7 @@ class NativeClient:
                 self.error = "Local work appeared before initial sharing; it will not be replaced"
             else:
                 try:
-                    self._initial_baseline_hash = self._capture().sha256
+                    self._initial_baseline_hash = _local_hash(self._capture())
                 except (OSError, RuntimeError, ValueError):
                     self._initial_baseline_hash = None
                     self.error = "Initial local checkpoint could not be verified; incoming data will wait"
@@ -187,7 +193,8 @@ class NativeClient:
         path = self.directory / ("draft-" + draft.request_id + ".blend")
         path.write_bytes(draft.payload.data)
         path.with_suffix(".json").write_text(json.dumps({"request_id": draft.request_id,
-            "local_hash": draft.checkpoint_hash, "head": self.head,
+            "local_hash": _local_hash(draft.payload), "file_sha256": draft.payload.sha256,
+            "head": self.head,
             "reason": self.watcher.rejection}, indent=2), encoding="utf-8")
 
     def disconnect(self):
@@ -313,7 +320,7 @@ class NativeClient:
 
     def _export(self):
         snapshot = self._capture()
-        return snapshot.sha256, snapshot
+        return _local_hash(snapshot), snapshot
 
     def _capture(self):
         # Capture flushes this main thread's BMesh and updates its view layer.
@@ -382,7 +389,7 @@ class NativeClient:
                 return
             try:
                 current = self._capture()
-                if current.sha256 != baseline:
+                if _local_hash(current) != baseline:
                     (self.directory / ("before-incoming-" + complete["request_id"] + ".blend")).write_bytes(current.data)
                     self.initial_local_work = not self.has_native_document
                     self._incoming_conflict = True
@@ -418,15 +425,15 @@ class NativeClient:
                     # connection cannot authorize editing or replace a newer
                     # session's canonical metadata. Its current local bytes are
                     # still a valid echo baseline, without discarding drafts.
-                    self.watcher.applied_local_baseline(local.sha256)
+                    self.watcher.applied_local_baseline(_local_hash(local))
                     self.status = ("Previous received data settled; waiting for the current host"
                                    if self.connected else
                                    "Disconnected; native document and local drafts are preserved")
                     return
                 if discard_requested:
-                    self.watcher.discard(local.sha256)
+                    self.watcher.discard(_local_hash(local))
                 else:
-                    self.watcher.applied_local_baseline(local.sha256)
+                    self.watcher.applied_local_baseline(_local_hash(local))
                 self.head = self.applied_head = dict(complete["head"])
                 self._ready_edit = bool(self.lease_id and self._want_edit)
                 self._discard_next = False

@@ -1,6 +1,7 @@
 """Native controller state/transport checks with a deterministic file adapter."""
 import hashlib
 import importlib
+import json
 import sys
 import types
 import uuid
@@ -67,6 +68,21 @@ class Document:
         self.data = b"local save:" + Path(path).read_bytes()
         self.applies += 1
         on_done({"datablocks": 1})
+
+
+class FingerprintedDocument(Document):
+    def __init__(self):
+        super().__init__()
+        self.model = b"initial empty native graph"
+
+    def capture(self, path):
+        result = super().capture(path)
+        result.document_hash = digest(self.model)
+        return result
+
+    def apply(self, path, manifest, on_done, on_error, active_scene_uuid=None):
+        self.model = b"own native graph:" + Path(path).read_bytes()
+        super().apply(path, manifest, on_done, on_error, active_scene_uuid)
 
 
 def setup(tmp_path):
@@ -549,3 +565,53 @@ def test_repeated_native_notifications_cannot_starve_a_settled_export(tmp_path):
     assert client.watcher.pending is not None
     assert client.watcher.pending.payload.data == doc.data
     assert client.watcher.pending.request_id != first.request_id
+
+
+def test_viewport_only_file_byte_changes_do_not_create_native_draft_or_upload(tmp_path):
+    doc, now, sent = FingerprintedDocument(), [0.0], []
+    client = NativeClient(doc, lambda msg: sent.append(msg) or True, tmp_path,
+                          clock=lambda: now[0])
+    client.welcome(welcome())
+    feed(client)
+    baseline = client.watcher.baseline_hash
+    previous_file_hash = digest(doc.data)
+    doc.data = b"same model with viewport orbit and UI layout bytes changed"
+    assert digest(doc.data) != previous_file_hash
+    assert digest(doc.model) == baseline != digest(doc.data)
+    client.mark_dirty(1)
+    now[0] = 2
+    client.tick()
+    assert not client.watcher.has_local_changes and not client.error
+    assert not any(msg["type"] == "native.begin" for msg in sent)
+    applies = doc.applies
+    feed(client, b"next authoritative native graph", revision=1)
+    assert doc.applies == applies + 1 and not client._incoming_conflict
+
+
+def test_native_document_fingerprint_drives_draft_but_file_sha_drives_integrity(tmp_path):
+    doc, now, sent = FingerprintedDocument(), [0.0], []
+    client = NativeClient(doc, lambda msg: sent.append(msg) or True, tmp_path,
+                          clock=lambda: now[0])
+    client.welcome(welcome())
+    feed(client)
+    edit_turn(client)
+    doc.model = b"actual original mesh UV material change"
+    pending = edited(client, doc, now, b"complete blend file containing new graph and local UI")
+    assert pending.checkpoint_hash == digest(doc.model) != pending.payload.sha256
+    begin = sent[-1]
+    assert begin["type"] == "native.begin"
+    assert begin["payload"]["content_hash"] == digest(doc.data) == pending.payload.sha256
+    client.receive("native.receipt", {"request_id": pending.request_id, "outcome": "rejected",
+                                      "code": "stale_revision"})
+    metadata = json.loads((tmp_path / ("draft-" + pending.request_id + ".json")).read_text())
+    assert metadata["local_hash"] == digest(doc.model)
+    assert metadata["file_sha256"] == digest(doc.data)
+
+
+def test_document_fingerprint_baselines_remain_local_and_none_uses_file_fallback(tmp_path):
+    client, doc, _, _ = setup(tmp_path)
+    saved = doc.capture(client.capture_path)
+    saved.document_hash = None
+    assert client_module._local_hash(saved) == saved.sha256
+    saved.document_hash = digest(b"own native ID address layout")
+    assert client_module._local_hash(saved) != head()["checkpoint_hash"]
