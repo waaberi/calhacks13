@@ -18,8 +18,8 @@ public static class NativeSelectionRecoveryChecks
 #if NATIVE_SELECTION_STANDALONE
         Console.WriteLine("NATIVE_SELECTION_PARSER_CHECK PASS legacy-explicit-empty/stale-preview-recovery/pending-intent/unknown-state/not-active-invention");
 #else
-        RouteRecovery();
-        Debug.Log("NATIVE_SELECTION_RECOVERY_CHECK PASS real-deselect-commit/stale-preview/fresh-legacy-empty/no-selection-drag-refused/tap-reselect/native-Scale-ACK+commit/no-auto-selection; physical acceptance pending");
+        RouteRecovery();ColdStartTapHandoff();
+        Debug.Log("NATIVE_SELECTION_RECOVERY_CHECK PASS real-deselect-commit/stale-preview/fresh-legacy-empty/cold-no-active-Move-Rotate-Scale-tap/input-release+fresh-native-barrier/tap-reselect/native-Scale-ACK+commit/no-auto-selection; physical acceptance pending");
 #endif
     }
     static JObject Selected()=>new JObject{["mode"]="OBJECT",["active_object_id"]=A,["topology_token"]="selected",
@@ -48,6 +48,7 @@ public static class NativeSelectionRecoveryChecks
 #else
     const BindingFlags Private=BindingFlags.Instance|BindingFlags.NonPublic;
     static object Get(object value,string field)=>value.GetType().GetField(field,Private).GetValue(value);
+    static void Set(object value,string field,object fieldValue)=>value.GetType().GetField(field,Private).SetValue(value,fieldValue);
     static object Call(object value,string method)=>value.GetType().GetMethod(method,Private).Invoke(value,null);
     static void Native(DirectModelEditingChecks.Fixture f)=>typeof(LiveControllerChecks).GetMethod("NativeLive",BindingFlags.Static|BindingFlags.NonPublic).Invoke(null,new object[]{f,"object.scale"});
     static void Grant(DirectModelEditingChecks.Fixture f)=>typeof(LiveControllerChecks).GetMethod("GrantAndBegin",BindingFlags.Static|BindingFlags.NonPublic).Invoke(null,new object[]{f});
@@ -66,8 +67,6 @@ public static class NativeSelectionRecoveryChecks
         Call(f.Direct,"Update");Check(live.Selection.ObjectIds.Count==1,"actual receipt-before-preview ordering reproduces a stale selected local echo");
         var empty=NoActive();empty["settings"]=new JObject();empty["generation"]=0;f.Drawing.NativeState["model_edit"]=empty;
         Call(f.Direct,"Update");Check(live.Selection.ObjectIds.Count==0&&live.Selection.ActiveId=="","fresh no-active legacy state clears the actual controller's stale selection");
-        int sent=f.Sent.Count;f.Route(true);f.Route(true,.05f);f.Route(false,.05f);
-        Check(blocked==1&&unavailable==0&&f.Sent.Count==sent&&live.Selection.ObjectIds.Count==0,"no-selection edit still refuses without lease, geometry or automatic reselect");
         f.Route(true);f.Route(false);Call(f.Direct,"Update");Grant(f);
         var begin=f.Sent.Last(m=>(string)m["type"]=="live.edit.begin");
         Check((bool?)begin["payload"]["operation"]["selection_only"]==true&&((JArray)begin["payload"]["operation"]["selection"]["objects"]).Count==1,"explicit floating-model tap independently reselects while edit availability is false");
@@ -77,8 +76,43 @@ public static class NativeSelectionRecoveryChecks
         f.Route(true);f.Route(true,.05f);Grant(f);update=f.Sent.Last(m=>(string)m["type"]=="live.edit.update");
         Check(update["payload"]["parameters"]["scale"] is JArray,"next actual held gesture routes native Scale normally after explicit reselect");
         State(f,"updated",1,(string)update["id"]);f.Route(false,.05f);commit=f.Sent.Last(m=>(string)m["type"]=="live.edit.commit");State(f,"committed",1,(string)commit["id"]);
-        Check(blocked==1&&unavailable==0&&f.Sent.Count(m=>(string)m["type"]=="live.edit.commit")==3,"two explicit selection transactions and one Scale commit preserve legitimate refusal and native history boundaries");
+        Check(blocked==0&&unavailable==0&&f.Sent.Count(m=>(string)m["type"]=="live.edit.commit")==3,"two explicit selection transactions and one Scale commit preserve native history boundaries");
         f.Direct.AvailabilityPopup?.Dispose();
+    }
+    static void ColdStartTapHandoff()
+    {
+        foreach(string tool in new[]{"builtin.move","builtin.rotate","builtin.scale"})
+        {
+            using var f=new DirectModelEditingChecks.Fixture(tool);
+            // Model exactly matches older running hosts before any Blender
+            // object has been selected: no canonical tool, token or settings.
+            // Do not seed NativeLive's initially selected-object state first.
+            f.State(true);var empty=NoActive();empty["native_tool"]=tool;empty["settings"]=new JObject();empty["generation"]=0;
+            f.Drawing.NativeState["model_edit"]=empty;Call(f.Direct,"Update");
+            var live=(DirectLiveController)Get(f.Direct,"live");int refused=0;
+            live.BlockedAttempt+=_=>refused++;live.UnavailableAttempt+=_=>refused++;
+            Check(live.Selection.ObjectIds.Count==0,"cold no-active state begins empty: "+tool);
+            f.Route(true);f.Route(false);Call(f.Direct,"Update");
+            Check(live.Selection.ActiveId==A&&f.Sent.Count==0&&(bool)Get(f.Preview,"endAfterRelease"),
+                "floating trigger tap selects locally then waits for actual native input cleanup: "+tool);
+            Call(f.Preview,"FlushNativeCommand");
+            Check(f.Sent.Count==0,"held native UI lease cannot admit the selection writer: "+tool);
+            Set(f.Preview,"endAfterRelease",false);Call(f.Preview,"FlushNativeCommand");
+            Check(f.Sent.Count==0,"helper cleanup alone cannot replace fresh native UI release: "+tool);
+            var released=(JObject)f.Drawing.NativeState.DeepClone();released["ui_owner"]=null;released["ui_session_id"]=null;released["input_allowed"]=false;
+            f.Drawing.SetNativeState(released);Call(f.Preview,"FlushNativeCommand");Grant(f);
+            var begin=f.Sent.Last(m=>(string)m["type"]=="live.edit.begin");var operation=(JObject)begin["payload"]["operation"];
+            Check((bool?)operation["selection_only"]==true&&(string)operation["tool"]=="object.selection"&&
+                (string)operation["native_tool"]==tool&&(string)operation["selection"]["active_id"]==A&&
+                ((JArray)operation["selection"]["objects"]).Count==1,
+                "exact cold empty telemetry produces a guarded object-selection transaction: "+tool);
+            var update=f.Sent.Last(m=>(string)m["type"]=="live.edit.update");
+            Check(!((JObject)update["payload"]["parameters"]).HasValues,"tap never sends geometry parameters: "+tool);
+            State(f,"updated",1,(string)update["id"]);var commit=f.Sent.Last(m=>(string)m["type"]=="live.edit.commit");State(f,"committed",1,(string)commit["id"]);
+            Check(refused==0&&!f.Sent.Any(m=>(string)m["type"]=="live.edit.cancel")&&f.View.NativePosition==Vector3.zero,
+                "cold object selection acknowledges once without native click, refusal or transform: "+tool);
+            f.Direct.AvailabilityPopup?.Dispose();
+        }
     }
 #endif
 }
