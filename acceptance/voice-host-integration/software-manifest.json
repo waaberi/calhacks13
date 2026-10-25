@@ -79,12 +79,19 @@
     "GUI modal/native event-loop checks deferred under no-visible-test-window instruction",
     "Full-native two-PC/edit-turn/history acceptance",
     "Room localization recurrence and physical room fit",
-    "Current transient Host 0.2 installation and future runtime switch require existing runtime owner; no restart or upgrade performed"
+    "Current transient Host 0.2 installation and future runtime switch require existing runtime owner; no restart or upgrade performed",
+    "Live two-PC basic edit-turn test is BLOCKED: incoming checkpoint waits/native draft preserved then stale_revision, before successful G/R/S. Report https://github.com/waaberi/calhacks13/issues/133#issuecomment-6400572243. This UNLAUNCHED candidate has not verified a fix. Preserve native owner current no-patch/restart scope."
   ],
   "runtime_launched": false,
   "physical_acceptance": false,
   "live_runtime_changed": false,
   "new_provider_calls": 0,
   "new_pr_push_main_fps_actions": false,
-  "evidence": "evidence/voice-host-integration"
+  "evidence": "evidence/voice-host-integration",
+  "latest_two_pc_report": {
+    "state": "BLOCKED",
+    "url": "https://github.com/waaberi/calhacks13/issues/133#issuecomment-6400572243",
+    "candidate_fix_verified": false,
+    "runtime_actions": false
+  }
 }
