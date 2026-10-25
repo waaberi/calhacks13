@@ -70,9 +70,51 @@ def node_tree(tree):
             "drivers": drivers(tree)}
 
 
+def _attribute_value(item):
+    for name in ("value", "vector", "color"):
+        if hasattr(item, name):
+            return value(getattr(item, name))
+    raise TypeError("Unknown native fixture attribute value: " + str(type(item)))
+
+
+def _mesh_layers(mesh):
+    if not mesh.is_editmode:
+        uv = {layer.name: [value(loop.uv) for loop in layer.data] for layer in mesh.uv_layers}
+        attributes = {attr.name: {"type": attr.data_type, "domain": attr.domain,
+                      "values": [_attribute_value(item) for item in attr.data]}
+                      for attr in mesh.attributes if attr.name.startswith("NativeSync")}
+        return uv, attributes
+    # Edit Mode owns its custom layers in BMesh. RNA .data arrays can be empty
+    # even after update_from_editmode(); compare actual native BMesh values.
+    import bmesh
+    bm = bmesh.from_edit_mesh(mesh)
+    bm.faces.ensure_lookup_table()
+    loops = [loop for face in bm.faces for loop in face.loops]
+    uv = {layer.name: [value(loop[bm.loops.layers.uv.get(layer.name)].uv) for loop in loops]
+          for layer in mesh.uv_layers}
+    attributes = {}
+    for attr in mesh.attributes:
+        if not attr.name.startswith("NativeSync"):
+            continue
+        if attr.data_type == "FLOAT2" and attr.domain == "CORNER":
+            values = uv[attr.name]
+        else:
+            elements, layers = {
+                "POINT": (bm.verts, bm.verts.layers), "EDGE": (bm.edges, bm.edges.layers),
+                "FACE": (bm.faces, bm.faces.layers), "CORNER": (loops, bm.loops.layers),
+            }[attr.domain]
+            layer_type = {"FLOAT": "float", "INT": "int", "FLOAT_VECTOR": "float_vector",
+                          "FLOAT_COLOR": "float_color", "BYTE_COLOR": "color"}[attr.data_type]
+            layer = getattr(layers, layer_type).get(attr.name)
+            values = [value(item[layer]) for item in elements]
+        attributes[attr.name] = {"type": attr.data_type, "domain": attr.domain, "values": values}
+    return uv, attributes
+
+
 def capture_graph():
     cube, linked = bpy.data.objects[CUBE], bpy.data.objects[LINKED]
     mesh = cube.data
+    uv_layers, attributes = _mesh_layers(mesh)
     rig, material = bpy.data.objects[RIG], bpy.data.materials[MATERIAL]
     image = bpy.data.images[IMAGE]
     return {
@@ -86,11 +128,8 @@ def capture_graph():
                  "edges": [list(edge.vertices) for edge in mesh.edges],
                  "faces": [list(face.vertices) for face in mesh.polygons],
                  "material_indices": [face.material_index for face in mesh.polygons],
-                 "uv_layers": {layer.name: [value(loop.uv) for loop in layer.data]
-                               for layer in mesh.uv_layers},
-                 "attributes": {attr.name: {"type": attr.data_type, "domain": attr.domain,
-                      "values": [value(getattr(item, "value", None)) for item in attr.data]}
-                      for attr in mesh.attributes if attr.name.startswith("NativeSync")},
+                 "uv_layers": uv_layers,
+                 "attributes": attributes,
                  "materials": [mat.name for mat in mesh.materials],
                  "weights": [[[group.group, value(group.weight)] for group in vertex.groups]
                              for vertex in mesh.vertices]},

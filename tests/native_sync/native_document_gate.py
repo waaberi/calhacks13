@@ -23,6 +23,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--output", required=True)
 parser.add_argument("--apply", action="store_true")
 parser.add_argument("--skip-negative", action="store_true")
+parser.add_argument("--edit-mode", action="store_true")
 args = parser.parse_args(sys.argv[sys.argv.index("--") + 1:])
 out = Path(args.output)
 report = {"passed": False, "checks": [], "network_sync_tested": False}
@@ -127,7 +128,20 @@ def run():
             edit_fixture("host")
             edit_fixture("client")
             edit_topology_fixture()
+            if args.edit_mode:
+                from native_fixture import CUBE, select_only
+                select_only(bpy.data.objects[CUBE])
+                bpy.ops.object.mode_set(mode="EDIT")
+                bpy.ops.mesh.select_all(action="SELECT")
+                bpy.ops.transform.translate(value=(.04, 0, 0))
+                bpy.context.object.update_from_editmode()
+                state["before_edit_capture"] = capture_graph()
+                (out / "before-edit-capture.json").write_text(json.dumps(state["before_edit_capture"]))
             snapshot = document.capture(out / "candidate.blend")
+            if args.edit_mode:
+                (out / "after-edit-capture.json").write_text(json.dumps(capture_graph()))
+                report["edit_capture_differences"] = differences(state["before_edit_capture"], capture_graph())
+                report["mode_after_capture"] = bpy.context.object.mode
             repeated = document.capture(out / "candidate.blend")
             assert snapshot.sha256 == repeated.sha256, "Unchanged native capture hash is unstable"
             (out / "candidate-manifest.json").write_text(json.dumps(snapshot.manifest))
