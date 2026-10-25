@@ -53,10 +53,16 @@ public static class GuideInteractionChecks
     {
         var previousSystem=EventSystem.current;var previousSelection=previousSystem?.currentSelectedGameObject;
         var eventOwner=new GameObject("Guide existing input focus fixture",typeof(EventSystem));var sentinel=new GameObject("Existing editor selection");
-        EventSystem.current=eventOwner.GetComponent<EventSystem>();EventSystem.current.SetSelectedGameObject(sentinel);
+        var eventSystem=eventOwner.GetComponent<EventSystem>();
+        var registered=(IList<EventSystem>)typeof(EventSystem).GetField("m_EventSystems",BindingFlags.Static|BindingFlags.NonPublic).GetValue(null);
         using var panel=new SearchableGuidePanel();
         try
         {
+        // Batch EditMode does not invoke this component's normal lifecycle.
+        // Register through the real lifecycle, never by mutating its global list.
+        if(!registered.Contains(eventSystem))Invoke(eventSystem,"OnEnable");
+        Check(registered.Contains(eventSystem),"temporary EventSystem registers through OnEnable");
+        EventSystem.current=eventSystem;eventSystem.SetSelectedGameObject(sentinel);
         Check(panel.Open(camera),"world reading panel opens");
         var anchor=panel.WorldPose;var scale=panel.VisualRoot.transform.lossyScale;
         Check(panel.ResultCount==VrGuideCatalog.Articles.Count&&panel.ResultPageCount>1,"empty search exposes complete current manual with paged results");
@@ -98,8 +104,11 @@ public static class GuideInteractionChecks
         finally
         {
             camera.transform.SetPositionAndRotation(Vector3.zero,Quaternion.identity);
-            EventSystem.current=previousSystem;if(previousSystem!=null)previousSystem.SetSelectedGameObject(previousSelection);
+            eventSystem.enabled=false;
+            if(registered.Contains(eventSystem))Invoke(eventSystem,"OnDisable");
+            if(previousSystem!=null){EventSystem.current=previousSystem;previousSystem.SetSelectedGameObject(previousSelection);}
             UnityEngine.Object.DestroyImmediate(eventOwner);UnityEngine.Object.DestroyImmediate(sentinel);
+            Check(!registered.Contains(eventSystem)&&EventSystem.current==previousSystem,"temporary EventSystem is removed and prior input system restored");
         }
     }
     static void Admission()
