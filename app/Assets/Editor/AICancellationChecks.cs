@@ -31,6 +31,17 @@ public static class AICancellationChecks
     }
     static void AxisAndChainRouting()
     {
+        using(var f=new Fixture())
+        {
+            Invoke(f.Voice,"HearOrInterpret",new RecognitionResult("move this object ten centimeters",1),false);
+            Invoke(f.Voice,"HearOrInterpret",new RecognitionResult("x y",1),false);
+            var local=(VoiceSession)Get(f.Voice,"session");
+            Check(!f.DataAvailable&&local.Pending!=null&&(local.Pending.Missing&MissingFields.Axis)!=0,"actual ambiguous axis reply sends no prefix and retains the axis question");
+            Check(VoiceRouting.Decide("I want you to move this object ten centimeters along x",true,true,local)==VoiceRoute.Gemini,
+                "actual old local dialogue cannot route a polite new single edit around Gemini");
+            Invoke(f.Voice,"HearOrInterpret",new RecognitionResult("z",1),false);
+            var wire=f.Read("command");Check(Math.Abs((double)wire["payload"]["args"]["by"][2]-.1)<1e-9&&!f.DataAvailable,"next valid axis executes original amount once");
+        }
         foreach(var sample in new[]{("x",0),("why",1),("zee",2),("z i mean y",1)})
         {
             using var f=new Fixture();

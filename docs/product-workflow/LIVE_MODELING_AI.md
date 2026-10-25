@@ -184,6 +184,9 @@ The full transcript is retained; vocabulary overlap with the basic grammar no
 longer decides whether a request bypasses interpretation. Undo, Redo, Cancel,
 Save, simple selection and an existing deterministic clarification stay local.
 Without AI availability the deterministic path remains available.
+Only an answer matching the active local question retains that route; a new
+complete command, including polite or unfamiliar phrasing, starts a fresh
+Gemini review rather than executing through an older pending command.
 
 An active missing-axis question accepts spoken letter variants such as `why`
 for Y and `zee` for Z, including explicit corrections such as `Z, I mean Y`.
@@ -192,6 +195,11 @@ an ambiguous answer or an additional command is never reduced to one axis.
 Gemini receives the existing move/scale limits and explicit basic Add defaults
 (a 5 cm primitive at the native origin for an unqualified Add). Typed move/scale
 output is checked against those limits before the complete plan reaches review.
+Rotation limits use explicit angular amounts from the retained user request
+and clarification answers. Each turn must be nonzero and at most 360 degrees
+in magnitude; signed full turns remain valid. A quaternion alone cannot reveal
+the original turn count. A rotation without a recoverable explicit amount and
+unit asks for clarification instead of guessing from its quaternion.
 Unsupported trailing requests refuse the whole plan. Native validation, context
 checks and the existing review/confirmation requirement still apply.
 

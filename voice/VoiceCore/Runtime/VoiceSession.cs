@@ -160,6 +160,44 @@ namespace SpatialModeling.VoiceCore
 
         /// <summary>Words were sent to the host and its answer hasn't come yet (show that it is thinking).</summary>
         public bool WaitingForHost => resolving != null;
+        // Positive, read-only admission of an answer to the current local slot.
+        // An unrelated/new modeling utterance must not inherit its core route.
+        public bool IsDialogueAnswer(string text)
+        {
+            if(choice!=null)return ChoiceWords.Read(text,choice.Candidates).HasValue||ChoiceWords.LooksLikeAnAnswer(text);
+            MissingFields missing=pending?.Missing??MissingFields.None;
+            if(pending!=null&&clock()>=expiresAt)return false;
+            if(compositionToken!=null)
+            {
+                if(clock()>=compositionExpires)return false;
+                switch(compositionMissing)
+                {
+                    case "colour":
+                        return System.Text.RegularExpressions.Regex.IsMatch(text??"",@"^\s*(?:red|green|blue|yellow|orange|purple|pink|cyan|white|black|gray|grey|brown|lighter|darker|lighten|darken)(?:\s+please)?\s*[.!?]*\s*$",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    case "reset":
+                        return System.Text.RegularExpressions.Regex.IsMatch(text??"",@"^\s*(?:rotation|scale|colou?r)(?:\s+please)?\s*[.!?]*\s*$",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    case "dimension":
+                        return System.Text.RegularExpressions.Regex.IsMatch(text??"",@"^\s*(?:the\s+)?(?:width|wide|depth|deep|height|tall)(?:\s+please)?\s*[.!?]*\s*$",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    case "operation":missing=MissingFields.Amount;break;
+                    case "axis":missing=MissingFields.Axis;break;
+                    case "target":missing=MissingFields.Target;break;
+                    case "unit":case "angle_unit":missing=MissingFields.Unit;break;
+                    case "distance":case "angle":case "factor":missing=MissingFields.Amount|MissingFields.Unit;break;
+                    default:return false;
+                }
+            }
+            if(missing==MissingFields.None)return false;
+            if((missing&MissingFields.Axis)!=0&&(AxisClarification.Normalize(text)!=null||AxisClarification.IsAmbiguousAnswer(text)))return true;
+            var parsed=CommandParser.Parse(text,objects,pending?.Kind??CommandKind.Move);
+            if(parsed.Verb.HasValue||parsed.HasUnknownWords||parsed.ConflictingVerbs)return false;
+            if(compositionToken!=null&&compositionMissing=="operation")
+                return parsed.Number.HasValue&&parsed.Number>=1&&Math.Truncate(parsed.Number.Value)==parsed.Number.Value&&!parsed.Unit.HasValue;
+            return (missing&MissingFields.Target)!=0&&(parsed.Target==TargetRef.Named||parsed.Target==TargetRef.Context)
+                ||(missing&MissingFields.Shape)!=0&&parsed.Shape.HasValue
+                ||(missing&MissingFields.Axis)!=0&&parsed.Axis.HasValue
+                ||(missing&MissingFields.Amount)!=0&&parsed.Number.HasValue
+                ||(missing&MissingFields.Unit)!=0&&parsed.Unit.HasValue;
+        }
 
         /// <summary>
         /// The recognizer grammar: VoiceCore's words, the current objects' names and the host's phrases
@@ -447,6 +485,13 @@ namespace SpatialModeling.VoiceCore
             {
                 string axis=AxisClarification.Normalize(result.Text);
                 if(axis!=null)result=new RecognitionResult(axis,result.Confidence);
+                else if(AxisClarification.IsAmbiguousAnswer(result.Text))
+                {
+                    if(result.Confidence<options.MinConfidence)turn.Prompts.Add(Prompt.LowConfidence);
+                    else if(pending!=null)Advance(turn);
+                    else {turn.Asked=true;turn.Prompts.Add(Prompt.AskAxis);}
+                    return turn.Build();
+                }
             }
             if (HearComposition(result, turn)) return turn.Build();
             if (choice != null && HearChoice(result, turn))

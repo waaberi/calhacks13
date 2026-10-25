@@ -17,6 +17,15 @@ namespace SpatialModeling.VoiceCore
                 ||(kind==CommandKind.Select&&!VoiceSession.IsCompositionRequest(bounded));
         }
         public static VoiceRoute Decide(string text, bool aiEnabled, bool aiAvailable, bool coreDialogue)
-            => !aiEnabled||!aiAvailable||IsControl(text)||(coreDialogue&&!VoiceSession.IsCompositionRequest(text)) ? VoiceRoute.Core : VoiceRoute.Gemini;
+            => !aiEnabled||!aiAvailable||IsControl(text)||(coreDialogue&&IsSimpleFieldAnswer(text)) ? VoiceRoute.Core : VoiceRoute.Gemini;
+        public static VoiceRoute Decide(string text,bool aiEnabled,bool aiAvailable,VoiceSession session)
+            => !aiEnabled||!aiAvailable||IsControl(text)||session?.IsDialogueAnswer(text)==true ? VoiceRoute.Core : VoiceRoute.Gemini;
+        static bool IsSimpleFieldAnswer(string text)
+        {
+            if(AxisClarification.Normalize(text)!=null||AxisClarification.IsAmbiguousAnswer(text))return true;
+            var parsed=CommandParser.Parse(text,Array.Empty<SceneObject>());
+            return !parsed.Verb.HasValue&&!parsed.HasUnknownWords&&!parsed.ConflictingVerbs
+                &&(parsed.Number.HasValue||parsed.Unit.HasValue||parsed.Axis.HasValue||parsed.Shape.HasValue);
+        }
     }
 }

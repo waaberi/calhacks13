@@ -29,4 +29,31 @@ public class VoiceLimitTests
         string original=draft.ToString();Assert.Throws<GeminiVoiceInterpreter.VoiceLimitFailure>(()=>GeminiVoiceInterpreter.ValidateVoiceLimits(draft,Intent()));
         Assert.Equal(original,draft.ToString());Assert.Equal(2,((JArray)draft["steps"]).Count);
     }
+    [Theory][InlineData("rotate Cube 0 degrees about x")][InlineData("rotate Cube 720 degrees about x")]
+    [InlineData("rotate Cube seven hundred twenty degrees about x")][InlineData("rotate Cube 1e3 degrees about x")]
+    public void OriginalRotationAmountCannotBeHiddenByAnIdentityOrWrappedQuaternion(string request)
+    {Assert.Throws<GeminiVoiceInterpreter.VoiceLimitFailure>(()=>GeminiVoiceInterpreter.ValidateVoiceLimits(Draft("object.rotate","rotation",new JArray(1d,0d,0d,0d)),Intent(),request));}
+    [Theory][InlineData("rotate Cube 360 degrees about x")][InlineData("rotate Cube -360 degrees about x")]
+    [InlineData("rotate Cube negative three hundred sixty degrees about y")][InlineData("rotate Cube one full turn about z")]
+    [InlineData("rotate Cube -360 about x")]
+    public void SignedFullTurnsRemainValidWithIdentityQuaternion(string request)
+    {GeminiVoiceInterpreter.ValidateVoiceLimits(Draft("object.rotate","rotation",new JArray(1d,0d,0d,0d)),Intent(),request);}
+    [Fact] public void SeparateRotationClausesAreBoundedIndividuallyAndUnrelatedLengthsAreIgnored()
+    {
+        var plan=Draft("object.rotate","rotation",new JArray(1d,0d,0d,0d));
+        ((JArray)plan["steps"]).Add(((JArray)Draft("object.rotate","rotation",new JArray(.70710678,0d,.70710678,0d))["steps"])[0].DeepClone());
+        GeminiVoiceInterpreter.ValidateVoiceLimits(plan,Intent(),"add a cube 1000 millimeters wide then rotate it 360 degrees about x then move it 900 millimeters along y then rotate it ninety degrees about z");
+        Assert.Throws<GeminiVoiceInterpreter.VoiceLimitFailure>(()=>GeminiVoiceInterpreter.ValidateVoiceLimits(plan,Intent(),"rotate Cube 360 degrees about x then rotate it 720 degrees about z"));
+    }
+    [Fact] public void ClarificationKeepsTheOriginalAngleAndSeparatelyAnsweredUnit()
+    {
+        var plan=Draft("object.rotate","rotation",new JArray(1d,0d,0d,0d));
+        string request=GeminiVoiceInterpreter.ComposeRequest("rotate Cube 720 degrees","Which axis?","x");
+        Assert.Throws<GeminiVoiceInterpreter.VoiceLimitFailure>(()=>GeminiVoiceInterpreter.ValidateVoiceLimits(plan,Intent(),request));
+        request=GeminiVoiceInterpreter.ComposeRequest("rotate Cube 360","Which angle unit?","degrees");
+        GeminiVoiceInterpreter.ValidateVoiceLimits(plan,Intent(),request);
+        Assert.Throws<GeminiVoiceInterpreter.VoiceLimitFailure>(()=>GeminiVoiceInterpreter.ValidateVoiceLimits(plan,Intent(),"rotate Cube to face the wall"));
+    }
+    [Fact] public void NonRotationRequestsAndDraftsDoNotAcquireAnAngleRequirement()
+    {GeminiVoiceInterpreter.ValidateVoiceLimits(Draft("object.scale","scale",new JArray(.5,.5,.5)),Intent(),"make it half the size");}
 }

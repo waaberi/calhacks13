@@ -1,4 +1,18 @@
-# Simple collaboration in native Blender
+# Collaboration in the combined build
+
+The matching candidate now contains **native collaboration 0.2.0**. Use
+[Native Blender collaboration](NATIVE_SHARED_BLENDER.md) for installation,
+edit turns, original-data sharing and its current limits. Both computers need
+the same 0.2.0 add-on. The combined Unity package also includes the optional
+collaboration presence display; local Host/VR connections alone do not show a
+second person. New candidate software checks and physical acceptance are
+recorded separately in its `SOFTWARE-RESULTS.json`.
+
+The following notes preserve the earlier **0.1.0 simple-client delivery** and
+its evidence. Its tool limits, deferred full-native status and lack of a
+compiled Unity presence check describe that historical package, not 0.2.0.
+
+## Earlier simple collaboration in native Blender
 
 The current human-authorized scope is shared **object move, rotate, scale, delete and host Undo/Redo**, using the existing Client work from PR173. Both computers run full Blender 5.2+. The Host keeps its original native document and tools. The Client uses ordinary G/R/S, transform gizmos and X on mirrored objects, with the Host accepting or refusing each request. Shared Edit Mode, modifiers, UVs, materials and rigs are outside this delivery.
 

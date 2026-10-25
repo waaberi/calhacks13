@@ -38,6 +38,52 @@ namespace SpatialModeling.VoiceCore.Tests
         [Theory][InlineData("x y")][InlineData("why then delete Cube")][InlineData("z i mean y then export")]
         public void AxisAnswerCannotDropAmbiguityOrAnotherClause(string text)
         {Assert.Null(AxisClarification.Normalize(text));}
+        [Theory][InlineData("x y")][InlineData("x and y")][InlineData("ex or zee")][InlineData("x/z")]
+        public void AmbiguousActualAxisAnswerStaysPendingWithoutCommandOrHostPrefix(string answer)
+        {
+            foreach(bool composition in new[]{false,true})
+            {
+                var f=new Fixture(Cube);f.Options.AskHost=true;f.Session.EnableComposition(composition);f.Select(Cube);
+                f.Say("rotate Cube ninety degrees");var turn=f.Say(answer);
+                Assert.Null(turn.Command);Assert.Null(turn.Resolve);Assert.NotNull(f.Session.Pending);
+                Assert.True((f.Session.Pending.Missing&MissingFields.Axis)!=0);Assert.Equal(Cube.Id,f.Session.Pending.Command.TargetId);
+                Assert.Equal(90,f.Session.Pending.Command.Amount.Value,9);
+                Assert.Equal(Axis.Z,f.Say("z").Command.Axis);
+            }
+        }
+        [Theory][InlineData("move Cube ten centimeters along x")][InlineData("rotate Cube ninety degrees about y")]
+        [InlineData("scale Cube by two")][InlineData("please extrude selected faces two millimeters")]
+        [InlineData("I want you to move Cube ten centimeters along x")][InlineData("could you please rotate Cube ninety degrees about z")]
+        [InlineData("increase width ten millimeters")]
+        public void FreshSingleModelingRequestNeverAnswersAnOlderLocalDialogue(string text)
+        {
+            var f=new Fixture(Cube);f.Select(Cube);f.Say("rotate Cube ninety degrees");
+            Assert.Equal(VoiceRoute.Gemini,VoiceRouting.Decide(text,true,true,true));
+            Assert.Equal(VoiceRoute.Gemini,VoiceRouting.Decide(text,true,true,f.Session));
+        }
+        [Theory][InlineData("why")][InlineData("negative z")][InlineData("ninety degrees")][InlineData("Cube")]
+        public void ActualLocalFieldAnswersStillStayLocal(string text)
+        {Assert.Equal(VoiceRoute.Core,VoiceRouting.Decide(text,true,true,true));}
+        [Fact] public void ExactCustomTargetAndActualAmountUnitAnswersKeepTheirLocalSlots()
+        {
+            var part=new SceneObject("part","Upper Bracket");var f=new Fixture(Cube,part);
+            f.Say("move ten centimeters along x");Assert.Equal(VoiceRoute.Core,VoiceRouting.Decide("Upper Bracket",true,true,f.Session));
+            f.Select(Cube);f.Say("rotate Cube");Assert.Equal(VoiceRoute.Core,VoiceRouting.Decide("why",true,true,f.Session));
+            f.Say("y");Assert.Equal(VoiceRoute.Core,VoiceRouting.Decide("ninety",true,true,f.Session));
+            f.Say("ninety");f.Say("move Cube along x");f.Say("ten");
+            Assert.Equal(VoiceRoute.Core,VoiceRouting.Decide("centimeters",true,true,f.Session));
+        }
+        [Theory][InlineData("colour","blue")][InlineData("reset","rotation")]
+        [InlineData("dimension","width")][InlineData("operation","two")]
+        public void ExistingCompositionSuffixAnswersKeepTheirExactContinuation(string field,string answer)
+        {
+            var f=new Fixture(Cube);f.Options.AskHost=true;f.Session.EnableComposition(true);f.Select(Cube);
+            var asked=f.Say("colour it");f.Session.ResolveSent(asked.Resolve,"request");
+            f.Session.HostAnswered("request",new VoiceCandidates("token",VoiceDecision.Clarify,"Which detail?",30,null,field));
+            Assert.Equal(VoiceRoute.Core,VoiceRouting.Decide(answer,true,true,f.Session));
+            Assert.Equal(VoiceRoute.Gemini,VoiceRouting.Decide("I want you to move Cube ten centimeters along x",true,true,f.Session));
+            var resumed=f.Say(answer);Assert.Null(resumed.Command);Assert.Equal("token",resumed.Resolve.Continuation);
+        }
         [Theory]
         [InlineData("move Cube ten centimeters along x")][InlineData("move Cube ten centimeters along y")]
         [InlineData("move Cube ten centimeters along z")][InlineData("rotate Cube ninety degrees about y")]

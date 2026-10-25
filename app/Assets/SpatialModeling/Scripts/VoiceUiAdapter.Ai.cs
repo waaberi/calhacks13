@@ -146,7 +146,7 @@ namespace SpatialModeling
             if (panel.Visible && Regex.IsMatch(navigation, @"^(next|next page|previous|previous page|back)$", RegexOptions.IgnoreCase)
                 && panel.MovePage(navigation.StartsWith("next",StringComparison.OrdinalIgnoreCase) ? 1 : -1)) return;
             bool dialogue=session.Pending!=null||session.Choice!=null||session.CompositionQuestion!=null||session.WaitingForHost;
-            if(VoiceRouting.Decide(text,aiMode,AiAvailable,dialogue)==VoiceRoute.Core)
+            if(VoiceRouting.Decide(text,aiMode,AiAvailable,session)==VoiceRoute.Core)
             {
                 string basic=(!aiMode||!AiAvailable)?VoiceDialogPages.BasicCreation(text):null;
                 // Keep the complete free transcript for dialogue/chain answers;

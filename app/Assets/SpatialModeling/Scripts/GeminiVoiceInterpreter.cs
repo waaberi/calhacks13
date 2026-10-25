@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using SpatialModeling.VoiceCore;
 using UnityEngine;
 using UnityEngine.Networking;
 
@@ -60,6 +61,8 @@ namespace SpatialModeling
             var answer = new Answer(); var clock = System.Diagnostics.Stopwatch.StartNew();
             if (!Available) { answer.Error = "AI voice has no configured API key"; done(answer); yield break; }
             if (!current()) yield break;
+            if(!VoiceRotationLimits.TryRead(utterance,(double?)voiceContext?["limits"]?["max_turn_degrees"]??360,out _,out string angleError,true))
+            {answer.Error=angleError;done(answer);yield break;}
             var body = BuildBody(utterance, context, catalog, true, voiceContext);
             using (var web = new UnityWebRequest(Endpoint + model + ":generateContent", "POST"))
             {
@@ -71,7 +74,7 @@ namespace SpatialModeling
                     if (!current()) yield break;
                     if (web.result == UnityWebRequest.Result.Success)
                     {
-                        try { answer.Draft = Read(web.downloadHandler.text); ValidateDraft(answer.Draft,catalog); ValidateVoiceLimits(answer.Draft,voiceContext); }
+                        try { answer.Draft = Read(web.downloadHandler.text); ValidateDraft(answer.Draft,catalog); ValidateVoiceLimits(answer.Draft,voiceContext,utterance); }
                         catch (VoiceLimitFailure e) { answer.Draft=null; answer.Error=e.Message; }
                         catch (Exception e) when (e is FormatException || e is JsonException || e is InvalidOperationException)
                         { answer.Draft = null; answer.Error = "AI response did not contain a complete typed plan"; }
@@ -83,9 +86,12 @@ namespace SpatialModeling
 
         public sealed class VoiceLimitFailure : FormatException
         { public VoiceLimitFailure(string message):base(message){} }
-        public static void ValidateVoiceLimits(JObject draft,JObject voiceContext)
+        public static void ValidateVoiceLimits(JObject draft,JObject voiceContext,string utterance=null)
         {
             if(!(voiceContext?["limits"] is JObject limits)||!(draft?["steps"] is JArray steps))return;
+            bool rotation=steps.OfType<JObject>().Any(step=>(string)step["tool"]=="object.rotate"||(string)step["tool"]=="mesh.rotate");
+            if(rotation&&(!VoiceRotationLimits.TryRead(utterance,(double)limits["max_turn_degrees"],out int angles,out string error)||angles==0))
+                throw new VoiceLimitFailure(error??"State the original nonzero rotation angle and unit before reviewing this edit");
             foreach(JObject step in steps)
             {
                 if((string)step["tool"]=="object.translate"&&step["params"]?["translation_m"] is JArray move)

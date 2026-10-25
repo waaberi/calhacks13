@@ -8,5 +8,7 @@
     <Compile Include="../../app/Assets/SpatialModeling/Scripts/GeminiVoiceInterpreter.cs" Link="Production/GeminiVoiceInterpreter.cs" />
     <Compile Include="../../app/Assets/SpatialModeling/Scripts/VoiceDialogPages.cs" Link="Production/VoiceDialogPages.cs" />
     <Compile Include="../../app/Assets/SpatialModeling/Scripts/VoiceIntentContext.cs" Link="Production/VoiceIntentContext.cs" />
+    <Compile Include="../../voice/VoiceCore/Runtime/VoiceRotationLimits.cs" Link="Production/VoiceRotationLimits.cs" />
+    <Compile Include="../../voice/VoiceCore/Runtime/NumberWords.cs" Link="Production/NumberWords.cs" />
   </ItemGroup>
 </Project>

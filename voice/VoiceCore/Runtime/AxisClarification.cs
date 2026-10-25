@@ -8,6 +8,12 @@ namespace SpatialModeling.VoiceCore
     {
         const string AxisWord = @"(?:x|y|z|ex|why|zee|zed)";
         const string AxisPhrase = @"(?:the\s+)?(?:(?:negative|minus)\s+)?" + AxisWord + @"(?:\s+axis)?";
+        public static bool IsAmbiguousAnswer(string text)
+        {
+            string value=Regex.Replace((text??"").Trim().ToLowerInvariant(),@"[.,!?/]", " ");
+            return Regex.Matches(value,@"\b"+AxisWord+@"\b").Count>1
+                &&Regex.IsMatch(value,@"^(?:(?:the|negative|minus|axis|and|or|x|y|z|ex|why|zee|zed)\b\s*)+$");
+        }
         public static string Normalize(string text)
         {
             string value=Regex.Replace((text??"").Trim().ToLowerInvariant(),@"[.,!?]", " ");
