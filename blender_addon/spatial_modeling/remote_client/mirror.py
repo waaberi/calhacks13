@@ -33,6 +33,8 @@ class Mirror:
     def set_editable(self, editable):
         """Let the user select (and so transform/delete) mirrored objects, or not."""
         self.editable = bool(editable)
+        self.collection.name = ("Host scene — shared object tools" if self.editable
+                                else "Host scene — READ ONLY")
         self.collection.hide_select = not self.editable
         for obj in self.objects.values():
             if _alive(obj):

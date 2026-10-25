@@ -102,3 +102,30 @@ def test_bad_local_value_reverts_with_reason():
     live = LiveEdits()
     assert live.next_request({"a": record()}, {"a": local(scale=[5000, 1, 1])}, set()) is None
     assert live.revert == {"a"} and "scale" in live.error
+
+
+def test_cancelled_drag_keeps_its_original_baseline_across_host_updates():
+    live = LiveEdits()
+    records = {"a": record(), "b": record()}
+    live.begin_drag(records, {"a", "b"})
+    records["a"]["transform"]["location"] = [0, .7, 0]
+    live.begin_drag(records, {"a", "b"})
+    # Esc on A restores its pre-drag transform, while a committed drag on B differs.
+    assert live.finish_drag({"a": local(), "b": local(location=[.2, 0, 0])}) == {"a"}
+    assert live.drag_baselines == {}
+
+
+def test_new_document_reset_discards_pending_drag_baselines():
+    live = LiveEdits()
+    live.begin_drag({"a": record()}, {"a"})
+    live.reset()
+    assert live.finish_drag({"a": local()}) == set()
+
+
+def test_successful_delete_releases_hold_when_mirror_already_forgot_object():
+    live = LiveEdits()
+    live.next_request({"a": record()}, {}, {"a"})
+    live.sent["r1"] = "a"
+    live.settle({"r1": SimpleNamespace(state="applied", revision=2, code="")}, 2)
+    assert live.next_request({}, {}, set()) is None
+    assert not live.held and not live.sent and not live.wait_revision

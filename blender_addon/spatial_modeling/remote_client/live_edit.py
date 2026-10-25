@@ -14,6 +14,7 @@ object. This module turns those local changes into ordinary edit requests:
   record, so the host scene stays the truth.
 """
 
+import copy
 import math
 
 LOCATION_TOLERANCE = 1e-4  # meters (0.1 mm)
@@ -90,9 +91,30 @@ class LiveEdits:
         self.wait_revision = {}  # object ID -> host revision its applied edit produced
         self.revert = set()  # object IDs to put back to the host's record
         self.error = ""  # last reason a local change couldn't be sent
+        self.drag_baselines = {}  # pre-drag host transforms, for native Esc/no-net changes
 
     def reset(self):
         self.__init__()
+
+    def begin_drag(self, records, object_ids):
+        """Remember the transform before G/R/S; later host updates cannot replace it."""
+        for oid in object_ids:
+            if oid in records and oid not in self.drag_baselines:
+                self.drag_baselines[oid] = copy.deepcopy(records[oid]["transform"])
+
+    def finish_drag(self, locals_):
+        """No net native change (including Esc) must adopt the latest host state."""
+        unchanged = set()
+        for oid, baseline in self.drag_baselines.items():
+            if oid not in locals_:
+                continue
+            try:
+                if not changes(baseline, locals_[oid], ""):
+                    unchanged.add(oid)
+            except ValueError:
+                pass  # next_request will restore an invalid native transform
+        self.drag_baselines.clear()
+        return unchanged
 
     def settle(self, requests, revision):
         """Follow up sent requests. `requests` maps ID -> object with .state/.revision."""
@@ -125,6 +147,11 @@ class LiveEdits:
         records: object ID -> host record; locals_: object ID -> local transform for
         objects still present; deleted: object IDs removed locally.
         """
+        # An accepted delete removes the object from BOTH the host cache and
+        # Mirror.objects. It is then absent from both loops below; do not leave
+        # its optimistic hold behind forever. Pending receipts still block via
+        # RequestTracker and are never replayed here.
+        self.held.intersection_update(records)
         chosen = None
         for oid in sorted(deleted):
             if oid not in records:

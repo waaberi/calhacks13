@@ -113,8 +113,24 @@ def poll():
             except queue.Empty:
                 break
             if kind in ("scene.snapshot", "scene.update"):
+                previous_document = state.document or {}
+                incoming_document = payload.get("document", {})
+                changed_document = any(previous_document.get(key) != incoming_document.get(key)
+                                       for key in ("id", "open_epoch"))
+                if changed_document:
+                    # Local drafts belong to one document incarnation, including
+                    # drafts that have not yet become a request. A fresh file
+                    # must never inherit their held transforms or deletions.
+                    live.reset()
+                held = set(live.held) | _dragged()
+                if kind == "scene.update" and controlled_edit_enabled():
+                    # A confirmed G/R/S or X may happen between timer ticks.
+                    # Capture it against the OLD host record before an unrelated
+                    # update can overwrite/recreate it in Mirror.apply().
+                    held |= differing(state.objects, _mirror.local_transforms())
+                    held |= _mirror.deleted()
                 state.receive(payload, kind == "scene.snapshot")
-                _mirror.held = set(live.held) | _dragged()
+                _mirror.held = held if not changed_document else set()
                 _mirror.apply(state)
             elif kind == "welcome":
                 presence.welcomed(payload)
@@ -184,13 +200,21 @@ def _dragged():
     """Mirrored objects the user is dragging right now: an update must not snap them back."""
     if _mirror is None or not _mirror.editable or not _transforming():
         return set()
-    return {oid for oid, obj in _mirror.objects.items()
-            if oid not in _mirror.deleted() and obj.select_get()}
+    dragged = {oid for oid, obj in _mirror.objects.items()
+               if oid not in _mirror.deleted() and obj.select_get()}
+    live.begin_drag(state.objects, dragged)
+    return dragged
 
 
 def _live_tick():
     """Send local viewport changes to the host; put back what the host refused."""
     editable = controlled_edit_enabled()
+    if state.current and state.status.startswith("Connected — "):
+        status = state.status.removesuffix(" — read-only").removesuffix(" — shared object tools")
+        state.status = status + (" — shared object tools" if editable else " — read-only")
+    transforming = _transforming()
+    if editable and transforming:
+        _dragged()
     if editable != _mirror.editable:
         _mirror.set_editable(editable)
     live.settle(requests.requests, (state.document or {}).get("revision"))
@@ -200,12 +224,15 @@ def _live_tick():
         # Can't send now (disconnected, host refused edits, stale scene): local
         # changes can't reach the host, so show the host's version again.
         undo |= live.held | _mirror.deleted()
-        if state.document is not None and not _transforming():
+        if state.document is not None and not transforming:
             undo |= differing(state.objects, _mirror.local_transforms())
         live.held.clear()
     _put_back(undo)
-    if not editable or _transforming():
+    if not editable or transforming:
         return
+    # Native Esc restores the pre-drag transform. If another user moved that
+    # object meanwhile, treat this as no local edit and show their latest value.
+    _put_back(live.finish_drag(_mirror.local_transforms()))
     chosen = live.next_request(state.objects, _mirror.local_transforms(), _mirror.deleted())
     _put_back(set(live.revert))  # local values the host can't accept
     live.revert.clear()
