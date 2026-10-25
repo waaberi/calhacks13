@@ -141,9 +141,9 @@ public static class ControllerPoseChecks
             var before = new Pose(target.transform.position, target.transform.rotation);
             type.GetMethod("UpdatePair", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(interaction, null);
             Check(!(bool)typeof(PreviewInteraction).GetField("inputEnabled", previewPrivate).GetValue(preview)
-                && !(bool)typeof(PreviewInteraction).GetField("triggerWasDown", previewPrivate).GetValue(preview)
+                && (bool)typeof(PreviewInteraction).GetField("triggerWasDown", previewPrivate).GetValue(preview)
                 && (bool)typeof(PreviewInteraction).GetField("endAfterRelease", previewPrivate).GetValue(preview),
-                "controller replacement suspends native input and retains release acknowledgement barrier");
+                "controller replacement suspends native input, requires a fresh trigger release and retains release acknowledgement barrier");
             Check(handType.GetField("target").GetValue(replaced) == null, "source replacement releases old hold");
             Check(ReferenceEquals(handType.GetField("target").GetValue(surviving), target.transform), "surviving hand keeps hold");
             Check(pair.GetValue(interaction) == null, "stale pair cleared after source replacement");
