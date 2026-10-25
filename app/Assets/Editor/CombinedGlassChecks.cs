@@ -61,15 +61,23 @@ public static class CombinedGlassChecks
             var page=typeof(TablePlacement).GetNestedType("MenuPage",BindingFlags.NonPublic);
             void Settings()=>Invoke(table,"ChangeMenu",Enum.Parse(page,"Settings"));
             TableAction[] Actions()=>table.Menu.GetComponentsInChildren<TableAction>(true);
+            void RemovedHandheldEntries()
+            {
+                Check(!Actions().Any(a=>a.name=="Actual size"),"requested handheld Actual size action remains removed");
+                Check(!table.Menu.GetComponentsInChildren<Text>(true).Any(t=>t.text.Contains("Arrange space")||t.text.Contains("Actual size")||t.text.Contains("1:1")),
+                    "requested handheld Arrange space and Actual size 1:1 heading/status remain removed");
+            }
             var arrangeNames=Actions().Select(a=>a.name).ToArray();
-            foreach(var name in new[]{"Surface detection: ON","Undo placement","Add horizontal plane","Add vertical plane","Manage planes","Actual size","Return to left hand","Clear selection"})
+            foreach(var name in new[]{"Surface detection: ON","Undo placement","Add horizontal plane","Add vertical plane","Manage planes","Return to left hand","Clear selection"})
                 Check(arrangeNames.Contains(name),"arrange control preserved: "+name);
             foreach(var name in new[]{"Select object","Pin menu here","Recover workspace"})
                 Check(!arrangeNames.Contains(name),"human-requested menu action removed: "+name);
+            RemovedHandheldEntries();
             Settings();
             Check(Vector3.Distance(table.Menu.localScale,dockedMenuScale/TablePlacement.DockedMenuFactor)<.000001f,"page rebuild preserves the full pinned menu scale");
-            foreach(var name in new[]{"Show room geometry","Auto surfaces on/off","Environment setup","Manage planes","Actual size","Lock Blender screen","Pointer: Right","Back to arrange","Appearance / accessibility","Voice transcription: OFF","Blender view: "+(BlenderViewAppearance.Opaque?"opaque":"transparent")})
+            foreach(var name in new[]{"Show room geometry","Auto surfaces on/off","Environment setup","Manage planes","Lock Blender screen","Pointer: Right","Back to arrange","Appearance / accessibility","Voice transcription: OFF","Blender view: "+(BlenderViewAppearance.Opaque?"opaque":"transparent")})
                 Check(Actions().Any(a=>a.name==name),"Settings control preserved: "+name);
+            RemovedHandheldEntries();
             void Toggle(string label)
             {
                 var action=Actions().Single(a=>a.name==label);var rect=action.GetComponent<RectTransform>();
@@ -111,7 +119,7 @@ public static class CombinedGlassChecks
                 AssertText(Path.Combine(output,"combined-voice-transcription-on.png"));
                 voice.SetShowTranscription(false);
             }
-            Debug.Log("COMBINED_GLASS_CHECK PASS default_hidden saved_menu_collider_toggle reload no_transcript_leak selection_feedback missing_field delete_confirmation glass_voice retained_arrange_settings_controls");
+            Debug.Log("COMBINED_GLASS_CHECK PASS default_hidden saved_menu_collider_toggle reload no_transcript_leak selection_feedback missing_field delete_confirmation glass_voice retained_arrange_settings_controls requested_handheld_heading_and_actual_size_removed");
         }
         finally
         {
