@@ -900,6 +900,22 @@ def apply_step(editor, target, tool, params, selection=None, outputs=None):
     return {"selection": selection, "outputs": {"selection": selection, "object": {"id": selection["id"]}}}
 
 
+def _step_targets(steps):
+    """Resolve existing native targets carried through earlier typed outputs.
+
+    Object creation and duplication produce new IDs which the shared object
+    backup removes on failure. Other supported tools keep their input owner ID.
+    """
+    owners, result = {}, {}
+    for index, step in enumerate(steps):
+        target = step.get('target')
+        values = ({target} if isinstance(target, str) else owners.get(target.get('step'), set())
+                  if isinstance(target, dict) else set())
+        result[index] = set(values)
+        owners[step.get('id', '')] = set() if step.get('tool') in ('object.add', 'object.duplicate') else set(values)
+    return result
+
+
 class ExtraBackup:
     """Additional state restored after the shared object/data recipe backup.
 
@@ -917,26 +933,23 @@ class ExtraBackup:
         self.restored = False
         self.closed = False
         tools = {step.get('tool', '') for step in steps}
+        step_targets = _step_targets(steps)
+        def targets(prefixes):
+            return set().union(*(step_targets[index] for index, step in enumerate(steps)
+                                 if step.get('tool', '').startswith(prefixes)))
         self.capture_collections = any(tool.startswith(('collection.', 'object.collection_')) for tool in tools)
-        weight_targets = {step.get('target') for step in steps
-                          if isinstance(step.get('target'), str)
-                          and step.get('tool', '').startswith(('vertex_group.', 'weights.'))}
-        material_targets = {step.get('target') for step in steps
-                            if isinstance(step.get('target'), str)
-                            and step.get('tool', '').startswith('material.')}
-        pose_targets = {step.get('target') for step in steps
-                        if isinstance(step.get('target'), str)
-                        and (step.get('tool', '').startswith('rig.') or step.get('tool', '').startswith('animation.pose_'))}
-        ik_targets = {step.get('target') for step in steps
-                      if isinstance(step.get('target'), str) and step.get('tool', '').startswith('rig.ik_')}
-        action_targets = {step.get('target') for step in steps
-                          if isinstance(step.get('target'), str)
-                          and step.get('tool', '').startswith('animation.')
-                          and step.get('tool') not in ('animation.frame', 'animation.frame_range')}
+        weight_targets = targets(('vertex_group.', 'weights.'))
+        material_targets = targets('material.')
+        pose_targets = targets(('rig.', 'animation.pose_'))
+        ik_targets = targets('rig.ik_')
+        action_targets = set().union(*(step_targets[index] for index, step in enumerate(steps)
+                                      if step.get('tool', '').startswith('animation.')
+                                      and step.get('tool') not in ('animation.frame', 'animation.frame_range')))
+        has_action_steps = any(tool.startswith('animation.') and tool not in ('animation.frame', 'animation.frame_range') for tool in tools)
         self.capture_frame = bool(tools & {'animation.frame_range', 'animation.frame'})
-        self.before_actions = {a.session_uid for a in bpy.data.actions} if action_targets else None
+        self.before_actions = {a.session_uid for a in bpy.data.actions} if has_action_steps else None
         self.noop = not any((self.capture_collections, weight_targets, material_targets,
-                             pose_targets, action_targets, self.capture_frame))
+                             pose_targets, has_action_steps, self.capture_frame))
         if self.noop:
             return
         self.scene_uid = bpy.context.scene.session_uid

@@ -185,6 +185,33 @@ def run():
         obj = gate.Sync.find_object(identity)
         check('disabled collection rollback restores active native target', not collection.hide_viewport
               and bpy.context.view_layer.objects.active == obj and obj.select_get())
+        obj = make()
+        obj.vertex_groups.new(name='Original group')
+        obj.vertex_groups['Original group'].add([0], .25, 'REPLACE')
+        identity = gate.Sync.object_id(obj)
+        steps = [{'id': 'first', 'tool': 'object.selection', 'target': identity},
+                 {'id': 'second', 'tool': 'vertex_group.rename', 'target': {'step': 'first', 'output': 'object'}}]
+        extra, baseline = tools.ExtraBackup(steps, editor), gate.voice_sequence.Backup([obj])
+        apply(obj, 'vertex_group.rename', {'name': 'Original group', 'new_name': 'Changed through alias'})
+        baseline.restore()
+        extra.restore()
+        baseline.close(restored=True)
+        extra.close(restored=True)
+        obj = gate.Sync.find_object(identity)
+        check('existing-object output aliases receive metadata backup', obj.vertex_groups.get('Original group') is not None
+              and obj.vertex_groups.get('Changed through alias') is None)
+        actions = {a.session_uid for a in bpy.data.actions}
+        steps = [{'id': 'added', 'tool': 'object.add', 'target': None},
+                 {'id': 'keyed', 'tool': 'animation.interpolation', 'target': {'step': 'added', 'output': 'object'}}]
+        extra, baseline = tools.ExtraBackup(steps, editor), gate.voice_sequence.Backup([obj])
+        created = make('EMPTY', 'Private new animated output')
+        created.keyframe_insert(data_path='location', frame=1)
+        apply(created, 'animation.interpolation', {'channel': 'location', 'interpolation': 'LINEAR'})
+        baseline.restore()
+        extra.restore()
+        baseline.close(restored=True)
+        extra.close(restored=True)
+        check('new-output animation rollback removes orphan actions', {a.session_uid for a in bpy.data.actions} == actions)
     offered = tools.OPERATIONS - gate.catalog.BASE_OPERATIONS - gate.catalog.RIG_SCENE_OPERATIONS
     check('all new solid and plane tools exercised', offered <= set(REPORT['tools']))
     REPORT['passed'] = True
