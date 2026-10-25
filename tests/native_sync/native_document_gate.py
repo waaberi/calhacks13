@@ -102,6 +102,9 @@ def applied(result):
         assert bpy.data.texts["NativeSync_ModuleText"].use_module
         report["checks"].append("received module Text remains native data and never automatically executes")
         report["checks"].append("all original native graph and unreferenced datablocks apply without replacing UI/file path")
+        recaptured = document.capture(out / "recaptured.blend")
+        assert recaptured.manifest
+        report["checks"].append("received native document can be captured again without false weak-library rejection")
         schedule(undo, .1)
     except Exception:  # noqa: BLE001 - retain actual native graph fidelity failures
         finish(traceback.format_exc())

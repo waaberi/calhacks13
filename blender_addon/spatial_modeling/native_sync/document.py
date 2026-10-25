@@ -143,6 +143,11 @@ class NativeDocument:
         return self._transaction is not None or _active is not None
 
     @staticmethod
+    def is_empty_session():
+        """Initial replacement is allowed only before this separate session has user objects/file."""
+        return not bpy.data.filepath and len(bpy.data.objects) == 0
+
+    @staticmethod
     def is_idle():
         """No native modal tool is running, and all edited objects are in Object Mode."""
         if _modal_busy():
@@ -152,7 +157,7 @@ class NativeDocument:
     def capture(self, path):
         if self.busy or _modal_busy():
             raise NativeDocumentBusy("Finish the active native operation before sharing a checkpoint")
-        if bpy.data.libraries:
+        if any(item.library is not None for item in _pointer_map().values()):
             raise NativeDocumentError("Make externally linked libraries local before sharing this document")
         _validate_portable_assets(_pointer_map().values())
         path = Path(path).resolve()
@@ -218,12 +223,12 @@ class NativeDocument:
         try:
             bpy.ops.ed.undo_push(message="Before shared native checkpoint")
             with bpy.data.libraries.load(str(path), link=False) as (source, target):
-                if source.libraries:
-                    raise NativeDocumentError("Received checkpoint contains externally linked libraries")
                 for group in sorted(MANIFEST_GROUPS):
                     if hasattr(source, group):
                         setattr(target, group, list(getattr(source, group)))
             transaction["new"] = {ptr: item for ptr, item in _pointer_map().items() if ptr not in old}
+            if any(item.library is not None for item in transaction["new"].values()):
+                raise NativeDocumentError("Received checkpoint contains externally linked datablocks")
             _validate_portable_assets(transaction["new"].values())
             _validate_script_drivers(transaction["new"].values())
             actual_groups = {item.as_pointer(): group for group, items in _ids().items() for item in items}
