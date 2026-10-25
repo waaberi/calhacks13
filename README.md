@@ -19,7 +19,7 @@ Built at CalHacks 13 by Waaberi Ibrahim, Lee Jae-yeon, Jihyeon and Talia.
 - **Your Blender scene in VR.** Place a worktable anywhere in your room. Objects sit on it at their true dimensions, and changes made in Blender show up in the headset right away.
 - **Hands-on editing.** Move, rotate, scale, add and delete objects with the controllers. A hand menu takes exact numbers when you need precision, and it works for left- and right-handed users.
 - **Voice commands.** Say "rotate this 90 degrees". If something is missing, it asks a short question, such as which axis, and then finishes the command. Recognition runs offline.
-- **Two people, one scene.** A second person joins from Blender on their own PC over an encrypted LAN connection. Everyone sees every change.
+- **Two people, one scene.** A second person joins from Blender on their own PC, from any network, over an encrypted connection relayed through SpacetimeDB Maincloud, or directly on a shared LAN. Everyone sees every change.
 - **No conflicts.** When someone is editing an object, other edits to it are blocked with a message saying who has it. This covers Blender's own editing shortcuts, fields and gizmos too. Edits through Blender's menus, F3 search, the Outliner or a script can't be stopped in advance: the host catches them right after, warns, and gives everyone the re-read scene.
 - **CAD sketches.** Draw sketches with real dimensions and constraints. Change a dimension and the solver updates the shape. Built on CAD Sketcher.
 - **Blender on a screen in VR.** A panel shows the live Blender window, so you don't need to take the headset off.
@@ -43,7 +43,7 @@ flowchart LR
   quest["Quest 3S"]
   app <-->|"JSON lines over TCP, localhost"| host
   capture -->|"Blender window as JPEG"| app
-  client <-->|"TLS 1.3, LAN"| host
+  client <-->|"TLS 1.3, via Maincloud bridge or LAN"| host
   quest <-->|"Quest Link"| app
   host -.->|"who is editing what"| stdb
   stdb -.-> app
@@ -69,7 +69,9 @@ Then:
 1. Link `blender_addon/spatial_modeling` into Blender's `extensions/user_default/` folder, enable Spatial Modeling under Preferences › Add-ons, and choose Host.
 2. Open a `.blend` file, for example [`samples/mechanical/p0_reference_v2.blend`](samples/mechanical/).
 3. Connect the Quest through Link and start the VR app.
-4. To add a second editor, turn on "Let a Client-role Blender join over the LAN" in the host's add-on preferences and note the session token. On the other PC, install the add-on, choose Client, and enter the host's address and the token.
+4. To add a second editor, turn on "Let a Client-role Blender join" in the host's add-on preferences and note the session token. On the other PC, install the add-on and choose Client.
+   - **From any network:** switch the host's **SpacetimeDB** preference to **Maincloud** and run `npm run bridge -- host` in `spacetime/`. On the other PC run `npm run bridge -- join`, then connect the Client to `127.0.0.1` with the token. See [Across the internet](spacetime/README.md#across-the-internet).
+   - **On a shared LAN:** connect the Client to the host's address with the token.
 
 ## Building from source
 
