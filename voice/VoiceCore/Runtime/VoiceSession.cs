@@ -442,6 +442,12 @@ namespace SpatialModeling.VoiceCore
                 turn.NoResult = NoResultReason.Silence;
                 return turn.Build();
             }
+            if ((pending != null && (pending.Missing & MissingFields.Axis) != 0)
+                || (compositionToken != null && compositionMissing == "axis"))
+            {
+                string axis=AxisClarification.Normalize(result.Text);
+                if(axis!=null)result=new RecognitionResult(axis,result.Confidence);
+            }
             if (HearComposition(result, turn)) return turn.Build();
             if (choice != null && HearChoice(result, turn))
                 return turn.Build();

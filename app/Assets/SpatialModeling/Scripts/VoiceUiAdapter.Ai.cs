@@ -138,45 +138,26 @@ namespace SpatialModeling
                 else { InvalidateAi(); Note("Blender context changed. Say the complete edit again."); }
             }
         }
-        bool KnownBasic(string text)
-        {
-            var words = new HashSet<string>(session.GrammarPhrases().SelectMany(AiWords), StringComparer.OrdinalIgnoreCase);
-            foreach (var obj in session.Objects) foreach (string word in AiWords(obj.Name)) words.Add(word);
-            return AiWords(text).All(word => words.Contains(word) || double.TryParse(word, out _));
-        }
-        static IEnumerable<string> AiWords(string text) => Regex.Matches((text ?? "").ToLowerInvariant(), @"[a-z]+|[-+]?(?:\d+(?:\.\d*)?|\.\d+)").Cast<Match>().Select(match => match.Value);
-        static bool Control(string text)
-        {
-            string bounded=Regex.Replace((text??"").Trim(),@"[.!?]+$","").Trim();
-            if(Regex.IsMatch(bounded,@"^(never\s+mind|save(?:\s+(?:the\s+)?(?:file|project))?)$",RegexOptions.IgnoreCase))return true;
-            // Use the existing core parser for its full Undo/Redo/Cancel
-            // vocabulary (e.g. 'undo that' and 'redo that rotate'). The actual
-            // session still owns confidence, composition and command execution.
-            var core=new VoiceSession(new VoiceSessionOptions { AskHost=false },()=>DateTime.UtcNow);
-            var kind=core.Hear(new RecognitionResult(bounded,1)).Command?.Kind;
-            return kind==CommandKind.Undo||kind==CommandKind.Redo||kind==CommandKind.Cancel;
-        }
+        static bool Control(string text) => VoiceRouting.IsControl(text);
         void HearOrInterpret(RecognitionResult result, bool fromMic)
         {
             string text = fromMic ? RawAiTranscript() ?? result.Text : result.Text;
             string navigation = Regex.Replace(text.Trim(), @"[.!?]+$", "").Trim();
             if (panel.Visible && Regex.IsMatch(navigation, @"^(next|next page|previous|previous page|back)$", RegexOptions.IgnoreCase)
                 && panel.MovePage(navigation.StartsWith("next",StringComparison.OrdinalIgnoreCase) ? 1 : -1)) return;
-            if (Control(text) || session.Pending != null || session.Choice != null || session.CompositionQuestion != null || session.WaitingForHost)
-            { Handle(session.Hear(result)); return; }
-            bool mesh = (string)(PreviewInteraction.Current?.Drawing?.NativeState["model_edit"] as JObject)?["mode"] == "EDIT_MESH";
-            string creation = !mesh && aiQuestion == null ? VoiceDialogPages.BasicCreation(text) : null;
-            if (creation != null)
+            bool dialogue=session.Pending!=null||session.Choice!=null||session.CompositionQuestion!=null||session.WaitingForHost;
+            if(VoiceRouting.Decide(text,aiMode,AiAvailable,dialogue)==VoiceRoute.Core)
             {
-                // Preserve the app's small, beside-selection Add defaults. Never
-                // ask a model to invent Blender's two-metre cube for this phrase.
-                Debug.Log("VOICE basic creation normalized to " + creation);
-                Handle(session.Hear(new RecognitionResult(creation,result.Confidence))); return;
+                string basic=(!aiMode||!AiAvailable)?VoiceDialogPages.BasicCreation(text):null;
+                // Keep the complete free transcript for dialogue/chain answers;
+                // never let phrase snapping discard a second requested clause.
+                string coreText=dialogue||VoiceSession.IsCompositionRequest(text)||Control(text)?text:result.Text;
+                Handle(session.Hear(new RecognitionResult(basic??coreText,result.Confidence)));return;
             }
-            bool newTool = Regex.IsMatch(text, @"\b(extrude|inset|knife|loop\s*cut|dissolve|proportional|snapping)\b|\b(bevel|merge|delete)\b.*\b(vertices|edges|faces|selected)\b", RegexOptions.IgnoreCase);
-            if (!aiMode || !AiAvailable || (aiQuestion == null && !mesh && !newTool && !VoiceIntentContext.NeedsInterpretation(text) && KnownBasic(text)))
-            { Handle(session.Hear(result)); return; }
             if (result.Confidence < .5f) { Enqueue(Prompt.LowConfidence,null); return; }
+            if(aiQuestion!=null&&aiQuestionMissing!=null&&aiQuestionMissing.Any(value=>
+                Regex.IsMatch((string)value??"",@"^(axis|rotation_axis|translation_axis)$",RegexOptions.IgnoreCase)))
+                text=AxisClarification.Normalize(text)??text;
             string request;
             try { request = GeminiVoiceInterpreter.ComposeRequest(aiOriginal,aiQuestion,text); }
             catch (FormatException) { aiQuestion = null; Note("That request is too long. Repeat a shorter complete edit."); return; }
@@ -214,6 +195,7 @@ namespace SpatialModeling
         bool ReplaceAiRequest()
         {
             bool alreadySent = InvalidateAi();
+            session?.Cancel(); // A fresh complete request replaces its old core dialogue too.
             DropDelete(Prompt.ReplacedPending);
             panel?.Hide();
             if (!alreadySent) return true;
@@ -225,7 +207,8 @@ namespace SpatialModeling
             GeminiVoiceInterpreter.Answer answer = null;
             yield return ai.Interpret(text,context,aiTools,() => sequence == aiSequence && aiBusy && host.HasCurrentScene
                 && SelectedObjectId == aiIntentTarget && CaptureAiContext().ToString(Formatting.None) == aiFingerprint, value => answer = value,
-                VoiceIntentContext.SelectedObject(context,aiIntentTarget));
+                VoiceIntentContext.ForRequest(context,aiIntentTarget,HostCommand.DefaultAddSize,
+                    VoiceLimits.MaxMoveMeters,VoiceLimits.MinScaleFactor,VoiceLimits.MaxScaleFactor,VoiceLimits.MaxTurnDegrees));
             if (sequence != aiSequence) yield break;
             aiBusy = false;
             if (answer?.Draft == null || answer.Error != null)
