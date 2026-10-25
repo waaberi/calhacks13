@@ -373,6 +373,8 @@ namespace SpatialModeling
                 ("Auto surfaces on/off",arrangement.Surfaces.ToggleAutomatic),
                 ("Environment setup",()=>SetupMenu(true)), ("Manage planes",()=>ChangeMenu(MenuPage.Planes)),
                 ("Surface help on/off",arrangement.ToggleAssist), ("Actual size",RestoreActualSize),
+                (FindFirstObjectByType<BlenderScreen>()?.PositionLocked == true ? "Unlock Blender screen" : "Lock Blender screen",
+                    ()=>{ FindFirstObjectByType<BlenderScreen>()?.TogglePositionLock(); RefreshMenu(); }),
                 ("Back to arrange",()=>ChangeMenu(MenuPage.Arrange))
             };
             if(compact && menuPage==MenuPage.Environment) actions=new (string,Action)[] {

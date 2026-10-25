@@ -21,13 +21,14 @@ namespace SpatialModeling
         public static bool Requested => Environment.GetEnvironmentVariable("CALHACKS_P25") == "1"
             || Array.IndexOf(Environment.GetCommandLineArgs(), "--p25") >= 0;
         public bool CapturesScroll { get; private set; }
+        public bool OwnsControllerButtons => inputEnabled || focusRequested || windowResuming || endAfterRelease || NativeInputOwned;
         public XRNode PrimaryHand { get; private set; } = XRNode.RightHand;
         public string Notice { get; private set; } = "Focus Blender to enable native preview input";
         public PreviewSpatialDrawing Drawing { get; private set; }
         BlenderScreen screen;
         HostScene scene;
         RectTransform panel, keyboard, modelToolsPanel;
-        RectTransform shortcutPanel, numberPanel, windowPanel;
+        RectTransform shortcutPanel, numberPanel, windowPanel, mouseOptionsPanel;
         readonly List<Button> basicKeys = new List<Button>(), fullKeys = new List<Button>(), shortcutButtons = new List<Button>();
         readonly List<Button> numberFields = new List<Button>();
         readonly List<Button> windowButtons = new List<Button>();
@@ -39,7 +40,12 @@ namespace SpatialModeling
         long awaitedWindow;
         float windowResumeUntil;
         Text numberFeedback, shortcutFeedback;
-        Text feedback, objectTargetText;
+        Text feedback, objectTargetText, actionFeedback;
+        bool questControls = true, mouseOptionsShown, sideWasDown, stickWasDown, panShift;
+        string heldMouseButton = "left", lastControlAction = "";
+        Vector2 panPoint;
+        Button pulsedButton;
+        float pulseUntil;
         Button moveStepButton, turnStepButton, primitiveSizeButton, focusButton;
         readonly List<Button> buttons = new List<Button>();
         readonly Queue<JObject> events = new Queue<JObject>();
@@ -116,6 +122,7 @@ namespace SpatialModeling
             if (shortcutPanel != null) Destroy(shortcutPanel.gameObject);
             if (numberPanel != null) Destroy(numberPanel.gameObject);
             if (windowPanel != null) Destroy(windowPanel.gameObject);
+            if (mouseOptionsPanel != null) Destroy(mouseOptionsPanel.gameObject);
         }
 
         void Update()
@@ -131,6 +138,7 @@ namespace SpatialModeling
             if (shortcutPanel != null) shortcutPanel.gameObject.SetActive(shown && shortcutsShown);
             if (numberPanel != null) numberPanel.gameObject.SetActive(shown && numbersShown);
             if (windowPanel != null) windowPanel.gameObject.SetActive(shown && windowsShown);
+            if (mouseOptionsPanel != null) mouseOptionsPanel.gameObject.SetActive(shown && mouseOptionsShown);
             if (!shown || scene == null || !scene.IsCurrent) Suspend();
             if (focusRequested && !endAfterRelease && Drawing != null && Drawing.IsNativeUiOwned)
             {
@@ -172,7 +180,7 @@ namespace SpatialModeling
             { nextHeartbeat = Time.unscaledTime + .25f; Enqueue(new JObject { ["type"] = "heartbeat" }); }
             RefreshInputIndicator();
             if (feedback != null)
-                feedback.text = "Blender input: " + InputMode + " · Mouse: " + mouseButton
+                feedback.text = "Blender input: " + InputMode + (questControls ? " · Quest controls" : " · Mouse mode: " + mouseButton)
                     + " · " + (PrimaryHand == XRNode.RightHand ? "Right" : "Left") + " pointer\n" + Notice
                     + "\n" + (Drawing != null ? Drawing.StatusText : "Waiting for spatial bridge");
             if (Notice != lastLoggedNotice)
@@ -189,6 +197,7 @@ namespace SpatialModeling
             if (modelToolsShown) RefreshObjectLabels();
             if (numbersShown) RefreshNumbers();
             if (windowsShown) RefreshWindows();
+            RefreshControlFeedback();
             if (shortcutsShown && shortcutFeedback != null) shortcutFeedback.text = "Page " + (shortcutPage + 1) + " / 2 · click the intended Blender editor before using these shortcuts\n" + Notice;
         }
 
@@ -204,20 +213,29 @@ namespace SpatialModeling
             focusRequested = false;
             objectsRequested = spatialRequested = modelToolsShown = false;
             numbersShown = shortcutsShown = editorPointSet = false;
+            mouseOptionsShown = false;
             Drawing?.Numeric.Invalidate();
             CapturesScroll = false;
             if (Drawing != null) { Drawing.Cancel(); Drawing.SetEnabled(false); Drawing.SetObjectToolsEnabled(false); }
         }
 
         public bool RouteHand(XRNode hand, Ray ray, bool trigger, bool grip, Vector2 axis, float nearest, out float distance)
+            => RoutePointer(hand, ray, trigger, grip, axis, nearest, out distance, false, false);
+        public bool RouteControllerHand(XRNode hand, Ray ray, bool trigger, bool grip, Vector2 axis, float nearest, out float distance, bool stick)
+            => RoutePointer(hand, ray, trigger, grip, axis, nearest, out distance, true, stick);
+        bool RoutePointer(XRNode hand, Ray ray, bool trigger, bool grip, Vector2 axis, float nearest, out float distance, bool controller, bool stick)
         {
             distance = 0;
             if (hand != PrimaryHand) return false;
             bool pressed = trigger && !triggerWasDown;
             bool released = !trigger && triggerWasDown;
             triggerWasDown = trigger;
+            bool sidePressed = grip && !sideWasDown, stickPressed = stick && !stickWasDown;
+            sideWasDown = grip; stickWasDown = stick;
             CapturesScroll = false;
-            if (grip) { ReleaseNative(); Drawing?.Cancel(); return false; }
+            bool sideMouse = controller && questControls && screen != null && screen.PositionLocked
+                && screen.TryPreviewPoint(ray, out _, out var sideDistance) && sideDistance <= nearest;
+            if (grip && !sideMouse) { ReleaseNative(); Drawing?.Cancel(); return false; }
             Button hit = null; float uiDistance = float.PositiveInfinity;
             foreach (var button in buttons)
             {
@@ -229,7 +247,7 @@ namespace SpatialModeling
             if (hit != null)
             {
                 ReleasePointer(); distance = uiDistance;
-                if (pressed && hit.IsInteractable()) hit.onClick.Invoke();
+                if (!grip && pressed && hit.IsInteractable()) hit.onClick.Invoke();
                 return true;
             }
             if (keyboard != null && keyboard.gameObject.activeInHierarchy && Hit(keyboard, ray, out var keyboardDistance)
@@ -238,7 +256,7 @@ namespace SpatialModeling
             if (modelToolsPanel != null && modelToolsPanel.gameObject.activeInHierarchy && Hit(modelToolsPanel, ray, out var modelDistance)
                 && modelDistance <= nearest)
             { ReleasePointer(); distance = modelDistance; return true; }
-            foreach (var overlay in new[] { shortcutPanel, numberPanel, windowPanel })
+            foreach (var overlay in new[] { shortcutPanel, numberPanel, windowPanel, mouseOptionsPanel })
                 if (overlay != null && overlay.gameObject.activeInHierarchy && Hit(overlay, ray, out var overlayDistance) && overlayDistance <= nearest)
                 { ReleasePointer(); distance = overlayDistance; return true; }
             if (panel != null && panel.gameObject.activeInHierarchy && Hit(panel, ray, out var panelDistance) && panelDistance <= nearest)
@@ -248,7 +266,13 @@ namespace SpatialModeling
                 distance = imageDistance;
                 if (PreviewInputMapping.CanRoute(inputEnabled, Ready(), true, false, true))
                 {
-                    CapturesScroll = true; lastPoint = point;
+                    CapturesScroll = true;
+                    if (controller && questControls)
+                    {
+                        QuestPointer(point, trigger, pressed, grip, sidePressed, stick, stickPressed, axis);
+                        return true;
+                    }
+                    lastPoint = point;
                     if (Time.unscaledTime >= nextPointer)
                     { nextPointer = Time.unscaledTime + .025f; pendingPointer = At("pointer", point); }
                     if (pressed)
@@ -256,10 +280,10 @@ namespace SpatialModeling
                         if (mouseButton == "left") RememberEditor(point);
                         FlushPointer();
                         var e = At("button", point); e["button"] = mouseButton; e["action"] = "down";
-                        Enqueue(e); mouseHeld = true;
+                        Enqueue(e); mouseHeld = true; heldMouseButton = mouseButton;
                     }
                     if (released && mouseHeld)
-                    { var e = At("button", point); e["button"] = mouseButton; e["action"] = "up"; Enqueue(e); mouseHeld = false; }
+                    { var e = At("button", point); e["button"] = heldMouseButton; e["action"] = "up"; Enqueue(e); mouseHeld = false; }
                     if (axis.sqrMagnitude > .16f && Time.unscaledTime >= nextScroll)
                     {
                         nextScroll = Time.unscaledTime + .16f;
@@ -286,6 +310,91 @@ namespace SpatialModeling
             d = 0;
             return rect != null && new Plane(rect.forward, rect.position).Raycast(ray, out d) && d > 0 && d <= 4
                 && rect.rect.Contains((Vector2)rect.InverseTransformPoint(ray.GetPoint(d)));
+        }
+
+        void QuestPointer(Vector2 point, bool trigger, bool pressed, bool side, bool sidePressed, bool stick, bool stickPressed, Vector2 axis)
+        {
+            string desired = stick ? "middle" : side ? "right" : "left";
+            bool down = stick ? stickPressed : side ? sidePressed : pressed;
+            if (mouseHeld && (heldMouseButton == "middle" ? !stick : heldMouseButton == "right" ? !side : !trigger)) ReleasePointer();
+            if (down && mouseHeld && heldMouseButton != desired) ReleasePointer();
+            if (down && !mouseHeld)
+            {
+                FlushPointer(); heldMouseButton = desired;
+                if (desired == "middle")
+                {
+                    panPoint = point;
+                    panShift = !modifiers.Contains("SHIFT");
+                    if (panShift) Enqueue(new JObject { ["type"] = "key", ["key"] = "SHIFT", ["action"] = "down" });
+                }
+                if (desired == "left") RememberEditor(point);
+                var button = At("button", point); button["button"] = desired; button["action"] = "down";
+                Enqueue(button); mouseHeld = true;
+            }
+            if (mouseHeld && heldMouseButton == "middle")
+            {
+                panPoint += new Vector2(axis.x, -axis.y) * (.12f * Time.unscaledDeltaTime);
+                panPoint = new Vector2(Mathf.Clamp(panPoint.x, .02f, .98f), Mathf.Clamp(panPoint.y, .02f, .98f));
+                point = panPoint;
+            }
+            lastPoint = point;
+            if (Time.unscaledTime >= nextPointer)
+            { nextPointer = Time.unscaledTime + .025f; pendingPointer = At("pointer", point); }
+            if (!stick && axis.sqrMagnitude > .16f && Time.unscaledTime >= nextScroll)
+            {
+                nextScroll = Time.unscaledTime + .16f;
+                var scroll = At("scroll", point); scroll["dx"] = Mathf.Abs(axis.x) > .5f ? Mathf.Sign(axis.x) : 0;
+                scroll["dy"] = Mathf.Abs(axis.y) > .5f ? Mathf.Sign(axis.y) : 0; Enqueue(scroll);
+            }
+        }
+
+        void ToggleScreenLock()
+        {
+            ReleaseNative(); screen?.TogglePositionLock();
+            Notice = screen != null && screen.PositionLocked ? "Screen LOCKED · front: click · side: right-click · stick: scroll/zoom · hold stick + tilt: pan"
+                : "Screen UNLOCKED · side grip moves the screen";
+        }
+
+        void RefreshControlFeedback()
+        {
+            foreach (var b in buttons)
+            {
+                if (b == null || b == focusButton) continue;
+                bool selected = false, stateful = true;
+                switch (b.name)
+                {
+                    case "Keyboard": selected = keyboardShown && !fullKeyboard; break;
+                    case "Full keyboard": selected = keyboardShown && fullKeyboard; break;
+                    case "CTRL": case "SHIFT": case "ALT": selected = modifiers.Contains(b.name); break;
+                    case "Caps": selected = shiftText; break;
+                    case "Lock screen position": selected = screen != null && screen.PositionLocked; break;
+                    case "Controller controls": selected = questControls; break;
+                    case "Other hand": selected = PrimaryHand == XRNode.LeftHand; break;
+                    case "Mouse options": selected = mouseOptionsShown; break;
+                    case "Mouse left": case "Mouse right": case "Mouse middle": selected = !questControls && mouseButton == b.name.Substring(6); break;
+                    case "Draw in VR": selected = Drawing != null && (Drawing.EnabledForInput || spatialRequested); break;
+                    case "Line": case "Circle": case "Rectangle": selected = Drawing != null && Drawing.EnabledForInput && Drawing.Tool == b.name.ToLowerInvariant(); break;
+                    case "Model tools": selected = modelToolsShown || objectsRequested; break;
+                    case "Preview tools": selected = shortcutsShown; break;
+                    case "Windows / dialogs": selected = windowsShown; break;
+                    default: stateful = false; break;
+                }
+                if (stateful)
+                {
+                    string label = b.name == "Lock screen position" ? (selected ? "Screen LOCKED" : "Lock screen position")
+                        : b.name == "Other hand" ? "Pointer: " + (selected ? "Left" : "Right") : b.name + (selected ? " · ON" : "");
+                    b.GetComponentInChildren<Text>().text = label;
+                }
+                var c = b.colors;
+                c.normalColor = b == pulsedButton && Time.unscaledTime < pulseUntil ? new Color(1f, .62f, .08f)
+                    : selected ? new Color(.12f, .65f, .28f) : new Color(.08f, .24f, .34f);
+                c.highlightedColor = c.selectedColor = c.normalColor; b.colors = c;
+            }
+            if (actionFeedback != null)
+                actionFeedback.text = lastControlAction + "\n" + (screen != null && screen.PositionLocked ? "Screen LOCKED · front: click · side: right-click · stick: scroll/zoom · hold stick + tilt: pan"
+                    : "Screen UNLOCKED · side grip moves screen; lock it for right-click") + "\n"
+                    + (Drawing != null && (Drawing.EnabledForInput || spatialRequested) && (string)Drawing.NativeState["mode"] != "OBJECT"
+                        ? "Direct VR drawing needs Blender Object Mode; use its top-left mode dropdown" : Notice);
         }
 
         bool NativeInputOwned => scene != null && scene.IsCurrent && Drawing != null && (Drawing.IsNativeUiOwned
@@ -346,13 +455,14 @@ namespace SpatialModeling
             inputEnabled = focusRequested = false;
             windowAuthority.Clear(); windowResuming = windowReleaseQueued = inputResync = false;
             if (endAfterRelease) return;
-            events.Clear(); pendingPointer = null; mouseHeld = false; modifiers.Clear();
+            events.Clear(); pendingPointer = null; mouseHeld = panShift = false; modifiers.Clear();
             endAfterRelease = true; releaseQueued = false;
             // release is idempotent cleanup, never a replay of a model operation.
             // Keep the native lease until the helper confirms all held input up.
         }
         void BeginSpatial()
         {
+            mouseOptionsShown = false;
             if (Drawing.NativeModalActive)
             { Notice = "Finish the native operation with Enter or Escape before switching to VR drawing"; return; }
             objectsRequested = modelToolsShown = false;
@@ -365,6 +475,7 @@ namespace SpatialModeling
         }
         void BeginObjects()
         {
+            mouseOptionsShown = false;
             if (Drawing == null) return;
             numbersShown = shortcutsShown = windowsShown = editorPointSet = false; Drawing.Numeric.Invalidate();
             if (Drawing.NativeModalActive) { Notice = "Finish or cancel the running Blender operation before Model tools"; return; }
@@ -403,7 +514,8 @@ namespace SpatialModeling
         bool QueueChord(IReadOnlyList<JObject> chord, bool returnToEditor)
         {
             var batch = new List<JObject>();
-            if (mouseHeld) { var up = At("button", lastPoint); up["button"] = mouseButton; up["action"] = "up"; batch.Add(up); }
+            if (mouseHeld) { var up = At("button", lastPoint); up["button"] = heldMouseButton; up["action"] = "up"; batch.Add(up); }
+            if (panShift) { batch.Add(new JObject { ["type"] = "key", ["key"] = "SHIFT", ["action"] = "up" }); panShift = false; }
             var held = new List<string>(modifiers); held.Sort(StringComparer.Ordinal);
             foreach (string key in held) batch.Add(new JObject { ["type"] = "key", ["key"] = key, ["action"] = "up" });
             if (returnToEditor) batch.Add(At("pointer", editorPoint));
@@ -417,6 +529,7 @@ namespace SpatialModeling
         }
         void OpenKeyboard(bool full)
         {
+            mouseOptionsShown = false;
             modelToolsShown = objectsRequested = numbersShown = shortcutsShown = windowsShown = false;
             Drawing.SetObjectToolsEnabled(false); Drawing.Numeric.Invalidate();
             keyboardShown = true; SetKeyboardPage(full);
@@ -429,6 +542,7 @@ namespace SpatialModeling
         }
         void OpenNumbers(string mode)
         {
+            mouseOptionsShown = false;
             if (!Drawing.LoadNumeric(mode)) { Notice = Drawing.Numeric.Notice; return; }
             numbersShown = true; modelToolsShown = keyboardShown = shortcutsShown = windowsShown = false; RefreshNumbers();
         }
@@ -448,15 +562,16 @@ namespace SpatialModeling
         void ReleaseNative()
         {
             pendingPointer = null;
-            if (mouseHeld || modifiers.Count != 0)
-            { Enqueue(new JObject { ["type"] = "release" }); mouseHeld = false; modifiers.Clear(); }
+            if (mouseHeld || modifiers.Count != 0 || panShift)
+            { Enqueue(new JObject { ["type"] = "release" }); mouseHeld = panShift = false; modifiers.Clear(); }
         }
         void ReleasePointer()
         {
             pendingPointer = null;
             if (!mouseHeld) return;
-            var e = At("button", lastPoint); e["button"] = mouseButton; e["action"] = "up";
+            var e = At("button", lastPoint); e["button"] = heldMouseButton; e["action"] = "up";
             Enqueue(e); mouseHeld = false;
+            if (panShift) { Enqueue(new JObject { ["type"] = "key", ["key"] = "SHIFT", ["action"] = "up" }); panShift = false; }
         }
         void Key(string key)
         {
@@ -492,7 +607,7 @@ namespace SpatialModeling
         }
         void Modifier(string key)
         {
-            if (!inputEnabled || !Ready()) return;
+            if (!inputEnabled || !Ready()) { Notice = "Enable Blender input before using modifiers"; return; }
             bool down = !modifiers.Contains(key);
             if (down) modifiers.Add(key); else modifiers.Remove(key);
             Enqueue(new JObject { ["type"] = "key", ["key"] = key, ["action"] = down ? "down" : "up" });
@@ -542,7 +657,7 @@ namespace SpatialModeling
             { windowAwaitSession = session; windowResumeUntil = Time.unscaledTime + 4f; awaitedWindow = 0; }
             windowResuming = true; windowReleaseQueued = false; inputEnabled = focusRequested = false;
             inputResync = sameWindowResync;
-            events.Clear(); pendingPointer = null; mouseHeld = false; modifiers.Clear(); editorPointSet = false;
+            events.Clear(); pendingPointer = null; mouseHeld = panShift = false; modifiers.Clear(); editorPointSet = false;
             triggerWasDown = true; Drawing?.Numeric.Invalidate(); transport.Unknown();
             Notice = reason;
         }
@@ -558,7 +673,7 @@ namespace SpatialModeling
                 if (wasActive && sameFamily) AwaitWindowState("Following Blender dialog/window; release trigger before continuing");
                 else
                 {
-                    events.Clear(); pendingPointer = null; mouseHeld = inputEnabled = false; modifiers.Clear();
+                    events.Clear(); pendingPointer = null; mouseHeld = panShift = inputEnabled = false; modifiers.Clear();
                     editorPointSet = false; Drawing?.Cancel();
                     if (wasActive) RequestEndNativeUi();
                 }
@@ -667,7 +782,7 @@ namespace SpatialModeling
             lastInputFailure = reason;
             bool needsCleanup = inputEnabled || focusRequested || endAfterRelease || windowResuming || NativeInputOwned;
             transport.Unknown(); state = null; events.Clear(); pendingPointer = null;
-            inputEnabled = focusRequested = mouseHeld = false; modifiers.Clear();
+            inputEnabled = focusRequested = mouseHeld = panShift = false; modifiers.Clear();
             windowAuthority.Clear(); windowResuming = windowReleaseQueued = inputResync = false;
             releaseQueued = false;
             if (needsCleanup) RequestEndNativeUi();
@@ -681,9 +796,13 @@ namespace SpatialModeling
             RefreshInputIndicator();
             AddButton(panel, "Disable input", 1, 0, Suspend);
             AddButton(panel, "Keyboard", 2, 0, () => { if (keyboardShown) keyboardShown = false; else OpenKeyboard(false); });
-            AddButton(panel, "Mouse left", 3, 0, () => { ReleaseNative(); mouseButton = "left"; });
-            AddButton(panel, "Mouse right", 4, 0, () => { ReleaseNative(); mouseButton = "right"; });
-            AddButton(panel, "Mouse middle", 5, 0, () => { ReleaseNative(); mouseButton = "middle"; });
+            AddButton(panel, "Lock screen position", 3, 0, ToggleScreenLock);
+            AddButton(panel, "Controller controls", 4, 0, () => { ReleaseNative(); questControls = true; mouseOptionsShown = false; Notice = "Front: click · side: right-click with screen locked · stick: scroll/zoom · hold stick + tilt: pan"; });
+            AddButton(panel, "Mouse options", 5, 0, () =>
+            {
+                mouseOptionsShown = !mouseOptionsShown;
+                if (mouseOptionsShown) keyboardShown = numbersShown = shortcutsShown = windowsShown = modelToolsShown = false;
+            });
             AddButton(panel, "Other hand", 6, 0, () => { Suspend(); PrimaryHand = PrimaryHand == XRNode.RightHand ? XRNode.LeftHand : XRNode.RightHand; triggerWasDown = true; });
             AddButton(panel, "Escape / cancel", 0, 1, () => { Drawing.Cancel(); Key("ESC"); });
             AddButton(panel, "Enter", 1, 1, () => Key("ENTER"));
@@ -709,6 +828,14 @@ namespace SpatialModeling
             AddButton(panel, "Copy Ctrl+C", 4, 3, () => Shortcut("C"));
             AddButton(panel, "Paste Ctrl+V", 5, 3, () => Shortcut("V"));
             feedback = MakeText(panel, new Vector2(0, -155), new Vector2(1780, 160), "", 25);
+            actionFeedback = MakeText(panel, new Vector2(0, 355), new Vector2(1780, 160), "", 28);
+            actionFeedback.gameObject.AddComponent<Outline>().effectColor = Color.black;
+            mouseOptionsPanel = MakePanel("Optional mouse modes", new Vector2(0, -200), new Vector2(1840, 320));
+            AddButton(mouseOptionsPanel, "Mouse left", 0, 0, () => { ReleaseNative(); questControls = false; mouseButton = "left"; });
+            AddButton(mouseOptionsPanel, "Mouse right", 1, 0, () => { ReleaseNative(); questControls = false; mouseButton = "right"; });
+            AddButton(mouseOptionsPanel, "Mouse middle", 2, 0, () => { ReleaseNative(); questControls = false; mouseButton = "middle"; });
+            AddButton(mouseOptionsPanel, "Close mouse options", 6, 0, () => mouseOptionsShown = false);
+            mouseOptionsPanel.gameObject.SetActive(false);
             // A temporary keyboard overlays the lower preview while typing. It
             // must not be placed metres below the screen (possibly below floor).
             keyboard = MakePanel("P2.5 keyboard", new Vector2(0, -200), new Vector2(1840, 640));
@@ -946,8 +1073,15 @@ namespace SpatialModeling
             var rect = go.GetComponent<RectTransform>(); rect.SetParent(parent, false);
             rect.sizeDelta = new Vector2(width - 8, 64);
             rect.anchoredPosition = new Vector2((col - (columns - 1) * .5f) * width, parent.rect.height * .5f - 48 - row * 72);
-            go.GetComponent<Image>().color = new Color(.08f, .24f, .34f, 1);
-            var button = go.GetComponent<Button>(); button.onClick.AddListener(() => action()); buttons.Add(button);
+            go.GetComponent<Image>().color = Color.white;
+            var button = go.GetComponent<Button>(); button.onClick.AddListener(() =>
+            {
+                pulsedButton = button; pulseUntil = Time.unscaledTime + .35f;
+                lastControlAction = "Pressed: " + label;
+                Debug.Log("P25_CONTROL_ACTION " + (parent == keyboard ? "Keyboard key" : label));
+                action(); RefreshControlFeedback();
+            }); buttons.Add(button);
+            var colors = button.colors; colors.normalColor = new Color(.08f, .24f, .34f); colors.highlightedColor = colors.selectedColor = colors.normalColor; button.colors = colors;
             MakeText(rect, Vector2.zero, rect.sizeDelta, label, columns == 12 ? 22 : 25);
             return button;
         }

@@ -22,6 +22,9 @@ namespace SpatialModeling
         public long LastAgeMs { get; private set; }
         public bool HasImage => image != null && image.enabled;
         public float Magnification { get; private set; } = 1f;
+        public bool PositionLocked { get; private set; }
+        public void TogglePositionLock() { PositionLocked = !PositionLocked; Debug.Log("BLENDER_SCREEN_LOCK locked=" + PositionLocked); }
+        public static bool CanGrabScreen(bool locked) => !locked;
         public static string CaptureBaseUrl
         {
             get
@@ -99,6 +102,7 @@ namespace SpatialModeling
             magnify.AddBinding("<Keyboard>/z");
             magnify.performed += context => { if (!(context.control?.device is Keyboard && PreviewInteraction.BlocksDesktopShortcuts)
                 && Visible && (interaction==null || !interaction.IsHolding)
+                && !(PreviewInteraction.Current?.OwnsControllerButtons ?? false)
                 && !(PreviewInteraction.Current?.CapturesScroll ?? false)) CycleMagnification(); };
             magnify.Enable();
             panAction = new InputAction("Pan magnified Blender screen", InputActionType.Value);

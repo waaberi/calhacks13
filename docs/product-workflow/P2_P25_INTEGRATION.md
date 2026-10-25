@@ -90,11 +90,32 @@ No PR change or main push/merge is authorized.
 
 ## Short focused physical trial
 
+Controller input now defaults to Quest controls. Use **Lock screen position** in
+the preview controls, or **Settings -> Lock Blender screen**, before right-click
+testing. The default remains unlocked so accepted P2 grip movement is available.
+With the screen locked and the selected pointer over its live image:
+
+- Front/index trigger: left-click; hold and move the pointer to drag.
+- Side grip: right-click; it cannot grab the locked screen.
+- Tilt the stick: wheel scrolling; Blender's 3D viewport interprets vertical wheel
+  as zoom. Hold the stick pressed while tilting to pan (balanced Shift/middle).
+- Unlock to restore side-grip screen arrangement. Existing physical scale,
+  room/plane controls and model arrangement remain available.
+
+Every preview control flashes on a registered press. Toggles retain an ON label
+and green state; feedback above the controls identifies the last press and current
+blocker. Press acknowledgement does not imply that a native operation succeeded.
+Keyboard/modifiers, drawing tools and window chooser show their active states.
+Optional old mouse modes remain under **Mouse options**; **Controller controls**
+returns to the Quest mapping. Magnify remains available through its screen button
+and the accepted stick shortcut outside native input ownership.
+
 1. Wear the headset at startup: workspace in front, passthrough/room fit stable.
    Move/release the screen and model with each controller; briefly confirm scale,
    a vertical plane's front creation, and one existing room alignment. Do not
    repeat the accepted menu walkthrough.
-2. Focus Blender. Use a real button, drag a native control, scroll a panel, type
+2. Enable Blender input, lock the screen, and use the controller mapping above.
+   Use a real button, drag a native control, scroll a panel, type
    and modify a numeric field, and use a modifier shortcut. Watch a deliberately
    changing native viewport for live, clear capture.
 3. Open a native menu and a dialog, then a nested chooser if available. Close or

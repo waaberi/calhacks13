@@ -1,5 +1,35 @@
 # Integrated P2/P2.5 software result
 
+## Controller mapping, button feedback and explicit screen lock candidate
+
+The wearer reports that controls other than Enable input appear ineffective and
+give no visible press/state feedback. The direct controller path invoked onClick
+without Unity pointer-state events, so ordinary Button transitions did not show
+the trigger press. The repair explicitly flashes registered presses, retains
+green/ON states for toggles/modifiers/tools, and displays last-press plus blocker
+feedback above the controls. It does not label a requested native edit as applied.
+
+Human-specified mapping: front trigger left-click; side grip right-click while
+the screen is explicitly locked; stick tilt wheel/zoom; hold stick pressed and
+tilt for pan. Temporary Shift/middle pan input is balanced on release, UI handoff,
+tracking loss and transport cleanup. Locked native routing consumes the side grip
+before screen grabbing; unlocked default retains accepted P2 movement. Lock is
+available in preview controls and workspace Settings. All old mouse modes remain
+under optional Mouse options; keyboard, shortcuts, modeling/numeric and direct
+drawing functionality remain. Input freshness, authority and release-ACK gates
+are unchanged.
+
+Actual controller-ray/UI tests cover keyboard toggle/press acknowledgement,
+held-trigger edges, lock pose preservation, front/side mouse down-up, pan cleanup,
+scroll and tracking interruption. The cumulative Windows build and final P2 gates
+pass with zero errors/all37 required markers, exact34 accepted XR flags and actual
+Unity HTTP7+2+9.61 compiler inputs/154metas match; generated SDK settings were
+archived/inspected/restored. Native/helper sources are byte-unchanged from the
+151-helper-tested clarity revision. Physical results are pending. The separate human-authorized teammate
+headset test owns the runtime: verified clarity Player65848 was closed gracefully;
+all Blender/helper processes and unsaved work were preserved. This candidate is
+prepared without launch or OS input during that test. No PR or main changes.
+
 ## Human-requested VR readability candidate
 
 The wearer requested clearer streamed Blender text. The clarity candidate uses

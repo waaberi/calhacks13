@@ -27,8 +27,56 @@ public static class P25WindowUiChecks
     static void Check(bool ok, string why) { if (!ok) throw new Exception("P25_WINDOW_UI: " + why); }
     public static void Run()
     {
-        Chooser(); SelectionSequence(); Handoff(); Revocation(); InputIndicator();
+        Chooser(); SelectionSequence(); Handoff(); Revocation(); InputIndicator(); ControllerControls();
         Debug.Log("P25_WINDOW_UI_CHECK PASS actual chooser/pages/stale-choice/bounded-refresh/no-image-recovery/current-sequence/stamped-handoff/lease-retention/typed-staleness/mode-exit/overlay; actual OS popup capture unverified");
+    }
+
+    static void ControllerControls()
+    {
+        using var f = new Fixture();
+        var keyboardButton = f.Button("Keyboard");
+        var buttonPoint = keyboardButton.transform.position;
+        var buttonRay = new Ray(buttonPoint - Vector3.forward * 2, Vector3.forward);
+        f.Preview.RouteControllerHand(XRNode.RightHand, buttonRay, false, false, Vector2.zero, 3, out _, false);
+        Check(f.Preview.RouteControllerHand(XRNode.RightHand, buttonRay, true, false, Vector2.zero, 3, out _, false)
+            && (bool)Get(f.Preview, "keyboardShown") && keyboardButton.GetComponentInChildren<Text>().text.Contains("ON")
+            && keyboardButton.colors.normalColor.r > .9f, "actual trigger ray opens keyboard and visibly acknowledges press plus persistent ON state");
+        f.Preview.RouteControllerHand(XRNode.RightHand, buttonRay, true, false, Vector2.zero, 3, out _, false);
+        Check((bool)Get(f.Preview, "keyboardShown"), "held trigger never repeatedly toggles a control");
+        f.Preview.RouteControllerHand(XRNode.RightHand, buttonRay, false, false, Vector2.zero, 3, out _, false);
+        f.Click("Keyboard"); f.Tick(); f.Events.Clear();
+        Check(!(bool)Get(f.Preview, "keyboardShown"), "second fresh click closes keyboard");
+        var ray = new Ray(f.Image.transform.position - Vector3.forward * 2, Vector3.forward);
+        void Route(bool trigger, bool grip, bool stick, Vector2 axis) => f.Preview.RouteControllerHand(XRNode.RightHand, ray, trigger, grip, axis, 3, out _, stick);
+        Route(false, false, false, Vector2.zero); Route(true, false, false, Vector2.zero); Route(false, false, false, Vector2.zero);
+        Check(f.Events.Any(e => (string)e["type"] == "button" && (string)e["button"] == "left" && (string)e["action"] == "down")
+            && f.Events.Any(e => (string)e["button"] == "left" && (string)e["action"] == "up"), "front trigger maps to left down/up through real RawImage ray routing");
+        f.Events.Clear();
+        Check(!f.Preview.RouteControllerHand(XRNode.RightHand, ray, false, true, Vector2.zero, 3, out _, false) && f.Events.Count == 0,
+            "unlocked side grip remains P2 arrangement input");
+        Route(false, false, false, Vector2.zero);
+        var position = f.Screen.Placement.position; var rotation = f.Screen.Placement.rotation;
+        f.Click("Lock screen position");
+        Check(f.Screen.PositionLocked && !BlenderScreen.CanGrabScreen(true) && BlenderScreen.CanGrabScreen(false)
+            && f.Screen.Placement.position == position && f.Screen.Placement.rotation == rotation,
+            "explicit lock disables screen grabbing without writing its pose; default unlocked movement remains available");
+        Check(f.Preview.RouteControllerHand(XRNode.RightHand, ray, false, true, Vector2.zero, 3, out _, false),
+            "locked side-grip native route is consumed before WorkspaceInteraction can start a screen grab");
+        Route(false, false, false, Vector2.zero);
+        Check(f.Events.Any(e => (string)e["button"] == "right" && (string)e["action"] == "down")
+            && f.Events.Any(e => (string)e["button"] == "right" && (string)e["action"] == "up"), "locked side grip maps to right down/up");
+        f.Events.Clear(); Route(false, false, true, Vector2.right); Route(false, false, true, Vector2.up); Route(false, false, false, Vector2.zero);
+        Check(f.Events.Any(e => (string)e["key"] == "SHIFT" && (string)e["action"] == "down")
+            && f.Events.Any(e => (string)e["button"] == "middle" && (string)e["action"] == "down")
+            && f.Events.Any(e => (string)e["button"] == "middle" && (string)e["action"] == "up")
+            && f.Events.Any(e => (string)e["key"] == "SHIFT" && (string)e["action"] == "up")
+            && !f.Events.Any(e => (string)e["type"] == "scroll"), "hold-stick pan balances temporary Shift/middle and cannot also send zoom scroll");
+        f.Events.Clear(); Set(f.Preview, "nextScroll", 0f); Route(false, false, false, Vector2.up);
+        Check(f.Events.Any(e => (string)e["type"] == "scroll"), "stick tilt sends wheel only while pointing at Blender");
+        f.Events.Clear(); Route(false, false, true, Vector2.zero); f.Preview.TrackingLost(XRNode.RightHand); f.Tick();
+        Check(f.Events.Any(e => (string)e["type"] == "release") && !(bool)Get(f.Preview, "mouseHeld") && !(bool)Get(f.Preview, "panShift")
+            && (bool)Get(f.Preview, "endAfterRelease") && f.Sent.Count == 0, "tracking interruption releases temporary pan input and retains native lease through cleanup ACK");
+        Debug.Log("P225_CONTROLLER_UI_CHECK PASS actual_ray_button_feedback_toggle_edges_lock_pose_front_left_side_right_stick_pan_scroll_tracking_cleanup");
     }
 
     static void InputIndicator()

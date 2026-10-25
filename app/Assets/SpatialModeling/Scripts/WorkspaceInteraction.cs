@@ -214,10 +214,10 @@ namespace SpatialModeling
             // mapping and P2 placement controls keep their original writers.
             var preview = PreviewInteraction.Current;
             float previewDistance = 0;
-            bool previewRouted = preview != null && preview.RouteHand(h.node, ray, h.armed && triggerNow,
+            bool previewRouted = preview != null && preview.RouteControllerHand(h.node, ray, h.armed && triggerNow,
                 gripNow || h.target != null || (table != null && table.IsPointing), axis,
                 Mathf.Min(Mathf.Min(hitPart != null ? partDistance : 4f, tableHit ? tableDistance : 4f),
-                    level != null ? levelDistance : 4f), out previewDistance);
+                    level != null ? levelDistance : 4f), out previewDistance, stickNow);
             if (previewRouted)
             {
                 distance = previewDistance;
@@ -227,7 +227,7 @@ namespace SpatialModeling
 
             if (h.target != null)
             {
-                if (!gripNow || (h.target == screen.Placement && !screen.Visible)
+                if (!gripNow || (h.target == screen.Placement && (!screen.Visible || !BlenderScreen.CanGrabScreen(screen.PositionLocked)))
                     || (table != null && h.target == table.Menu && !table.Menu.gameObject.activeInHierarchy)) Release(h);
                 else
                 {
@@ -281,7 +281,8 @@ namespace SpatialModeling
             {
                 bool button = screen.HoverController(ray, triggerPressed);
                 Instruction = button ? "Trigger: select button" : "Grip: move screen · stick while held: distance / size";
-                if (gripPressed && (other?.target==screen.Placement || !Conflicts(other?.target, screen.Placement))) Begin(h, screen.Placement, null, aim, ray.GetPoint(distance));
+                if (gripPressed && BlenderScreen.CanGrabScreen(screen.PositionLocked)
+                    && (other?.target==screen.Placement || !Conflicts(other?.target, screen.Placement))) Begin(h, screen.Placement, null, aim, ray.GetPoint(distance));
             }
             else if (hitPart != null)
             {
