@@ -248,20 +248,26 @@ def _describe_lan(listener):
     return f"Listening on {where}, {how}"
 
 
+MAINCLOUD = "https://maincloud.spacetimedb.com"
+
+
 def _store(prefs):
-    """Where participants and leases live: memory, copied to SpacetimeDB if the preference
-    names a server. The host's SpacetimeDB token stays in Blender's config folder."""
-    url = prefs.spacetime_url.strip() if prefs else ""
-    if not url:
+    """Where participants and leases live: memory, copied to SpacetimeDB on this PC or on
+    Maincloud, as the preferences say. The host's SpacetimeDB tokens stay in Blender's config
+    folder, one per server, so switching back and forth keeps the host identity on each."""
+    if prefs is not None and prefs.spacetime_where == "CLOUD":
+        url, database, name = MAINCLOUD, prefs.cloud_database.strip(), "spacetime-host-token-maincloud"
+    else:
+        url = prefs.spacetime_url.strip() if prefs else ""
+        database = (prefs.spacetime_database.strip() if prefs else "") or "spatial-modeling"
+        name = "spacetime-host-token"
+    if not url or not database:
         return None  # session.Session's own MemoryStore
     folder = bpy.utils.user_resource("CONFIG", path=__package__, create=True)
-    token = os.path.join(folder, "spacetime-host-token")
-    database = prefs.spacetime_database.strip() or "spatial-modeling"  # spacetime/spacetime.json
     # A call to Maincloud takes about 300 ms (a new TLS connection each time); it runs on the
     # mirror thread, so a longer timeout never holds up Blender.
-    local = url.startswith(("http://127.", "http://localhost"))
-    connect = functools.partial(session_store.SpacetimeStore, token, url=url,
-                                database=database, timeout=1.0 if local else 5.0)
+    connect = functools.partial(session_store.SpacetimeStore, os.path.join(folder, name), url=url,
+                                database=database, timeout=5.0 if url == MAINCLOUD else 1.0)
     return session_store.MirroredStore(connect)
 
 
@@ -269,7 +275,12 @@ def spacetime_status():
     store = _session.store if _session is not None else None
     if isinstance(store, session_store.MirroredStore):
         return store.status
-    return "Off" if _session is not None else "Stopped"
+    if _session is None:
+        return "Stopped"
+    prefs = _prefs()
+    if prefs is not None and prefs.spacetime_where == "CLOUD" and not prefs.cloud_database.strip():
+        return "Off: set the Maincloud database name"
+    return "Off"
 
 
 def _voice():
