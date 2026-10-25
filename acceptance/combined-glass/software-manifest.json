@@ -1,12 +1,12 @@
 {
   "state": "GLASS_COMBINED_SOFTWARE_VERIFIED_UNLAUNCHED",
-  "checked_at_utc": "2026-10-25T04:03:21.649308+00:00",
+  "checked_at_utc": "2026-10-25T04:21:11.782626+00:00",
   "branch": "codex/talia-combined-glass-ui",
-  "application_source": "b7d72879a1091bc9a133d6ca4a0c433dc582efbf",
-  "package_source": "b7d72879a1091bc9a133d6ca4a0c433dc582efbf",
+  "application_source": "d0f2ca506d2f37f6ed08baca988d063bdf9db454",
+  "package_source": "d0f2ca506d2f37f6ed08baca988d063bdf9db454",
   "combined_base": "f59f7ae7f6b0d59fd485f694c59ee94048174ae5",
   "glass_source": "62dc3269e385c7480e0be0471564611bd73ba48d",
-  "assembly_sha256": "ce18f86541ce4bdeb5805afce6ad6e84db4e3dfe804dabf5fc8b62fee77aa4d9",
+  "assembly_sha256": "2d48f93c557b68530070d92ad8adcc79300a9a0dd5abad1a9f62e1602c149c61",
   "exe_sha256": "001aeebfb92718f8b49f0c0e0a03e313c54669552b08e952b2fee3ddd143683a",
   "mandatory_markers": [
     "P25_MAPPING_CHECK PASS",
@@ -58,7 +58,10 @@
     "P3_GLASS_RENDER_AIM_CHECK PASS",
     "COMBINED_GLASS_CHECK PASS",
     "P3_GLASS_BUILD_RESULT Succeeded",
-    "GLASS_EVENT_RAYCAST_CHECK PASS"
+    "GLASS_EVENT_RAYCAST_CHECK PASS",
+    "GLASS_IDLE_GEOMETRY_CHECK PASS",
+    "GLASS_GRID_CHECK PASS",
+    "GLASS_STEREO_GPU_CHECK PASS"
   ],
   "missing_markers": [],
   "http_cases": [
@@ -69,12 +72,12 @@
   "helper_tests": 159,
   "ruff": "PASS",
   "theme_audit": "PASS",
-  "compiler_inputs_verified": 351,
+  "compiler_inputs_verified": 353,
   "matching_packaged_python_sources": 41,
   "private_bootstrap": {
     "passed": true,
     "exit": 0,
-    "host_port": 8939,
+    "host_port": 8969,
     "cad_available": true,
     "private_ui_scale": 1.5,
     "glass_properties": 96,
@@ -217,6 +220,7 @@
     "actual rendered glass voice backing obscured foreground text, fixed explicit sorting and added image pixel assertion",
     "attempted reuse of existing HTTP output path correctly refused, final tests use fresh output names",
     "private bootstrap theme import wrote bytecode into the package, fixed temporary embedded-Python bytecode suppression; repeated full bootstrap confirms package immutability",
-    "first physical-startup glass-v3 failed with repeated uGUI IndexedSet.GetEnumerator NotImplementedException in GlassGraphicRaycaster; Player92152 closed normally, indexed iteration fix with actual EventSystem/registry/rounded-corner/group/inactive/click regression passes"
+    "first physical-startup glass-v3 failed with repeated uGUI IndexedSet.GetEnumerator NotImplementedException in GlassGraphicRaycaster; Player92152 closed normally, indexed iteration fix with actual EventSystem/registry/rounded-corner/group/inactive/click regression passes",
+    "human physically rejected v4 as extremely choppy/glitching, misaligned buttons and bugged controllers; Player62708 closed normally; stability correction verified with dirty-callback, balanced full control grid, real stereo GPU eye layers and raw-device-body/held-contact tests; physical acceptance remains pending"
   ]
 }
