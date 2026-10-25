@@ -90,6 +90,6 @@ namespace SpatialModeling
             return target.GetComponent<SettingsGearGraphic>()!=null?RoundedGlassImage.Contains(rect.rect,p,rect.rect.width*.5f):Contains(rect,p);
         }
         public static void State(Button button,bool selected=false,bool error=false,bool pressed=false)
-        { if(button!=null) { var state=StyleAction(button.gameObject);state.Selected=selected;state.Error=error;if(pressed) state.Press();state.Refresh(); } }
+        { if(button!=null) { var state=button.GetComponent<GlassControl>()??StyleAction(button.gameObject);state.Selected=selected;state.Error=error;if(pressed) state.Press();state.Refresh(); } }
     }
 }

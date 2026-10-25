@@ -801,13 +801,13 @@ namespace SpatialModeling
                 mouseOptionsShown = !mouseOptionsShown;
                 if (mouseOptionsShown) keyboardShown = numbersShown = shortcutsShown = windowsShown = modelToolsShown = false;
             });
-            AddButton(panel, "Windows / dialogs", 6, 0, OpenWindows);
             AddButton(panel, "Escape / cancel", 0, 1, () => { Drawing.Cancel(); Key("ESC"); });
             AddButton(panel, "Enter", 1, 1, () => Key("ENTER"));
             // Input routing only. Native tools/history/file actions stay in Blender.
             AddButton(panel, "Draw in VR", 2, 1, BeginSpatial);
             AddButton(panel, "Full keyboard", 3, 1, () => OpenKeyboard(true));
-            AddButton(panel, "Next window", 4, 1, NextWindow);
+            AddButton(panel, "Windows / dialogs", 4, 1, OpenWindows);
+            AddButton(panel, "Next window", 5, 1, NextWindow);
             feedback = MakeText(panel, new Vector2(0, -62), new Vector2(1780, 100), "", 25);
             actionFeedback = MakeText(panel, new Vector2(0, -158), new Vector2(1780, 80), "", 22);
             mouseOptionsPanel = MakePanel("Optional mouse modes", new Vector2(0, -200), new Vector2(1840, 320));
@@ -832,19 +832,19 @@ namespace SpatialModeling
                 string key = names[i]; AddButton(keyboard, key, i, 4, () =>
                 { if (key == "CTRL" || key == "ALT" || key == "SHIFT") Modifier(key); else Key(key); }, 136, 13);
             }
-            AddButton(keyboard, "Caps", 0, 5, () => shiftText = !shiftText, 145, 12);
-            AddButton(keyboard, "Close", 1, 5, () => keyboardShown = false, 145, 12);
+            AddButton(keyboard, "Caps", 0, 5, () => shiftText = !shiftText, 136, 13);
+            AddButton(keyboard, "Close", 1, 5, () => keyboardShown = false, 136, 13);
             AddButton(keyboard, "Double click", 2, 5, () =>
             {
                 if (!inputEnabled || !Ready()) return;
                 var e = At("button", lastPoint); e["button"] = "left"; e["action"] = "double_click"; Enqueue(e);
-            }, 145, 12);
-            AddButton(keyboard, "Home", 3, 5, () => Key("HOME"), 145, 12);
-            AddButton(keyboard, "End", 4, 5, () => Key("END"), 145, 12);
+            }, 136, 13);
+            AddButton(keyboard, "Home", 3, 5, () => Key("HOME"), 136, 13);
+            AddButton(keyboard, "End", 4, 5, () => Key("END"), 136, 13);
             string[] extraKeys = { "DECIMAL", "NUMPAD0", "NUMPAD1", "NUMPAD3", "NUMPAD7", "PAGEUP", "PAGEDOWN" };
             for (int i = 0; i < extraKeys.Length; i++)
-            { string key = extraKeys[i]; AddButton(keyboard, key, i + 5, 5, () => Key(key), 145, 12); }
-            AddButton(keyboard, "More keys", 0, 6, () => SetKeyboardPage(true), 145, 12);
+            { string key = extraKeys[i]; AddButton(keyboard, key, i + 5, 5, () => Key(key), 136, 13); }
+            AddButton(keyboard, "More keys", 0, 6, () => SetKeyboardPage(true), 136, 13);
             basicKeys.AddRange(keyboard.GetComponentsInChildren<Button>(true));
             for (int i = 0; i < PreviewShortcutCatalog.FullKeyboardKeys.Count; i++)
             {
@@ -1052,7 +1052,7 @@ namespace SpatialModeling
             var go = new GameObject(label, typeof(RectTransform), typeof(RoundedGlassImage), typeof(Button));
             var rect = go.GetComponent<RectTransform>(); rect.SetParent(parent, false);
             rect.sizeDelta = new Vector2(width - 8, 64);
-            int layoutColumns=columns;
+            int layoutColumns=parent==panel?6:columns;
             rect.anchoredPosition = new Vector2((col - (layoutColumns - 1) * .5f) * width, parent.rect.height * .5f - 48 - row * 72);
             go.GetComponent<Image>().color = Color.white;
             var button = go.GetComponent<Button>(); button.onClick.AddListener(() =>
@@ -1065,7 +1065,7 @@ namespace SpatialModeling
             }); buttons.Add(button);
             GlassTheme.StyleAction(go);
             string caption=label=="BACKSPACE"?"Backspace":label;
-            MakeText(rect, Vector2.zero, rect.sizeDelta, caption, columns >= 12 ? 22 : 25);
+            MakeText(rect, Vector2.zero, rect.sizeDelta-new Vector2(24,8), caption, columns >= 12 ? 22 : 25);
             return button;
         }
         static Text MakeText(Transform parent, Vector2 position, Vector2 size, string value, int fontSize)

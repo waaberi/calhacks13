@@ -21,7 +21,7 @@ public static class GlassControllerChecks
         InputSystem.RegisterLayout<UnityEngine.XR.OpenXR.Input.PoseControl>("GlassLegacyPose");
         try{foreach(string format in new[]{"Current","Legacy"})Format(format);}
         finally{InputSystem.RemoveLayout("GlassCurrentPose");InputSystem.RemoveLayout("GlassLegacyPose");}
-        Debug.Log("P3_GLASS_RENDER_AIM_CHECK PASS actual_BeforeRender RenderHand accepted_stabilized_ray hands=2 formats=2 rapid_samples=480 loss_release recenter no_extra_visual_filter");
+        Debug.Log("P3_GLASS_RENDER_AIM_CHECK PASS actual_BeforeRender RenderHand raw_device_body independent_accepted_ray hands=2 formats=2 rapid_samples=480 loss_release recenter no_visual_filter held_contact_decoupled");
     }
     static void Format(string format)
     {
@@ -64,11 +64,25 @@ public static class GlassControllerChecks
                     var expected=WorkspaceInteraction.ToWorldPose(origin.transform,local);var visual=(GameObject)Get(hand,"visual");var ray=(LineRenderer)Get(hand,"ray");
                     var raw=(Transform)Get(hand,"rawAim");var stable=(Transform)Get(hand,"stableAim");
                     Check(Vector3.Distance(raw.position,expected.position)<.000001f&&Quaternion.Angle(raw.rotation,expected.rotation)<.03f,"raw same-device sample and origin conversion preserved");
-                    Check(visual.activeSelf&&Vector3.Distance(visual.transform.position,stable.position)<.000001f,"body follows accepted stabilized ray without another filter");
-                    Check(Vector3.Distance(ray.GetPosition(0),stable.position)<.000001f,"actual body and accepted ray origin agree");
-                    Check(Vector3.Angle(visual.transform.forward,ray.GetPosition(1)-ray.GetPosition(0))<.03f,"actual ray stays coaxial during rapid turns");
+                    var body=(Transform)Get(hand,"body");
+                    Check(visual.activeSelf&&Vector3.Distance(body.position,expected.position)<.000001f&&Quaternion.Angle(body.rotation,expected.rotation)<.03f,"body uses current same-device aim without filtering or hover-contact rotation");
+                    var gripControl=hand==left?a["devicePose"]:b["devicePose"];Check(WorkspaceInteraction.TryReadControllerPose(gripControl,out var gripLocal),"paired grip readable");
+                    var gripWorld=WorkspaceInteraction.ToWorldPose(origin.transform,gripLocal);
+                    Check(Vector3.Distance(visual.transform.position,gripWorld.position)<.000001f,"accepted grip-root tracking preserved");
+                    Check(Vector3.Distance(ray.GetPosition(0),stable.position)<.000001f,"accepted pointer filter is independent of decorative body");
+
                 }
             }
+            var contactTarget=new GameObject("held contact must not steer body");contactTarget.transform.SetParent(owner.transform,false);
+            contactTarget.transform.SetPositionAndRotation(new Vector3(2,.5f,1),Quaternion.Euler(35,71,20));
+            left.GetType().GetField("target").SetValue(left,contactTarget.transform);left.GetType().GetField("localContact").SetValue(left,new Vector3(.2f,.1f,.3f));Set(interaction,"pairTarget",contactTarget.transform);
+            typeof(WorkspaceInteraction).GetMethod("RenderHand",Private).Invoke(interaction,new object[]{left,Time.realtimeSinceStartupAsDouble});
+            Check(WorkspaceInteraction.TryReadControllerPose(a["pointer"],out var heldLocal),"held device aim readable");
+            var heldAim=WorkspaceInteraction.ToWorldPose(origin.transform,heldLocal);var heldBody=(Transform)Get(left,"body");
+            Check(Vector3.Distance(heldBody.position,heldAim.position)<.000001f&&Quaternion.Angle(heldBody.rotation,heldAim.rotation)<.03f,"held contact cannot pull or turn the physical controller body");
+            var heldRay=(LineRenderer)Get(left,"ray");Check(Vector3.Distance(heldRay.GetPosition(1),contactTarget.transform.TransformPoint(new Vector3(.2f,.1f,.3f)))<.000001f,"accepted held-contact ray is retained independently");
+            left.GetType().GetField("target").SetValue(left,null);Set(interaction,"pairTarget",null);
+            UnityEngine.Object.DestroyImmediate(contactTarget);
             Pose(a["pointer"],Vector3.zero,Quaternion.identity,false);
             var held=new GameObject("held fixture");left.GetType().GetField("target").SetValue(left,held.transform);
             Set(interaction,"renderedFrame",-1);typeof(WorkspaceInteraction).GetMethod("BeforeRender",Private).Invoke(interaction,null);

@@ -4,6 +4,7 @@ public static class GlassBuild
     public static void Windows()
     {
         GlassChecks.Run();
+        GlassStabilityChecks.Run();
         GlassControllerChecks.Run();
         GlassEventRaycastChecks.Run();
         P25Build.Windows();

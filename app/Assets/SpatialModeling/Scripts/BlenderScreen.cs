@@ -298,7 +298,7 @@ namespace SpatialModeling
         public void ClearControllerHover()
         {
             if (buttons == null) return;
-            if (controllerHover) foreach (var button in buttons) GlassTheme.StyleAction(button.gameObject);
+            if (controllerHover) foreach (var button in buttons) button.GetComponent<GlassControl>()?.ClearHover();
             controllerHover = false;
         }
 

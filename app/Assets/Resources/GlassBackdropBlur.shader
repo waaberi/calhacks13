@@ -33,6 +33,9 @@ Shader "SpatialModeling/GlassBackdropBlur"
             HLSLPROGRAM
             #pragma vertex Vert
             #pragma fragment Horizontal
+            #pragma target 3.5
+            #pragma multi_compile_instancing
+            #pragma multi_compile _ STEREO_INSTANCING_ON STEREO_MULTIVIEW_ON
             ENDHLSL
         }
         Pass
@@ -40,6 +43,9 @@ Shader "SpatialModeling/GlassBackdropBlur"
             HLSLPROGRAM
             #pragma vertex Vert
             #pragma fragment Vertical
+            #pragma target 3.5
+            #pragma multi_compile_instancing
+            #pragma multi_compile _ STEREO_INSTANCING_ON STEREO_MULTIVIEW_ON
             ENDHLSL
         }
         Pass
@@ -47,6 +53,9 @@ Shader "SpatialModeling/GlassBackdropBlur"
             HLSLPROGRAM
             #pragma vertex Vert
             #pragma fragment Copy
+            #pragma target 3.5
+            #pragma multi_compile_instancing
+            #pragma multi_compile _ STEREO_INSTANCING_ON STEREO_MULTIVIEW_ON
             ENDHLSL
         }
     }

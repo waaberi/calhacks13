@@ -36,7 +36,7 @@ namespace SpatialModeling
             public XRNode node;
             public GameObject visual;
             public LineRenderer ray;
-            public Transform tip;
+            public Transform tip,body;
             public InputAction gripPose, aimPose;
             public string poseSource;
             public InputControl previousGripControl;
@@ -91,7 +91,7 @@ namespace SpatialModeling
             var h = new Hand { node = node, color = color };
             h.visual = new GameObject(usage + " tracked controller");
             h.visual.transform.SetParent(transform, false);
-            GlassController.Create(h.visual.transform,node);
+            h.body=GlassController.Create(h.visual.transform,node).transform;
             var block=new MaterialPropertyBlock();block.SetColor("_BaseColor",color);block.SetColor("_Color",color);
             var rayObject = new GameObject(usage + " aim ray", typeof(LineRenderer));
             rayObject.transform.SetParent(h.visual.transform, false);
@@ -432,6 +432,7 @@ namespace SpatialModeling
             }
             h.visual.SetActive(true);
             h.visual.transform.SetPositionAndRotation(hand.position, hand.rotation);
+            if(h.body!=null)h.body.SetPositionAndRotation(aim.position,aim.rotation);
             h.rawAim.SetPositionAndRotation(aim.position, aim.rotation);
             if (!h.aimInitialized)
             {
@@ -478,9 +479,8 @@ namespace SpatialModeling
             // drawing an independently jittering endpoint across the held item.
             var endpoint = h.target != null ? h.target.TransformPoint(h.localContact)
                 : aim.position + aim.rotation * Vector3.forward * h.pointerDistance;
-            // Appearance follows the accepted stabilized ray; input/grab mapping is unchanged.
-            var forward=endpoint-aim.position;
-            h.visual.transform.SetPositionAndRotation(aim.position,forward.sqrMagnitude>1e-10f ? Quaternion.LookRotation(forward,aim.rotation*Vector3.up) : aim.rotation);
+            // Controller body uses current same-device aim; the accepted ray/grab
+            // filter remains independent of decorative geometry and held contact.
             h.ray.SetPosition(1, endpoint);
             h.tip.position = endpoint;
             h.tip.gameObject.SetActive(h.hasHit || h.target != null);
