@@ -525,6 +525,7 @@ public static class P25WindowUiChecks
         yield return HttpChoice(false); yield return HttpChoice(true); yield return HttpChoice(false, 100);
         yield return HttpFocusDenied(); yield return HttpBusy();
         yield return HttpPointerOcclusion();
+        yield return HttpMenuReturnBusy();
     }
     static void TickHttp()
     {
@@ -676,6 +677,41 @@ public static class P25WindowUiChecks
             && (bool)Get(f.Preview, "triggerWasDown") && f.Sent.Count == 0,
             "busy consumed no action or sequence: only cleanup uses the resynced sequence; a new trigger gesture is required");
         cases.Add(new JObject { ["name"] = "busy_collision_same_session_release_ack_no_action_replay", ["passed"] = true });
+    }
+
+    static IEnumerator HttpMenuReturnBusy()
+    {
+        using var server = new FakeServer(true, busyOnce: true);
+        Environment.SetEnvironmentVariable("CALHACKS_CAPTURE_PORT", server.Port.ToString());
+        using var f = new Fixture(); f.Preview.BeginModelEditing(); Set(f.Preview, "guideShown", false); server.State(f.State);
+        // Native ownership is granted; the deliberate menu-return focus POST is awaiting the helper ACK.
+        Set(f.Preview, "nativeInputPreferred", true); Set(f.Preview, "nativeMenuReturnPending", true);
+        f.Events.Enqueue(new JObject { ["type"] = "focus" });
+        f.Events.Enqueue(new JObject { ["type"] = "key", ["key"] = "G", ["action"] = "press" });
+        yield return Drive((IEnumerator)Invoke(f.Preview, "SendEvents"), () => server.Posts == 1 && !(bool)Get(f.Preview, "sendingEvent"));
+        Check(!(bool)Get(f.Preview, "nativeMenuReturnPending") && (bool)Get(f.Preview, "nativeInputAutoReleased")
+            && (bool)Get(f.Preview, "windowResuming") && !(bool)Get(f.Preview, "inputEnabled") && f.Events.Count == 0 && f.Sent.Count == 0,
+            "focus429 discards the entire old gesture and clears the image swallowing flag while retaining fresh-press return preference");
+        yield return Drive((IEnumerator)Invoke(f.Preview, "ReadState"), () => f.Transport.Synchronized && !(bool)Get(f.Preview, "readingState"));
+        f.Tick();
+        Check(f.Events.Count == 1 && (string)f.Events.Peek()["type"] == "release", "fresh state schedules only idempotent release after failed menu focus");
+        yield return Drive((IEnumerator)Invoke(f.Preview, "SendEvents"), () => server.Posts == 2 && !(bool)Get(f.Preview, "sendingEvent"));
+        Check((bool)Get(f.Preview, "inputEnabled") && !(bool)Get(f.Preview, "windowResuming")
+            && !(bool)Get(f.Preview, "nativeMenuReturnPending") && server.Kinds.SequenceEqual(new[] { "focus", "release" }),
+            "exact release ACK restores raw2D admission without replaying the rejected focus or queued keyboard command");
+        var ray = new Ray(f.Image.transform.position - Vector3.forward * 2, Vector3.forward);
+        void Route(bool trigger) => f.Preview.RouteControllerHand(XRNode.RightHand, ray, trigger, false, Vector2.zero, 3, out _, false);
+        Route(true);
+        Check(!f.Events.Any(e => (string)e["type"] == "button"), "the held pre-recovery press cannot become a delayed Blender click");
+        Route(false); Route(true);
+        Check(f.Events.Any(e => (string)e["type"] == "button" && (string)e["action"] == "down"),
+            "the recovered image routes a fresh released/new controller click instead of swallowing every menu gesture");
+        yield return Drive((IEnumerator)Invoke(f.Preview, "SendEvents"), () => server.Posts >= 4 && !(bool)Get(f.Preview, "sendingEvent"));
+        var requests = server.Requests.ToArray();
+        Check(server.Error == null && server.Kinds.SequenceEqual(new[] { "focus", "release", "pointer", "button" })
+            && (long)requests[0]["seq"] == 1 && (long)requests[1]["seq"] == 1 && (long)requests[3]["seq"] == 3,
+            "actual helper transport preserves unconsumed busy sequence and delivers only the new native click after cleanup");
+        cases.Add(new JObject { ["name"] = "menu_focus_busy_fresh_state_release_ack_new_click_no_swallow_or_replay", ["passed"] = true });
     }
 
     static IEnumerator HttpPointerOcclusion()

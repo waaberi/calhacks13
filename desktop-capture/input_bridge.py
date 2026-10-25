@@ -81,6 +81,7 @@ class WindowsInput:
             (self.u, "WindowFromPoint", [W.POINT], W.HWND),
             (self.u, "GetAncestor", [W.HWND, W.UINT], W.HWND),
             (self.u, "GetSystemMetrics", [C.c_int], C.c_int),
+            (self.u, "GetCursorPos", [C.POINTER(W.POINT)], W.BOOL),
             (self.u, "GetAsyncKeyState", [C.c_int], C.c_short),
             (self.u, "SendInput", [W.UINT, C.POINTER(NativeInput), C.c_int], W.UINT),
             (self.dwm, "DwmGetWindowAttribute",
@@ -215,8 +216,20 @@ class WindowsInput:
         for event in events:
             kind = event[0]
             record = NativeInput()
-            if kind == "move":
-                _, x, y = event
+            if kind in ("move", "move_delta"):
+                if kind == "move":
+                    _, x, y = event
+                else:
+                    _, dx, dy, hwnd = event
+                    # Blender may wrap its OS cursor while a numeric property
+                    # or native gizmo is dragged. Continue from that real cursor,
+                    # never repeatedly warp back to the old controller contact.
+                    point = W.POINT()
+                    if not self.u.GetCursorPos(C.byref(point)):
+                        raise InputRejected("native_cursor_position_unavailable")
+                    x, y = point.x + dx, point.y + dy
+                    if not self.target_visible(hwnd, x, y):
+                        raise InputRejected("selected_window_occluded_at_drag_destination")
                 left, top = self.u.GetSystemMetrics(76), self.u.GetSystemMetrics(77)
                 width, height = self.u.GetSystemMetrics(78), self.u.GetSystemMetrics(79)
                 if width <= 1 or height <= 1:
@@ -265,6 +278,7 @@ class InputBridge:
         self.process_binding = None
         self.bound_scope = None
         self.target_binding = None
+        self.pointer_intent = None
 
     def frame_geometry(self, selected, width, height, source):
         """Only exact recognized native rectangles can authorize pointer mapping."""
@@ -280,7 +294,7 @@ class InputBridge:
                         "source": name}
         return None
 
-    def _snapshot(self, include_windows=False):
+    def _snapshot(self):
         with self.latest.lock:
             status = dict(self.latest.status)
             jpeg = self.latest.jpeg
@@ -353,9 +367,16 @@ class InputBridge:
                 "frame": status["frame"],
                 "selection": selected, "image": {"width": status["width"], "height": status["height"]},
                 "geometry": geometry, "focused": focused, "next_seq": self.sequence + 1,
-                "windows": self._windows(selected)
-                if include_windows and self.enabled and selected else [],
+                "windows": [],
                 "release_error": self.release_error}
+
+    def _window_context(self):
+        # Called under the bridge lock. The census itself never owns that lock:
+        # a slow desktop window must not discard unrelated legitimate input.
+        with self.latest.lock:
+            selected = dict(self.latest.selected) if self.latest.selected else None
+            return (self.latest.window_scope, self.latest.generation, selected,
+                    self.bound_scope, self.process_binding)
 
     def _windows(self, selected):
         # Closing a selected popup must not strand the user, but a recycled PID
@@ -366,37 +387,59 @@ class InputBridge:
             return []
         return self.native.windows_for(selected, self.process_binding[2])
 
-    def _follow_windows(self):
+    def _follow_candidate(self, context):
         follow = getattr(self.native, "follow_window", None)
-        if not self.enabled or follow is None or not self.process_binding:
+        scope, _, selected, bound_scope, binding = context
+        if not self.enabled or follow is None or not binding or not selected or scope != bound_scope:
+            return None
+        try:
+            return follow(selected, binding[2])
+        except (InputRejected, OSError):
+            return None
+
+    def _follow_windows(self, context, window):
+        if not self.enabled or self._window_context() != context:
             return
-        with self.latest.lock:
-            selected = dict(self.latest.selected) if self.latest.selected else None
-            scope = self.latest.window_scope
-        if not selected or scope != self.bound_scope:
+        _, _, selected, _, binding = context
+        if not binding or not selected or not window or window["hwnd"] == selected["hwnd"]:
             return
         try:
-            window = follow(selected, self.process_binding[2])
-            if not window or window["hwnd"] == selected["hwnd"]:
-                return
             live = self.native.inspect(window)
-            if (live.get("blender_pid", window["pid"]) != self.process_binding[1]
-                    or live.get("blender_process_started", live["process_started"]) != self.process_binding[2]):
+            if (live.get("blender_pid", window["pid"]) != binding[1]
+                    or live.get("blender_process_started", live["process_started"]) != binding[2]
+                    or self._window_context() != context):
                 return
             self._release()
             if self.release_error:
                 return
             window = {**window, "input_process_started": live["process_started"],
-                      "blender_pid": self.process_binding[1], "blender_process_started": self.process_binding[2]}
+                      "blender_pid": binding[1], "blender_process_started": binding[2]}
             self.latest.select(window, preserve_scope=True)
         except (InputRejected, OSError):
             return  # Unavailable or unproven windows never broaden the selection.
 
     def state(self):
         with self.lock:
-            return self._snapshot(include_windows=True)
+            self._snapshot()
+            context = self._window_context()
+        binding = context[4]
+        selected = context[2]
+        windows = []
+        if (self.enabled and selected and binding
+                and binding[1] == selected.get("blender_pid", selected["pid"])):
+            windows = self.native.windows_for(selected, binding[2])
+        with self.lock:
+            fresh = self._snapshot()
+            if binding and self._window_context() == context:
+                try:
+                    if self.native.process_stamp(binding[1]) == binding[2]:
+                        fresh["windows"] = windows
+                except (InputRejected, OSError):
+                    pass
+            return fresh
 
     def _release(self):
+        self.pointer_intent = None
         events = [("button", button, "up") for button in sorted(self.held_buttons)]
         events += [("key", key, "up") for key in sorted(self.held_keys)]
         if not events:
@@ -412,22 +455,35 @@ class InputBridge:
         self.held_buttons.clear()
         self.release_error = False
 
+    def _watchdog_release(self):
+        state = self._snapshot()
+        if (not state["ready"] or not state["focused"]
+                or self.clock() - self.last_event > 1.5 or self.release_error):
+            had_held_input = bool(self.held_keys or self.held_buttons)
+            self._release()
+            if had_held_input and not self.held_keys and not self.held_buttons and not self.release_error:
+                # Rotate only after actual owned-input cleanup, never idle polling.
+                self.session = secrets.token_urlsafe(18)
+                self.sequence = 0
+
     def watchdog(self):
         if not self.lock.acquire(blocking=False):
             return
         try:
-            self._follow_windows()
-            state = self._snapshot()
-            if (not state["ready"] or not state["focused"]
-                    or self.clock() - self.last_event > 1.5 or self.release_error):
-                had_held_input = bool(self.held_keys or self.held_buttons)
-                self._release()
-                if had_held_input and not self.held_keys and not self.held_buttons and not self.release_error:
-                    # The client may still believe its modifier/drag is down.
-                    # Force a fresh logical gesture after watchdog cleanup, but
-                    # never rotate on failed retries or idle/no-held heartbeats.
-                    self.session = secrets.token_urlsafe(18)
-                    self.sequence = 0
+            # Safety cleanup precedes a potentially slow read-only census.
+            self._watchdog_release()
+            if self.release_error:
+                return  # One failed delivery attempt per watchdog pass; retain cleanup ownership.
+            context = self._window_context()
+        finally:
+            self.lock.release()
+        window = self._follow_candidate(context)
+        if not self.lock.acquire(blocking=False):
+            return
+        try:
+            self._follow_windows(context, window)
+            if not self.release_error:
+                self._watchdog_release()
         finally:
             self.lock.release()
 
@@ -455,7 +511,12 @@ class InputBridge:
         py = g["top"] + round(y * (g["height"] - 1))
         if not self.native.target_visible(state["selection"]["hwnd"], px, py):
             raise InputRejected("selected_window_occluded_at_pointer")
-        return ("move", px, py)
+        intent = (px, py)
+        if self.held_buttons and self.pointer_intent is not None:
+            dx, dy = px - self.pointer_intent[0], py - self.pointer_intent[1]
+            event = ("move_delta", dx, dy, state["selection"]["hwnd"]) if dx or dy else None
+            return event, intent
+        return ("move", px, py), intent
 
     def dispatch(self, payload):
         if not self.lock.acquire(blocking=False):
@@ -530,10 +591,13 @@ class InputBridge:
                 self.last_event = self.clock()
                 return {"ok": True, "seq": seq}
             events = []
+            pointer_intent = None
             pending_button = pending_key = None
             attempted = False
             if kind in ("pointer", "button", "scroll"):
-                events.append(self._pointer(payload, state))
+                pointer_event, pointer_intent = self._pointer(payload, state)
+                if pointer_event is not None:
+                    events.append(pointer_event)
             if kind == "button":
                 button, action = payload.get("button"), payload.get("action")
                 if not isinstance(button, str) or button not in BUTTONS or action not in (
@@ -604,8 +668,9 @@ class InputBridge:
                     self.held_buttons.add(pending_button)
                 if pending_key:
                     self.held_keys.add(pending_key)
-                attempted = True
-                self.native.send(events)
+                attempted = bool(events)
+                if events:
+                    self.native.send(events)
             except (InputRejected, OSError):
                 if kind == "text" and attempted:
                     try:
@@ -618,6 +683,8 @@ class InputBridge:
                 self.held_buttons.discard(button)
             if kind == "key" and action != "down":
                 self.held_keys.discard(key)
+            if pointer_intent is not None:
+                self.pointer_intent = pointer_intent
             self.last_event = self.clock()
             return {"ok": True, "seq": seq}
         finally:

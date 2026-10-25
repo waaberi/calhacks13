@@ -177,6 +177,113 @@ class DialogInputTests(unittest.TestCase):
         self.publish()
         self.assertTrue(self.bridge.state()["ready"])
 
+    def slow_census(self, target):
+        entered, resume = threading.Event(), threading.Event()
+        errors = []
+        windows = self.windows.windows
+
+        def delayed(*args, **kwargs):
+            entered.set()
+            if not resume.wait(3):
+                raise AssertionError("test census was not released")
+            return windows(*args, **kwargs)
+
+        def run():
+            try:
+                target()
+            except Exception as exc:  # noqa: BLE001 - propagate worker failures on the test thread.
+                errors.append(exc)
+
+        override = patch.object(self.windows, "windows", side_effect=delayed)
+        override.start()
+        worker = threading.Thread(target=run)
+        worker.start()
+        self.assertTrue(entered.wait(2), "read-only census starts")
+
+        def finish():
+            resume.set()
+            worker.join(3)
+            override.stop()
+            self.assertFalse(worker.is_alive(), "bounded census worker finishes")
+            if errors:
+                raise errors[0]
+
+        return finish
+
+    def test_slow_state_census_does_not_reject_or_queue_legitimate_input(self):
+        payload = self.event("pointer", x=.5, y=.5)
+        result = []
+        finish = self.slow_census(lambda: result.append(self.bridge.state()))
+        try:
+            self.assertEqual(self.bridge.dispatch(payload), {"ok": True, "seq": payload["seq"]})
+            self.assertEqual(len(self.native.sent), 1, "input is delivered while enumeration is still blocked")
+        finally:
+            finish()
+        self.assertEqual(result[0]["next_seq"], payload["seq"] + 1, "state reports the current sequence after concurrent input")
+        self.assertEqual({w["blender_pid"] for w in result[0]["windows"]}, {200})
+
+    def test_slow_watchdog_census_releases_stale_button_first_and_admits_fresh_input(self):
+        self.dispatch("button", button="left", action="down", x=.5, y=.5)
+        previous_session = self.bridge.session
+        self.now += 2
+        finish = self.slow_census(self.bridge.watchdog)
+        try:
+            self.assertFalse(self.bridge.held_buttons, "owned stale button is released before enumeration can block")
+            self.assertEqual(self.native.sent[-1], [("button", "left", "up")])
+            self.assertNotEqual(self.bridge.session, previous_session)
+            with self.bridge.lock:
+                state = self.bridge._snapshot()
+            payload = {"session": state["session"], "token": state["token"], "seq": state["next_seq"],
+                       "type": "pointer", "x": .5, "y": .5}
+            self.assertTrue(self.bridge.dispatch(payload)["ok"])
+            self.assertEqual(self.native.sent[-1][0][0], "move", "fresh input is not queued behind the census")
+        finally:
+            finish()
+
+    def test_slow_state_census_discards_windows_after_root_lifetime_changes(self):
+        result = []
+        finish = self.slow_census(lambda: result.append(self.bridge.state()))
+        try:
+            self.windows.stamps[200] += 1
+        finally:
+            finish()
+        self.assertEqual(result[0]["windows"], [], "old census cannot advertise a recycled native root")
+        self.assertEqual(result[0]["reason"], "selected_process_identity_changed")
+
+    def test_late_census_cannot_follow_after_explicit_scope_change(self):
+        self.windows.records[110]["visible"] = True
+        finish = self.slow_census(self.bridge.watchdog)
+        try:
+            self.latest.select(self.windows.identity(400))
+            self.windows.records[400]["visible"] = True
+            self.publish()
+            self.windows.active = 110
+            changed_scope, changed_generation = self.latest.window_scope, self.latest.generation
+        finally:
+            finish()
+        self.assertEqual((self.latest.selected["hwnd"], self.latest.window_scope, self.latest.generation),
+                         (400, changed_scope, changed_generation))
+        self.assertFalse(self.native.sent, "stale read-only candidate cannot change the new native binding")
+
+    def test_late_census_refuses_foreign_popup_and_recycled_blender_root(self):
+        for changed in ("foreign_popup", "root_lifetime"):
+            with self.subTest(changed=changed):
+                self.setUp()
+                self.windows.records[110]["visible"] = True
+                if changed == "foreign_popup":
+                    foreign = {**self.windows.identity(400), "blender_pid": 200, "blender_hwnd": 100}
+                    self.windows.inventory_override = [self.windows.identity(100), foreign]
+                    self.windows.active = 400
+                finish = self.slow_census(self.bridge.watchdog)
+                try:
+                    if changed == "root_lifetime":
+                        self.windows.stamps[200] += 1
+                        self.windows.active = 110
+                finally:
+                    finish()
+                self.assertEqual(self.latest.selected["hwnd"], 100)
+                self.assertFalse(self.native.sent, "fresh native identity refuses untrusted or recycled census targets")
+
     def test_brokered_dialog_has_separate_target_and_blender_birth_stamps(self):
         self.open_dialog()
         state = self.bridge.state()

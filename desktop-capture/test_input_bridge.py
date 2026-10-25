@@ -46,6 +46,11 @@ class FakeNative:
             return []
         return [dict(w) for w in (self.window, self.popup) if w["pid"] == selected["pid"]]
 
+    def process_stamp(self, pid):
+        if not self.available or pid != self.window["pid"]:
+            raise InputRejected("selected_process_unavailable")
+        return self.geometry["process_started"]
+
     def foreground(self, _):
         return self.focused
 

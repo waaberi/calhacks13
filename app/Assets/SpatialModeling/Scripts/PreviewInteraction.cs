@@ -841,6 +841,13 @@ namespace SpatialModeling
         void AwaitWindowState(string reason) => AwaitInputState(reason, false);
         void AwaitInputState(string reason, bool sameWindowResync)
         {
+            if (nativeMenuReturnPending)
+            {
+                // A rejected focus request is discarded with the gesture. Do
+                // not keep swallowing the image after fresh state/release ACK.
+                nativeMenuReturnPending = false;
+                nativeInputAutoReleased = nativeInputPreferred;
+            }
             if (!windowResuming)
             { windowAwaitSession = session; windowResumeUntil = Time.unscaledTime + 4f; awaitedWindow = 0; }
             windowResuming = true; windowReleaseQueued = false; inputEnabled = focusRequested = false;
@@ -1088,7 +1095,7 @@ namespace SpatialModeling
             string[] pages = {
                 "1 / 3 · EDIT THE FLOATING MODEL LIVE\n\nBlender remains the modeling menu. Enable Input ON, then choose its native tool and settings. Point at the floating model: trigger tap selects / deselects; hold the trigger and aim to edit. The actual Blender geometry updates while held. Release commits one Undo step.\n\nThe first edit releases native-window input safely. Keep holding until a real native preview is acknowledged. Escape or grip cancels and restores the starting geometry; wait for rollback before re-gripping to arrange.\n\nKeyboard SHIFT adds/removes objects or components. Input OFF preserves Edit model and sticky spatial SHIFT. Input ON still edits Blender's 2D window with controllers.",
                 "2 / 3 · NATIVE TOOLS AND COMPONENTS\n\nChoose Edit Mode and one vertex / edge / face mode in Blender. Pick floating components; SHIFT adds/removes. Drag a selected member to edit the selection. Axis / plane handles and Blender's transform orientation, pivot, snapping and proportional settings apply.\n\nFace mode: Extrude Region / Individual or Inset. Edge mode: Loop Cut. Bevel keeps native Affect, segments and profile. Hold trigger and aim for amount. Loop Cut slides its picked quad ring with native cut count. Knife follows a surface path; release completes the stroke. Release gives one Undo; Escape / grip rolls back.\n\nFor Merge, Dissolve or Delete, select in 3D, wait for native selection acknowledgement, then use Blender's existing Mesh menu or keyboard. Undo / Redo remain native.",
-                "3 / 3 · NATIVE PREVIEW, DRAWING AND VOICE\n\nInput ON: front trigger clicks / drags Blender menus and viewport. Locked screen: side grip right-clicks, stick scrolls / zooms, hold stick + tilt pans. The real laptop keyboard remains visible through its passthrough window.\n\nDraw in VR follows Blender's CAD Line, Circle or Corner Rectangle tool. Voice and direct edits wait for acknowledged input release; a running native modal must finish / cancel first. Input stays OFF afterward.\n\nGripping arranges the VR display; it does not change Blender geometry. Native tool, target or document changes cancel local direct drafts."
+                "3 / 3 · NATIVE PREVIEW, DRAWING AND VOICE\n\nInput ON: front trigger clicks / drags Blender menus and viewport. Locked screen: side grip right-clicks, stick scrolls / zooms, hold stick + tilt pans.\n\nDraw in VR follows Blender's CAD Line, Circle or Corner Rectangle tool. Voice and direct edits wait for acknowledged input release; a running native modal must finish / cancel first. Input stays OFF afterward.\n\nGripping arranges the VR display; it does not change Blender geometry. Native tool, target or document changes cancel local direct drafts."
             };
             guideText.text = pages[guidePage];
         }
