@@ -55,7 +55,8 @@ must pass without assertion changes. SDK-generated first-import settings are
 archived, inspected and restored; they are not product changes to commit.
 
 Python reference: 904 passed / 36 skipped. Helper reference: 142 passed. The
-integration adds five launcher-safety checks, so the expected helper total is 147.
+integration adds five launcher-safety checks and carries forward the reviewed
+P1 capture-thread join/recovery repair with its regression, so the helper total is 148.
 Real background native preview/create/reopen, modeling and object/history checks
 run at unit scales 1 and .001, plus the 60-assertion native panel/keymap check.
 All source/build hashes, logs, initial failures and generated-settings archives

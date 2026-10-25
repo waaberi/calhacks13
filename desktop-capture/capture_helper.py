@@ -429,6 +429,15 @@ def capture_dialog_snapshot(api, latest, selected, generation):
     return latest.publish(generation, image, title, 0, captured_ms, geometry)
 
 
+def stop_capture(control):
+    # Reviewed P1 repair: the native thread's plain Exception is raised by join.
+    # Preserve diagnostics and recovery instead of terminating the capture loop.
+    try:
+        control.stop()
+    except Exception as exc:  # noqa: BLE001 -- windows-capture raises plain Exception.
+        print(f"CAPTURE_STOP_ERROR {type(exc).__name__}: {exc}", flush=True)
+
+
 def graphics_capture_loop(api, latest, stop, fps):
     import cv2
     from windows_capture import WindowsCapture
@@ -582,7 +591,7 @@ def graphics_capture_loop(api, latest, stop, fps):
                 selected, generation = latest.selected, latest.generation
             if active_generation != generation:
                 if control is not None:
-                    control.stop()
+                    stop_capture(control)
                 control, _capture = None, None
                 active_generation = generation
                 print_generation = None
@@ -619,7 +628,7 @@ def graphics_capture_loop(api, latest, stop, fps):
                     raw_slot[0] = None
                 # Keep the last image only within its existing3s freshness lease.
                 # A quick static-window refresh must not blank/flicker the panel.
-                control.stop()
+                stop_capture(control)
                 control, _capture = None, None
                 try:
                     if capture_dialog_snapshot(api, latest, selected, generation):
@@ -628,10 +637,13 @@ def graphics_capture_loop(api, latest, stop, fps):
                 except (WindowUnavailable, OSError, ValueError, RuntimeError):
                     pass  # Try the selected-window graphics backend again.
                 print("CAPTURE_RECOVERY no_new_callback; reopening selected window", flush=True)
-            if control is None or control.is_finished():
+            if control is not None and control.is_finished():
+                stop_capture(control)
+                control, _capture = None, None
+            if control is None:
                 try:
                     _capture, control = start(selected, generation)
-                except (OSError, RuntimeError, ValueError) as exc:
+                except Exception as exc:  # noqa: BLE001 -- windows-capture raises plain Exception.
                     try:
                         if capture_dialog_snapshot(api, latest, selected, generation):
                             print_generation = generation
@@ -643,7 +655,7 @@ def graphics_capture_loop(api, latest, stop, fps):
                     continue
     finally:
         if control is not None:
-            control.stop()
+            stop_capture(control)
 
 
 def make_server(latest, port, input_bridge=None):

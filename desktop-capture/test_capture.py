@@ -1,12 +1,13 @@
 """HTTP contract and stale-frame/selection regression tests. No desktop is captured."""
 
 import http.client
+import io
 import json
 import os
 import threading
 import time
 import unittest
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, redirect_stdout
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -218,7 +219,7 @@ class CaptureContractTests(unittest.TestCase):
         self.assertAlmostEqual(measured_frame_rate([100, 100.025, 100.05], 100.05), 40)
 
     @contextmanager
-    def actual_graphics_workers(self):
+    def actual_graphics_workers(self, fail_stop=False):
         captures = []
         refresh = threading.Event()
         reached_publication = threading.Event()
@@ -244,7 +245,13 @@ class CaptureContractTests(unittest.TestCase):
                 return handler
 
             def start_free_threaded(self):
-                return SimpleNamespace(stop=lambda: None, is_finished=lambda: False)
+                self.finished = False
+
+                def stop_control():
+                    if fail_stop:
+                        raise Exception("private native capture join failure")  # noqa: TRY002 -- exact native library behavior.
+
+                return SimpleNamespace(stop=stop_control, is_finished=lambda: self.finished)
 
         def refresh_due(*_):
             if refresh.is_set():
@@ -280,6 +287,14 @@ class CaptureContractTests(unittest.TestCase):
         while not predicate() and time.monotonic() < until:
             time.sleep(0.005)
         self.assertTrue(predicate(), "Actual graphics workers did not reach the expected state")
+
+    @unittest.skipUnless(os.name == "nt", "Windows capture binding")
+    def test_finished_capture_join_error_is_logged_and_recovers(self):
+        output = io.StringIO()
+        with redirect_stdout(output), self.actual_graphics_workers(fail_stop=True) as run:
+            run.captures[0].finished = True
+            self.wait_until(lambda: len(run.captures) >= 2)
+            self.assertIn("CAPTURE_STOP_ERROR", output.getvalue())
 
     @unittest.skipUnless(os.name == "nt", "Windows capture binding")
     def test_empty_callback_reports_unavailable_then_valid_pixels_recover(self):

@@ -39,25 +39,26 @@ class IntegratedLauncherTests(unittest.TestCase):
         processes.assert_not_called()
 
     def test_accepted_player_prevents_every_runtime_mutation(self):
-        with patch.object(launcher, "player_processes", return_value=[76636]), \
-                patch.object(launcher.subprocess, "Popen") as spawn, patch.object(launcher, "free_port") as ports:
-            with self.assertRaisesRegex(RuntimeError, "Existing Player"):
-                self.run_main("--launch")
+        with (patch.object(launcher, "player_processes", return_value=[76636]),
+              patch.object(launcher.subprocess, "Popen") as spawn,
+              patch.object(launcher, "free_port") as ports,
+              self.assertRaisesRegex(RuntimeError, "Existing Player")):
+            self.run_main("--launch")
         spawn.assert_not_called()
         ports.assert_not_called()
 
     def test_tampered_assembly_refuses_before_launch(self):
         (self.package / "SpatialModeling_Data/Managed/Assembly-CSharp.dll").write_bytes(b"changed")
-        with patch.object(launcher.subprocess, "Popen") as spawn:
-            with self.assertRaisesRegex(RuntimeError, "hash mismatch"):
-                self.run_main("--launch")
+        with (patch.object(launcher.subprocess, "Popen") as spawn,
+              self.assertRaisesRegex(RuntimeError, "hash mismatch")):
+            self.run_main("--launch")
         spawn.assert_not_called()
 
     def test_incomplete_folder_refuses_before_launch(self):
         (self.package / "reference.blend").unlink()
-        with patch.object(launcher.subprocess, "Popen") as spawn:
-            with self.assertRaisesRegex(RuntimeError, "Incomplete package"):
-                self.run_main("--launch")
+        with (patch.object(launcher.subprocess, "Popen") as spawn,
+              self.assertRaisesRegex(RuntimeError, "Incomplete package")):
+            self.run_main("--launch")
         spawn.assert_not_called()
 
     def test_owned_process_exit_cannot_be_mistaken_for_readiness(self):
