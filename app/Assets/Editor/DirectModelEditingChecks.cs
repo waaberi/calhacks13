@@ -303,6 +303,10 @@ public static class DirectModelEditingChecks
         }
         public void Dispose()
         {
+            // These fixture owners intentionally stay inactive, so Unity does
+            // not invoke OnDestroy on their never-enabled adapter components.
+            // Dispose the production controller's external visual roots too.
+            (Get(Direct,"live") as DirectLiveController)?.Dispose();
             UnityEngine.Object.DestroyImmediate(owner);UnityEngine.Object.DestroyImmediate(obj);UnityEngine.Object.DestroyImmediate(mesh);UnityEngine.Object.DestroyImmediate(display);
             foreach(var ghost in UnityEngine.Object.FindObjectsByType<Transform>(FindObjectsSortMode.None))
                 if(ghost!=null&&ghost.name=="LOCAL model draft · uncommitted orange preview")UnityEngine.Object.DestroyImmediate(ghost.gameObject);

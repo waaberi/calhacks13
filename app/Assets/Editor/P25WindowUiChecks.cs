@@ -27,7 +27,7 @@ public static class P25WindowUiChecks
     static void Check(bool ok, string why) { if (!ok) throw new Exception("P25_WINDOW_UI: " + why); }
     public static void Run()
     {
-        Chooser(); SelectionSequence(); Handoff(); Revocation(); InputIndicator(); ControllerControls(); WorkspaceRouting(); QuickActions(); DrawingMode(); DirectModeIntent(); NativeMenuReturn();
+        Chooser(); SelectionSequence(); Handoff(); Revocation(); InputIndicator(); ControllerControls(); WorkspaceRouting(); QuickActions(); DrawingMode(); DirectModeIntent(); NativeMenuReturn(); StaleDirectModeRecovery();
         Debug.Log("P25_WINDOW_UI_CHECK PASS actual chooser/pages/stale-choice/bounded-refresh/no-image-recovery/current-sequence/stamped-handoff/lease-retention/typed-staleness/mode-exit/overlay; actual OS popup capture unverified");
     }
 
@@ -170,6 +170,41 @@ public static class P25WindowUiChecks
             Check(!(bool)Get(f.Preview, "nativeInputPreferred"), "Arrange explicitly clears the native input preference");
         }
         Debug.Log("P25_NATIVE_MENU_RETURN_CHECK PASS automatic_preference fresh_image_press cleanup_transition_barriers consume_focus_press no_ack_replay manual_off explicit_arrange");
+    }
+
+    static void StaleDirectModeRecovery()
+    {
+        using var f = new Fixture();
+        f.Preview.BeginModelEditing(); Set(f.Preview, "guideShown", false);
+        f.Preview.TrackingLost(XRNode.RightHand);
+        var unowned = P25WindowChecks.Native(f.Session); unowned["input_allowed"] = false; unowned["ui_session_id"] = ""; unowned["ui_owner"] = null;
+        f.Drawing.SetNativeState(unowned); f.Authority.Clear(); Set(f.Preview, "endAfterRelease", false);
+        Set(f.Drawing, "stateAt", Time.unscaledTime - 3f); Set(f.Drawing, "nextQuery", 0f); f.Events.Clear(); f.Sent.Clear();
+        Check(f.Preview.ModelEditingActive && f.Drawing.DirectModelToolsRequested && !f.Preview.DirectEditing.Active
+            && !f.Drawing.DirectModelToolsActive && !f.Drawing.NativeStateCurrent && !f.Drawing.EnabledForInput && !f.Drawing.ObjectToolsEnabled
+            && !f.Drawing.NativeUiTransitionPending && !f.Session.Busy && !(bool)Get(f.Preview, "inputEnabled"),
+            "a greater-than-two-second interruption leaves explicit modeling intent selected with all native input and gesture writers idle");
+        var ray = new Ray(f.Image.transform.position - Vector3.forward * 2, Vector3.forward);
+        f.Preview.RouteControllerHand(XRNode.RightHand, ray, false, false, Vector2.zero, 3, out _, false);
+        Check(!f.Preview.DirectEditing.Active, "stale native tool state cannot rearm the controller");
+        Invoke(f.Drawing, "Update");
+        Check(f.Sent.Count == 1 && (string)f.Sent[0]["type"] == "preview.state.query" && !f.Preview.DirectEditing.Active,
+            "fully idle suspended modeling intent requests only read-only native telemetry without reacquiring any input lease");
+        var assembly = typeof(HostScene).Assembly;
+        var kind = Enum.Parse(assembly.GetType("SpatialModeling.HostEventKind"), "Message");
+        var evt = Activator.CreateInstance(assembly.GetType("SpatialModeling.HostEvent"), new[] { kind });
+        evt.GetType().GetField("RawMessage").SetValue(evt, NativeEditSession.Envelope("preview.state", unowned));
+        Invoke(f.Drawing, "Receive", evt);
+        Check(f.Drawing.NativeStateCurrent && !f.Preview.DirectEditing.Active, "actual preview-state receipt refreshes telemetry without reactivating a controller gesture");
+        f.Preview.RouteControllerHand(XRNode.RightHand, ray, true, false, Vector2.zero, 3, out _, false);
+        Check(!f.Preview.DirectEditing.Active, "fresh telemetry alone cannot inherit a held trigger");
+        f.Preview.RouteControllerHand(XRNode.RightHand, ray, false, false, Vector2.zero, 3, out _, false);
+        Check(f.Preview.DirectEditing.Active && !(bool)Get(f.Preview, "inputEnabled") && !(bool)Get(f.Preview, "focusRequested")
+            && f.Sent.All(message => (string)message["type"] == "preview.state.query"),
+            "fresh tracked release restores direct mode after a long interruption with no native input begin or replayed edit");
+        f.Preview.EndModelEditing(); Set(f.Drawing, "nextQuery", 0f); f.Sent.Clear(); Invoke(f.Drawing, "Update");
+        Check(!f.Drawing.DirectModelToolsRequested && f.Sent.Count == 0, "explicit Arrange stops otherwise-idle modeling telemetry polling");
+        Debug.Log("P25_STALE_DIRECT_MODE_RECOVERY_CHECK PASS stale_over_two_seconds fully_idle read_only_query fresh_state_receipt tracked_release_only no_native_reacquire explicit_exit");
     }
 
     static void ControllerControls()

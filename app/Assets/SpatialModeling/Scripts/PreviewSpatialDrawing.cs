@@ -13,6 +13,7 @@ namespace SpatialModeling
         public bool EnabledForInput { get; private set; }
         public bool ObjectToolsEnabled { get; private set; }
         public bool DirectModelToolsActive { get; set; }
+        public bool DirectModelToolsRequested { get; set; }
         public event Action<JObject> BeforeNativeSessionMessage;
         NativeObjectTools objectTools;
         public NativeObjectTools ObjectTools => objectTools ?? (objectTools = new NativeObjectTools(Session));
@@ -149,9 +150,9 @@ namespace SpatialModeling
             if (scene == null) return;
             Session.SceneCurrent = scene.IsCurrent;
             if (!scene.IsCurrent || !scene.DisplayPlacementReady) CancelLocal();
-            if ((EnabledForInput || ObjectToolsEnabled || DirectModelToolsActive || Session.Busy || wantNativeUi || beginId != null || endId != null || !string.IsNullOrEmpty((string)NativeState["ui_session_id"]))
-                && Session.Ready && Time.unscaledTime >= nextQuery)
-            { scene.Link?.Send("preview.state.query", new JObject()); nextQuery = Time.unscaledTime + 0.4f; }
+            if ((EnabledForInput || ObjectToolsEnabled || DirectModelToolsActive || DirectModelToolsRequested || Session.Busy || wantNativeUi || beginId != null || endId != null || !string.IsNullOrEmpty((string)NativeState["ui_session_id"]))
+                && Session.Ready && Session.SceneCurrent && Time.unscaledTime >= nextQuery)
+            { Session.Send?.Invoke(NativeEditSession.Envelope("preview.state.query", new JObject())); nextQuery = Time.unscaledTime + 0.4f; }
             if (objectRequestPending && !ObjectContextCurrent()) Session.Cancel();
             ValidateSpatialContext();
             if (ObjectToolsEnabled && !ObjectContextCurrent()) numeric?.Invalidate();

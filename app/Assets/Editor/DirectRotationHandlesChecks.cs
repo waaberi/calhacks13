@@ -9,7 +9,7 @@ public static class DirectRotationHandlesChecks
 
     public static void Run()
     {
-        PickingAndOcclusion(); FrozenAngularDrag(); EdgeOnDrag(); VisualGeometry();
+        PickingAndOcclusion(); FrozenAngularDrag(); SelectionClearance(); EdgeOnDrag(); VisualGeometry();
         Debug.Log("DIRECT_ROTATION_HANDLES_CHECK PASS RGB-rings/arrowheads/ray-tolerance/nearest-fence/negative-nonuniform-map/frozen-native-pivot/angular-wrap/edge-on-tangent; physical acceptance pending");
     }
     static Vector3[] Axes(Matrix4x4 map, Quaternion orientation) => new[] {
@@ -75,6 +75,20 @@ public static class DirectRotationHandlesChecks
         Check(gesture.Update(updated), "edge-on ring remains usable without unstable plane intersections");
         Near(gesture.AngleDegrees, .5f * Mathf.Rad2Deg, "edge-on tangent motion has the native rotation sign");
         Check(gesture.Update(ray), "returning to start is allowed"); Near(gesture.AngleDegrees, 0, "cumulative tangent parameters return exactly to baseline");
+    }
+    static void SelectionClearance()
+    {
+        var map=Matrix4x4.TRS(new Vector3(1,2,3),Quaternion.Euler(17,37,-13),new Vector3(-3,.15f,2));
+        var pivot=map.MultiplyPoint3x4(new Vector3(.1f,-.4f,.8f));
+        var frame=new DirectRotationHandles.Frame(map,pivot,Axes(map,Quaternion.Euler(31,12,-9)),Vector3.zero,1.7f);
+        Check(frame.Radius>=1.7f,"large selection clearance is never capped to the default comfort radius");
+        for(int axis=0;axis<3;axis++)for(int segment=0;segment<DirectRotationHandles.Segments;segment++)
+        {
+            var point=frame.Point(axis,2*Mathf.PI*segment/DirectRotationHandles.Segments);
+            Near(Vector3.Distance(point,pivot),frame.Radius,"every display ring point clears the selection sphere despite nonuniform/reflected presentation");
+            var native=frame.DisplayToNative.MultiplyPoint3x4(point)-frame.NativePivot;
+            Check(Mathf.Abs(Vector3.Dot(native,frame.NativeAxis(axis)))<.00002f,"display-space clearance preserves the native rotation plane");
+        }
     }
     static void VisualGeometry()
     {

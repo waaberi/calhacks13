@@ -611,7 +611,27 @@ namespace SpatialModeling
         DirectRotationHandles.Frame RotationFrame(WorkspaceObjectView view)
         {
             var pivot=SelectionPivotDisplay();var camera=Camera.main;
-            return new DirectRotationHandles.Frame(view.NativeToDisplayMatrix,pivot,new[]{Axis(0),Axis(1),Axis(2)},camera!=null?camera.transform.position:pivot+Vector3.back);
+            float radius=.12f;
+            foreach(string id in Selection.ObjectIds)
+            {
+                var selected=FindView(id);if(selected==null)continue;
+                var mesh=selected.GetComponent<MeshFilter>()?.sharedMesh;
+                if(mesh!=null)
+                {
+                    var bounds=mesh.bounds;
+                    for(int corner=0;corner<8;corner++)
+                    {
+                        var local=bounds.center+Vector3.Scale(bounds.extents,new Vector3((corner&1)==0?-1:1,(corner&2)==0?-1:1,(corner&4)==0?-1:1));
+                        radius=Mathf.Max(radius,Vector3.Distance(pivot,selected.transform.TransformPoint(local))+.035f);
+                    }
+                }
+                else
+                {
+                    var renderer=selected.GetComponent<Renderer>();if(renderer==null)continue;
+                    radius=Mathf.Max(radius,Vector3.Distance(pivot,renderer.bounds.center)+renderer.bounds.extents.magnitude+.035f);
+                }
+            }
+            return new DirectRotationHandles.Frame(view.NativeToDisplayMatrix,pivot,new[]{Axis(0),Axis(1),Axis(2)},camera!=null?camera.transform.position:pivot+Vector3.back,radius);
         }
         Vector3 Axis(int index)
         {

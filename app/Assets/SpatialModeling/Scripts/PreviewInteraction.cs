@@ -117,6 +117,7 @@ namespace SpatialModeling
             // Server watchdog is the final cleanup if this object's coroutine is
             // destroyed during a held gesture or an HTTP failure.
             Suspend();
+            if (Drawing != null) Drawing.DirectModelToolsRequested = false;
             OVRManager.HMDUnmounted -= Suspend;
             OVRManager.VrFocusLost -= Suspend;
             StopAllCoroutines();
@@ -548,11 +549,13 @@ namespace SpatialModeling
         {
             if (DirectEditing == null) DirectEditing = GetComponent<DirectModelEditing>() ?? gameObject.AddComponent<DirectModelEditing>();
             DirectEditing.Initialize(scene, this, Drawing);
+            if (Drawing != null) Drawing.DirectModelToolsRequested = modelEditingRequested;
         }
         public void EndModelEditing()
         {
             nativeInputPreferred = false;
             modelEditingRequested = false;
+            if (Drawing != null) Drawing.DirectModelToolsRequested = false;
             guideShown = false;
             Suspend();
             Notice = "Arrange space · grip moves the VR display; Blender geometry stays unchanged";
@@ -639,6 +642,7 @@ namespace SpatialModeling
             { Notice = "Finish the native operation with Enter or Escape before switching to VR drawing"; return; }
             modelEditingRequested = false;
             nativeInputPreferred = nativeInputAutoReleased = nativeMenuReturnPending = false;
+            Drawing.DirectModelToolsRequested = false;
             DirectEditing?.SetActive(false);
             lastInputFailure = "";
             objectsRequested = modelToolsShown = false;

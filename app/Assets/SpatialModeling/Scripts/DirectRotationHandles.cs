@@ -23,7 +23,6 @@ namespace SpatialModeling
             public readonly Vector3 NativePivot, DisplayPivot;
             public readonly float Radius, Width;
             readonly Vector3[] axes = new Vector3[3], first = new Vector3[3], second = new Vector3[3];
-            readonly float[] nativeRadius = new float[3];
             public bool Valid { get; private set; }
 
             // displayAxes are Blender's current X/Y/Z orientation, after the
@@ -33,7 +32,9 @@ namespace SpatialModeling
                 NativeToDisplay = map; DisplayToNative = map.inverse;
                 DisplayPivot = displayPivot; NativePivot = DisplayToNative.MultiplyPoint3x4(displayPivot);
                 float distance = Vector3.Distance(eye, displayPivot);
-                Radius = Mathf.Clamp(Mathf.Max(minimumRadius, distance * .065f), .10f, .28f);
+                // The comfort size may be capped; selection clearance must not
+                // be capped or enlarged/scaled models swallow their own gizmo.
+                Radius = Mathf.Max(minimumRadius, Mathf.Clamp(distance * .065f, .10f, .28f));
                 Width = Mathf.Clamp(distance * .0025f, .004f, .008f);
                 if (displayAxes == null || displayAxes.Length != 3 || Mathf.Abs(map.determinant) < 1e-12f) return;
                 for (int i = 0; i < 3; i++)
@@ -45,15 +46,24 @@ namespace SpatialModeling
                     second[i] = Vector3.Cross(axes[i], first[i]).normalized;
                     float stretch = Mathf.Max(map.MultiplyVector(first[i]).magnitude, map.MultiplyVector(second[i]).magnitude);
                     if (stretch < 1e-8f || float.IsInfinity(stretch) || float.IsNaN(stretch)) return;
-                    nativeRadius[i] = Radius / stretch;
                 }
                 Valid = true;
             }
             public Vector3 NativeAxis(int axis) => axes[axis];
             public Vector3 DisplayAxis(int axis) => NativeToDisplay.MultiplyVector(axes[axis]).normalized;
             public Vector3 NativeRadial(int axis, float radians) => first[axis] * Mathf.Cos(radians) + second[axis] * Mathf.Sin(radians);
-            public Vector3 Point(int axis, float radians) => NativeToDisplay.MultiplyPoint3x4(NativePivot + NativeRadial(axis, radians) * nativeRadius[axis]);
-            public Vector3 Tangent(int axis, Vector3 nativeRadial) => NativeToDisplay.MultiplyVector(Vector3.Cross(axes[axis], nativeRadial) * nativeRadius[axis]);
+            // Normalize in display space so reflection/nonuniform inspection
+            // transforms cannot squash one side back inside the selection.
+            // Inverting these points still gives the exact native rotation plane.
+            public Vector3 Point(int axis, float radians) => DisplayPivot + NativeToDisplay.MultiplyVector(NativeRadial(axis, radians)).normalized * Radius;
+            public Vector3 Tangent(int axis, Vector3 nativeRadial)
+            {
+                Vector3 direction = NativeToDisplay.MultiplyVector(nativeRadial);
+                Vector3 derivative = NativeToDisplay.MultiplyVector(Vector3.Cross(axes[axis], nativeRadial));
+                float length = direction.magnitude;
+                if (length < 1e-8f) return Vector3.zero;
+                return Radius * (derivative / length - direction * (Vector3.Dot(direction, derivative) / (length * length * length)));
+            }
         }
 
         public struct Hit

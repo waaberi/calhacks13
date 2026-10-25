@@ -18,7 +18,7 @@ public static class LiveControllerChecks
     {for(int i=0;i<16;i++)Check(Mathf.Abs(a[i]-b[i])<.00005f,why+" element "+i);}
     public static void Run()
     {
-        Selection();Presentation();GestureMath();LiveRoute();SelectionSync();SelectionRecovery();ToolGestures();RotationRingRoute();SelectionAndCancellation();SelectionOutlineBound();
+        Selection();Presentation();GestureMath();LiveRoute();SelectionSync();SelectionRecovery();ToolGestures();RotationRingRoute();RotationBoundsFenceRoute();SelectionAndCancellation();SelectionOutlineBound();
         DirectRotationHandlesChecks.Run();
         Debug.Log("LIVE_CONTROLLER_CHECK PASS actual held native-update route/one commit/cancel/selection-only no-geometry/SHIFT multi-selection+input-off/epoch/native Inset+Bevel+LoopCut+surface Knife/native axis handle+settings cancellation/own-echo identity+sequence/affine M0 mirrored nonuniform live+commit+reset+restore; physical acceptance pending");
     }
@@ -244,6 +244,31 @@ public static class LiveControllerChecks
         State(f,"updated",1,(string)update["id"]);Route(moved,false);
         var commit=f.Sent.Last(m=>(string)m["type"]=="live.edit.commit");State(f,"committed",1,(string)commit["id"]);
         Check(f.Sent.Count(m=>(string)m["type"]=="live.edit.commit")==1&&!f.Direct.Gesturing,"one released ring gesture commits exactly one native Undo transaction");
+    }
+    static void RotationBoundsFenceRoute()
+    {
+        using var f=new DirectModelEditingChecks.Fixture("builtin.rotate");NativeLive(f,"object.rotate");
+        var mesh=f.View.GetComponent<MeshFilter>().sharedMesh;
+        mesh.vertices=new[]{new Vector3(-.45f,-.65f,1.5f),new Vector3(.45f,-.65f,1.5f),new Vector3(.45f,.65f,1.5f),new Vector3(-.45f,.65f,1.5f),
+            new Vector3(-.45f,-.65f,2.5f),new Vector3(.45f,-.65f,2.5f),new Vector3(.45f,.65f,2.5f),new Vector3(-.45f,.65f,2.5f)};
+        mesh.triangles=new[]{0,2,1,0,3,2,4,5,6,4,6,7,0,1,5,0,5,4,3,7,6,3,6,2,0,4,7,0,7,3,1,2,6,1,6,5};mesh.RecalculateBounds();
+        var collider=f.View.GetComponent<MeshCollider>();collider.sharedMesh=null;collider.sharedMesh=mesh;
+        f.View.transform.localScale=new Vector3(2,.45f,1.6f);Physics.SyncTransforms();
+        var model=(JObject)f.Drawing.NativeState["model_edit"];model["settings"]["pivot_m"]=new JArray(0,2,0);Invoke(f.Direct,"Update");
+        var live=(DirectLiveController)Get(f.Direct,"live");
+        var frame=(DirectRotationHandles.Frame)typeof(DirectLiveController).GetMethod("RotationFrame",Private).Invoke(live,new object[]{f.View});
+        Check(frame.Radius>.28f,"large selected mesh determines ring radius beyond the former fixed cap");
+        foreach(var vertex in mesh.vertices)
+            Check(Vector3.Distance(frame.DisplayPivot,f.View.transform.TransformPoint(vertex))+.03f<frame.Radius,"ring clearance includes scaled display bounds around the native pivot");
+        var ray=new Ray(Vector3.zero,Vector3.forward);var selected=f.Host.PickObject(ray,out float nearest);
+        Check(selected==f.View&&nearest>0&&nearest<4,"regression uses the actual selected mesh distance supplied by WorkspaceInteraction");
+        var buried=new DirectRotationHandles.Frame(frame.NativeToDisplay,frame.DisplayPivot,new[]{Vector3.right,Vector3.forward,Vector3.up},frame.DisplayPivot+Vector3.back,.12f);
+        Check(!DirectRotationHandles.TryPick(buried,ray,nearest,out _),"former small rings would be blocked by this actual selected-mesh fence");
+        Check(DirectRotationHandles.TryPick(frame,ray,nearest,out var hit)&&hit.Distance<nearest,"resized visible ring wins before the selected geometry without bypassing the outer fence");
+        Check(f.Preview.RouteControllerHand(UnityEngine.XR.XRNode.RightHand,ray,true,false,Vector2.zero,nearest,out _,false)&&f.Direct.Gesturing,
+            "real controller route grabs the ring using actual outer selected-mesh nearest, rather than an artificial 4m allowance");
+        Check(Get(live,"rotationGesture") is DirectRotationHandles.Gesture,"outer-fenced controller hit starts an angular ring gesture");
+        f.Preview.CancelDirectModelDraft("test cleanup");
     }
     static void SelectionAndCancellation()
     {
