@@ -37,5 +37,24 @@ def activity_text(leases, own_actor_id=None):
         return ""
     lease = other[0]
     who = lease["owner"]["name"]
-    return (f"{who} is editing — wait for Apply" if lease["mode"] == "exclusive"
-            else f"{who} is editing the pink objects")
+    wait = " — wait for Apply" if lease["mode"] == "exclusive" else ""
+    if lease["owner"].get("role") == "vr":
+        return f"VR is editing: {who}{wait}"
+    return f"{who} is editing{wait}" if wait else f"{who} is editing the pink objects"
+
+
+def object_label(names):
+    """The label beside a leased object, with its owners' actual names."""
+    return f"{', '.join(names)} {'is' if len(names) == 1 else 'are'} editing this object"
+
+
+# Statuses (host or Client mirror) that mean the link to the other side is gone.
+_LOST = ("lost", "disconnected", "not responding", "connection stopped")
+
+
+def connection_text(status):
+    """The warning "Connection lost — <status>" when the link is gone, otherwise empty."""
+    text = status or ""
+    if not any(word in text.lower() for word in _LOST):
+        return ""
+    return text if text.lower().startswith("connection lost") else f"Connection lost — {text}"
