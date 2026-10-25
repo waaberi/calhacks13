@@ -1,10 +1,91 @@
 # P2.5 verification and runtime handoff
 
 P2.5 is developed on `codex/talia-p2-5-blender-interaction`. Its software checks
-and later runtime acceptance are separate from P2's ongoing placement work. No
+and later runtime acceptance are separate from final P2 integration. No
 P2 headset test is requested or repeated by this verification workflow. FPS is
 not an acceptance criterion. A compiler or simulated input pass cannot establish
 that a native Blender button or spatial drawing gesture works in the headset.
+
+## Full preview, dialogs and popup windows
+
+Frozen source `54df5af701ba1f34ea85de847f442089672907ae`, app tree
+`9c142b65ad2cd7ef835456980b2ea601b5ad8ebb`, extends the generic preview input to
+verified Blender-owned dialogs, native menu/combo popups and brokered windows.
+The [window/menu guide](P2_5_WINDOW_MENU.md) explains the user flow and integration
+contract. The whole image remains Blender's native interface; custom shortcut
+buttons are supplemental.
+
+The implementation follows live OS ownership chains, separately pins target and
+Blender process lifetimes, follows active owned windows and recovers parent/main
+windows on close. A paginated chooser remains reachable without fresh pixels;
+explicit selection also activates the requested window, including the current
+window when it needs focus. New-window admission discards pending input, waits
+for the exact new image and requires an exact release acknowledgement. Native
+OS dialogs/menus have an opt-in selected-window PrintWindow fallback on WGC
+failure/stall, with post-read identity/geometry validation and no desktop capture.
+Child-owned combo lists require their real top-level owner in the foreground.
+
+Known existing native modals can be adopted only after native identity and lease
+checks. Unknown modal state refuses input. A confirmed reservation retains only
+the built-in scene-free heartbeat on the I/O thread while a native dialog blocks
+main-thread queries. Typed modeling/drawing keeps its fresh-state requirement.
+The helper/native authority cannot be carried to a new connection, document,
+helper, local selection scope, Blender lifetime or permission owner.
+
+| Final headless gate | Result | External evidence |
+| --- | --- | --- |
+| Full Python suite | 904 passed / 36 skipped | `p25-full-preview-pytest-final.log` |
+| Capture/input/window/launcher/bootstrap unit suite | 142 passed, fake Win32/GDI/WGC and loopback only | `p25-full-preview-helper-final2.log` |
+| Ruff | Passed | `p25-full-preview-ruff-final2.log` |
+| Offline C# compile and actual managed checks | Passed; current source hashes match | `p25-dialog-v12-offline2/compile-manifest.json` |
+| Actual Unity chooser, clipboard, continuity, cleanup and cumulative original gates | Passed, exit 0; keyboard fixture last | `p25-dialog-v12-cumulative2-exit.json` |
+| Actual Unity ReadState/SendEvents dialog handoffs | 5 cases passed, including four nested transitions and current-window focus recovery | `p25-dialog-v12-window-http2-result.json` |
+| Existing release ordering / HTTP regressions | 2 / 9 cases passed | `p25-dialog-v12-release-http2-result.json`, `p25-dialog-v12-http9-final-result.json` |
+| Frozen Windows v12 build | Passed, exit 0 / zero errors; all 28 mandatory gates | `p25-preview-spatial-v12-build-result.json` |
+
+The complete external candidate directory is named `p25-preview-spatial-v12`.
+Keep the EXE, data directory and runtime dependencies together. Its managed
+assembly SHA-256 is
+`ccb71a6b11a73fc6379c419eb36511ae062c13e05b16d671aa1c7c951f4d0621`;
+EXE SHA-256 is
+`001aeebfb92718f8b49f0c0e0a03e313c54669552b08e952b2fee3ddd143683a`.
+All compiled source/meta hashes and all restored tracked app bytes match the
+frozen prebuild source. No Player was launched. Initial Editor import generated
+semantic MetaXR feature-set/proximity/foveation, WebGL and Android-default changes;
+these were archived and restored before the source freeze. This build generated
+only whitespace changes, also archived/restored. Existing XR/render/build guards
+are unchanged; no generated settings or machine-specific assets were committed.
+
+A new real-socket server regression pauses main-thread drain and verifies that
+only the built-in reserved-owner ping replies; queued edits and custom handlers
+never run on the I/O thread. Native reservation tests cover known-modal adoption,
+unknown/malformed context, foreign shared/exclusive leases, owner resume,
+disconnect and lease loss. Those results are included in the full suite.
+
+Two observed failures are preserved and fixed. Fake Win32 reproduced a foreground
+switch during the final ownership inspection: input was not refused. Foreground
+is now checked again immediately before dispatch, before held-down tracking, and
+the regression proves no delivery or phantom cleanup. Actual Unity HTTP testing
+then found that an invalid release acknowledgement during a stale-tool dialog
+handoff could lose its cleanup owner. FailTransport now captures retained raw
+ownership/handoff state before clearing it; the exact failed result remains
+`p25-dialog-v12-window-http-result.json`. The final regression requires a later
+valid release acknowledgement before native End is sent. Current-window focus
+recovery, stale expected-window cleanup and child-owned popup handling were also
+repaired and covered. Initial diagnostic-expectation, import-environment and Ruff
+fixture failures remain in their original logs; they are not relabelled passes.
+
+No Blender GUI, actual OS input/capture, helper/Player/headset or P2 runtime was
+started or controlled in this expansion. Real native renderer/key delivery and
+physical controller/drawing acceptance remain separate integrated-runtime checks.
+A native OS dialog already blocking the main thread before the first reservation
+can be granted still prevents that first Begin from running; the implementation
+does not perform thread-unsafe scene/lease work to bypass it. Generic preview
+access does not expand the separate native-data/Unity-mirror serialization limits.
+
+The separate integration chat must preserve final P2 `2e9ede3` / PR158. This
+branch's older P2 ancestry is not a replacement for that finalized app. No main
+merge, phase acceptance, FPS work or P2 testing was performed.
 
 ## Toolbar and sidebar headless repair
 
@@ -106,7 +187,7 @@ navigation reporting changes are not passed off as native rerun evidence.
 Failures and remaining limits are recorded in
 [issue 139](https://github.com/waaberi/calhacks13/issues/139#issuecomment-6390641009).
 
-The current complete candidate is external `artifacts/p25-preview-spatial-v11/`.
+At that checkpoint, the complete external candidate directory was named `p25-preview-spatial-v11`.
 Its build manifest verifies every C# source and new meta hash against the passing
 prebuild evidence and links the actual cumulative/HTTP results. The own-Library
 build ran hidden at BelowNormal priority with one worker. Six generated settings
@@ -156,7 +237,7 @@ late grant can emit an edit, including wrong identity followed by valid recovery
 | Final Windows v10 build | Passed, zero errors/exit 0 | `p25-preview-spatial-v10-build-result.json` / build log; every mandatory gate passed, no Player launch |
 
 The earlier complete Windows candidate is external
-`artifacts/p25-preview-spatial-v10/`. Its manifest records exact source/meta
+the external candidate directory named `p25-preview-spatial-v10`. Its manifest records exact source/meta
 hashes, matching cumulative UI/HTTP evidence, final keyboard isolation and all
 prior cumulative gates. The own-Library build used BelowNormal priority and one
 worker. Generated settings were preserved externally, verified as whitespace-only
@@ -227,7 +308,7 @@ synchronized input is revoked and cannot POST after this response.
 | Final Windows v9 build | Passed, zero errors/exit 0 | `p25-preview-spatial-v9-build-result.json` / build log; frozen source `07db58c`, complete mandatory gates, no Player launch |
 
 The earlier complete runtime directory is external
-`artifacts/p25-preview-spatial-v9/`. It was built headlessly in this worktree's own
+the external candidate directory named `p25-preview-spatial-v9`. It was built headlessly in this worktree's own
 Library, with BelowNormal priority and one worker. All HTTP9 source hashes match
 the frozen build source. Generated settings were preserved to external evidence,
 verified as whitespace-only changes, and restored to the accepted baseline.
@@ -402,7 +483,7 @@ proof of a working VR gesture. The captured native button/menu workflows remain
 pending runtime acceptance.
 
 The verified Windows checkpoint is the external directory
-`artifacts/p25-preview-spatial-v7/`. The build used this feature worktree's own
+the external candidate directory named `p25-preview-spatial-v7`. The build used this feature worktree's own
 Library, Unity 6000.6.5f1 in batch/nographics mode with two job workers, and a
 BelowNormal Editor process. `P25Build.Windows` passed its mapping, transport and
 spatial gates, then the cumulative P2 placement/menu/scene, arrangement, accepted

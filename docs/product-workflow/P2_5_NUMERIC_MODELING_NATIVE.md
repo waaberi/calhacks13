@@ -168,8 +168,9 @@ loop. The evidence establishes these synchronous background failures; it does
 not establish a shortcut/helper/add-on defect or successful panel round trips.
 No GUI or additional process was launched to resolve this limitation.
 
-Evidence is preserved under the external
-`C:/Users/talia/Documents/Codex/calhacks13-p0/evidence/` directory:
+Evidence is preserved outside the repository under the run identifiers below.
+Native logs, result JSON and machine-specific paths stay in the private evidence
+archive; they are not distributable source artifacts:
 
 | Run | Actual result | Interpretation |
 | --- | --- | --- |
