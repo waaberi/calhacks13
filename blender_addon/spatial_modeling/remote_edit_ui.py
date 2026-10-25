@@ -26,7 +26,8 @@ def _prefs(context):
 
 def _client(context):
     prefs = _prefs(context)
-    return prefs is not None and prefs.role == "CLIENT"
+    return (prefs is not None and prefs.role == "CLIENT"
+            and not remote_client.native_mode_requested)
 
 
 def _connected():

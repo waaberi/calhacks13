@@ -1,0 +1,288 @@
+"""Native controller state/transport checks with a deterministic file adapter."""
+import hashlib
+import importlib
+import sys
+import types
+import uuid
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2] / "blender_addon/spatial_modeling"
+PACKAGE = "_native_controller_tests"
+package = types.ModuleType(PACKAGE)
+package.__path__ = [str(ROOT)]
+sys.modules[PACKAGE] = package
+client_module = importlib.import_module(PACKAGE + ".native_sync.client")
+wire = importlib.import_module(PACKAGE + ".native_sync.wire")
+NativeClient = client_module.NativeClient
+
+SCENE = uuid.uuid4().hex
+MANIFEST = {SCENE: {"group": "scenes", "name": "Original scene"}}
+IDENTITY = {key: uuid.uuid4().hex for key in ("session_id", "host_epoch", "document_id", "open_epoch")}
+ACTOR, LEASE = uuid.uuid4().hex, uuid.uuid4().hex
+
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def snapshot(data):
+    return SimpleNamespace(data=data, sha256=digest(data), manifest=MANIFEST,
+                           active_scene_uuid=SCENE)
+
+
+def head(data=b"host original", revision=0):
+    return {**IDENTITY, "revision": revision, "checkpoint_hash": digest(data)}
+
+
+def welcome(capable=True):
+    return {"session_id": IDENTITY["session_id"], "host_epoch": IDENTITY["host_epoch"],
+        "document": {"id": IDENTITY["document_id"], "open_epoch": IDENTITY["open_epoch"]},
+        "actor_id": ACTOR, "can_edit": True, "capabilities": {"native_sync": capable}}
+
+
+class Document:
+    def __init__(self):
+        self.data = b"empty"
+        self.safe = True
+        self.captures = 0
+        self.applies = 0
+
+    def is_idle(self):
+        return self.safe
+
+    def capture(self, path):
+        self.captures += 1
+        Path(path).write_bytes(self.data)
+        return snapshot(self.data)
+
+    def apply(self, path, manifest, on_done, _on_error, active_scene_uuid=None):
+        assert manifest == MANIFEST and active_scene_uuid == SCENE
+        # Local reserialization bytes intentionally DIFFER from the sender's.
+        self.data = b"local save:" + Path(path).read_bytes()
+        self.applies += 1
+        on_done({"datablocks": 1})
+
+
+def setup(tmp_path):
+    now = [0.0]
+    doc, sent = Document(), []
+    client = NativeClient(doc, lambda msg: sent.append(msg) or True, tmp_path,
+                          clock=lambda: now[0])
+    client.welcome(welcome())
+    feed(client)
+    return client, doc, sent, now
+
+
+def feed(client, data=b"host original", revision=0):
+    for payload in wire.iter_messages(snapshot(data), head(data, revision)):
+        client.receive("native.snapshot", payload)
+    client.tick()
+
+
+def edit_turn(client):
+    assert client.take_edit_turn()
+    client.receive("lease.granted", (client._lease_request, {"lease": {
+        "lease_id": LEASE, "mode": "exclusive", "owner": {"actor_id": ACTOR}}}))
+    assert not client.is_editing  # grant alone does not authorize a stale local model
+    feed(client)
+    assert client.is_editing
+
+
+def edited(client, doc, now, value=b"native Edit Mode and material change"):
+    doc.data = value
+    now[0] += 1
+    client.mark_dirty()
+    now[0] += .3
+    client.tick()
+    return client.watcher.pending
+
+
+def test_missing_native_capability_refuses_silent_limited_fallback(tmp_path):
+    sent = []
+    client = NativeClient(Document(), lambda msg: sent.append(msg) or True, tmp_path)
+    client.welcome(welcome(capable=False))
+    assert not client.enabled and not client.connected and not sent
+    assert "no limited mirror" in client.status
+
+
+def test_download_establishes_own_serialization_baseline_and_suppresses_echo(tmp_path):
+    client, doc, sent, now = setup(tmp_path)
+    assert client.has_native_document and doc.applies == 1
+    assert client.watcher.baseline_hash == digest(doc.data)
+    assert client.watcher.baseline_hash != client.head["checkpoint_hash"]
+    client.mark_dirty(1)
+    now[0] = 2
+    client.tick()
+    assert not client.watcher.has_local_changes
+    assert [msg["type"] for msg in sent] == ["native.get"]
+
+
+def test_explicit_grant_requires_actual_owner_then_fresh_native_document(tmp_path):
+    client, doc, sent, _ = setup(tmp_path)
+    edit_turn(client)
+    acquire = next(msg for msg in sent if msg["type"] == "lease.acquire")
+    assert acquire["payload"] == {**IDENTITY, "actor_id": ACTOR,
+                                  "mode": "exclusive", "targets": []}
+    assert [msg["type"] for msg in sent].count("native.get") == 2
+    assert doc.applies == 2 and client.is_editing
+
+
+def test_native_edit_waits_for_idle_then_paces_upload_after_begin_ack(tmp_path):
+    client, doc, sent, now = setup(tmp_path)
+    edit_turn(client)
+    doc.safe = False
+    doc.data = b"a" * (wire.CHUNK_BYTES * 2 + 19)
+    client.mark_dirty(1)
+    now[0] = 2
+    previous = doc.captures
+    client.tick()
+    assert doc.captures == previous and not client.watcher.pending
+    doc.safe = True
+    client.tick()
+    pending = client.watcher.pending
+    assert sent[-1]["type"] == "native.begin"
+    for _ in range(3):
+        client.tick()
+    assert not any(msg["type"] == "native.chunk" for msg in sent)
+    client.receive("native.receipt", {"request_id": pending.request_id, "outcome": "pending"})
+    for index in range(3):
+        client.tick()
+        assert sum(msg["type"] == "native.chunk" for msg in sent) == index + 1
+    client.tick()
+    assert sent[-1]["type"] == "native.commit"
+    assert all(msg["payload"]["lease_id"] == LEASE for msg in sent
+               if msg["type"] in {"native.begin", "native.chunk", "native.commit"})
+
+
+def test_applied_receipt_uses_host_cas_head_but_own_saved_baseline(tmp_path):
+    client, doc, _, now = setup(tmp_path)
+    edit_turn(client)
+    pending = edited(client, doc, now)
+    remote_hash = digest(b"host reserialized accepted native data")
+    client.receive("native.receipt", {"request_id": pending.request_id, "outcome": "applied",
+                                      "revision": 1, "checkpoint_hash": remote_hash})
+    assert client.head["checkpoint_hash"] == remote_hash
+    assert client.watcher.baseline_hash == pending.checkpoint_hash != remote_hash
+    client.mark_dirty()
+    now[0] += .3
+    client.tick()
+    assert client.watcher.pending is None and not client.watcher.dirty
+
+
+def test_rejection_and_incoming_snapshot_never_replace_local_native_draft(tmp_path):
+    client, doc, sent, now = setup(tmp_path)
+    edit_turn(client)
+    pending = edited(client, doc, now)
+    client.receive("native.receipt", {"request_id": pending.request_id, "outcome": "rejected",
+                                      "code": "stale_revision"})
+    before, applies = doc.data, doc.applies
+    feed(client, b"a newer host graph", revision=1)
+    assert doc.data == before and doc.applies == applies
+    assert client.watcher.retained_draft is pending
+    assert (tmp_path / ("draft-" + pending.request_id + ".blend")).read_bytes() == before
+    count = len(sent)
+    for _ in range(10):
+        client.tick()
+    assert len(sent) == count  # no replay and no silent reacquisition
+
+
+def test_disconnect_preserves_document_and_draft_and_never_replays_on_welcome(tmp_path):
+    client, doc, sent, now = setup(tmp_path)
+    edit_turn(client)
+    pending = edited(client, doc, now)
+    before, applies = doc.data, doc.applies
+    client.disconnect()
+    assert client.watcher.rejection == "unknown_after_disconnect"
+    assert client.has_native_document and doc.data == before
+    client.welcome(welcome())
+    feed(client)
+    assert doc.data == before and doc.applies == applies
+    assert client.watcher.pending is pending
+    assert [msg["type"] for msg in sent].count("native.begin") == 1
+
+
+def test_viewer_edits_are_retained_instead_of_overwritten_or_implicitly_shared(tmp_path):
+    client, doc, sent, now = setup(tmp_path)
+    pending = edited(client, doc, now, b"unsanctioned local draft")
+    assert pending is not None and client.watcher.rejection == "edit_turn_required"
+    assert not any(msg["type"] == "native.begin" for msg in sent)
+    assert not client.take_edit_turn()
+    copy = tmp_path / "saved-local-copy.blend"
+    client.save_copy(copy)
+    assert copy.read_bytes() == doc.data
+    assert client.reload_host(discard=True)
+    feed(client, b"latest host", revision=1)
+    assert doc.data == b"local save:latest host"
+    assert not client.watcher.has_local_changes
+
+
+def test_finish_waits_for_final_checkpoint_ack_before_releasing(tmp_path):
+    client, doc, sent, now = setup(tmp_path)
+    edit_turn(client)
+    pending = edited(client, doc, now)
+    assert client.finish_edit_turn()
+    now[0] += .3
+    client.tick()
+    assert not any(msg["type"] == "lease.release" for msg in sent)
+    client.receive("native.receipt", {"request_id": pending.request_id, "outcome": "applied",
+                                      "revision": 1, "checkpoint_hash": digest(b"host1")})
+    client.tick()  # final native capture equals our acknowledged saved bytes
+    assert sent[-1]["type"] == "lease.release" and not client.is_editing
+
+
+def test_lease_loss_stops_sharing_but_keeps_native_document(tmp_path):
+    client, doc, _, _ = setup(tmp_path)
+    edit_turn(client)
+    before = doc.data
+    client.receive("session.update", {"leases": []})
+    assert not client.is_editing and doc.data == before
+
+
+def test_incoming_write_failure_leaves_client_recoverable_without_auto_retry(tmp_path, monkeypatch):
+    client, doc, _, _ = setup(tmp_path)
+    original_write = Path.write_bytes
+
+    def fail_incoming(path, content):
+        if path.name.startswith("incoming-"):
+            raise OSError("disk full")
+        return original_write(path, content)
+
+    monkeypatch.setattr(Path, "write_bytes", fail_incoming)
+    feed(client, b"new native graph", revision=1)
+    assert not client.applying and client._download_failed
+    before = doc.applies
+    client.tick()
+    assert doc.applies == before
+    monkeypatch.setattr(Path, "write_bytes", original_write)
+    assert client.reload_host()
+    feed(client, b"new native graph", revision=1)
+    assert not client.applying and doc.applies == before + 1
+
+
+def test_post_apply_capture_failure_preserves_document_but_never_grants_edit_turn(tmp_path, monkeypatch):
+    client, doc, _, _ = setup(tmp_path)
+    assert client.take_edit_turn()
+    client.receive("lease.granted", (client._lease_request, {"lease": {
+        "lease_id": LEASE, "mode": "exclusive", "owner": {"actor_id": ACTOR}}}))
+
+    def failed_capture(_path):
+        raise OSError("cannot save local baseline")
+
+    monkeypatch.setattr(doc, "capture", failed_capture)
+    feed(client)
+    assert not client.applying and client.has_native_document
+    assert not client.is_editing and "baseline" in client.error
+
+
+def test_wrong_document_snapshot_is_rejected_before_native_apply(tmp_path):
+    client, doc, _, _ = setup(tmp_path)
+    bad_head = head()
+    bad_head["open_epoch"] = uuid.uuid4().hex
+    before = doc.applies
+    with pytest.raises(ValueError, match="another session"):
+        for payload in wire.iter_messages(snapshot(b"other file"), bad_head):
+            client.receive("native.snapshot", payload)
+    assert doc.applies == before

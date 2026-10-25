@@ -21,11 +21,14 @@ live = LiveEdits()
 _link = _mirror = None
 _draw_handle = None
 _can_edit = False
+native_mode_requested = False
+native_client = None
 
 
 def controlled_edit_enabled():
     """The actual welcomed host capability; never a locally inferred permission."""
-    return bool(_can_edit and state.current and _link is not None and _link.healthy)
+    return bool(not native_mode_requested and _can_edit and state.current
+                and _link is not None and _link.healthy)
 
 
 def ownership_state():
@@ -39,6 +42,8 @@ def edit_blocked():
     """None when a Client edit may be sent now, otherwise the reason to show."""
     if _link is None:
         return "Not connected to the host"
+    if native_mode_requested:
+        return "Use the native Blender edit turn controls; local Undo remains native"
     return requests.blocked(state.current, _can_edit, _link.healthy)
 
 
@@ -75,19 +80,31 @@ def participants():
     return copy.deepcopy(presence.participants) if ownership_state()[1] else []
 
 
-def connect(address, token, version, name="Blender viewer", port=8767, tls=True):
-    global _link, _mirror, state, requests
+def connect(address, token, version, name="Blender viewer", port=8767, tls=True, *, native=False):
+    global _link, _mirror, state, requests, native_mode_requested, native_client
     from .mirror import Mirror
     from .transport import ReadOnlyLink
     disconnect()
-    _mirror = Mirror()
+    native_mode_requested = bool(native)
+    if not (native and native_client is not None and native_client.has_native_document):
+        _mirror = Mirror()  # retains the separate empty-session safety check
+    if native and native_client is None:
+        from pathlib import Path
+        from tempfile import mkdtemp
+
+        from ..native_sync.client import NativeClient
+        from ..native_sync.document import NativeDocument
+        native_client = NativeClient(NativeDocument(),
+            lambda msg: _link is not None and _link.send(msg),
+            Path(mkdtemp(prefix="spatial-native-client-")))
     state = SceneState()
     requests = RequestTracker()
     live.reset()
     try:
         _link = ReadOnlyLink(address, token, version, name, port, tls)
     except Exception:
-        _mirror.clear()
+        if _mirror is not None:
+            _mirror.clear()
         _mirror = None
         raise
     import bpy
@@ -96,7 +113,7 @@ def connect(address, token, version, name="Blender viewer", port=8767, tls=True)
 
 
 def poll():
-    global _can_edit
+    global _can_edit, _mirror
     import bpy
     if _link is None:
         return None
@@ -104,6 +121,8 @@ def poll():
         requests.disconnected()
         _can_edit = False
         presence.clear()
+        if native_mode_requested and native_client is not None:
+            native_client.disconnect()
         if not state.status.startswith("Connection refused"):  # keep why the host refused
             state.stale("Connection stopped — reconnect explicitly; last scene is stale")
     try:
@@ -113,6 +132,11 @@ def poll():
             except queue.Empty:
                 break
             if kind in ("scene.snapshot", "scene.update"):
+                if native_mode_requested:
+                    # Native checkpoints own all original data. Evaluated mesh
+                    # updates remain useful to VR, but never touch this document.
+                    state.document = copy.deepcopy(payload["document"])
+                    continue
                 previous_document = state.document or {}
                 incoming_document = payload.get("document", {})
                 changed_document = any(previous_document.get(key) != incoming_document.get(key)
@@ -135,6 +159,11 @@ def poll():
             elif kind == "welcome":
                 presence.welcomed(payload)
                 _can_edit = payload.get("can_edit") is True
+                if native_mode_requested and native_client is not None:
+                    if _mirror is not None:
+                        _mirror.clear()  # only the initially empty owned collection
+                        _mirror = None
+                    native_client.welcome(payload)
                 state.stale("Receiving a fresh host snapshot — read-only")
                 _send_queries(requests.welcomed(payload))
             elif kind == "result":
@@ -143,18 +172,27 @@ def poll():
                 requests.on_receipts(*payload)
             elif kind == "reply_error":
                 requests.on_reply_error(*payload)
+                if native_mode_requested and native_client is not None:
+                    native_client.receive(kind, payload)
+            elif kind == "lease.granted" or kind.startswith("native."):
+                if native_mode_requested and native_client is not None:
+                    native_client.receive(kind, payload)
             elif kind in ("session.update", "activity"):
                 # Presence changes must never invalidate an otherwise current
                 # scene or apply geometry/materials to the read-only mirror.
                 try:
                     if kind == "session.update":
                         presence.receive(payload)
+                        if native_mode_requested and native_client is not None:
+                            native_client.receive(kind, payload)
                     else:
                         presence.activity(payload)
                 except (ValueError, KeyError, TypeError):
                     presence.clear()
                     _can_edit = False
             elif kind == "error":
+                if native_mode_requested and native_client is not None:
+                    native_client.disconnect()
                 requests.disconnected()
                 _can_edit = False
                 presence.clear()
@@ -164,6 +202,8 @@ def poll():
             else:
                 if kind == "disconnected":
                     requests.disconnected()
+                    if native_mode_requested and native_client is not None:
+                        native_client.disconnect()
                 _can_edit = False
                 presence.clear()
                 state.stale(payload or "Connecting — last scene is stale")
@@ -171,13 +211,23 @@ def poll():
         _can_edit = False
         presence.clear()
         state.stale("Scene could not be verified/applied — reconnect for a fresh snapshot")
+        if native_mode_requested and native_client is not None:
+            native_client.disconnect()
         _link.stop()
     if state.current and not _link.healthy:
         requests.disconnected()
         _can_edit = False
         presence.clear()
         state.stale("Host is not responding — last scene is stale")
-    if _link is not None:
+    if _link is not None and native_mode_requested and native_client is not None:
+        try:
+            native_client.tick()
+            state.current = bool(native_client.connected and native_client.has_native_document
+                                 and not native_client.applying)
+            state.status = native_client.status
+        except (OSError, ValueError, RuntimeError):
+            native_client.error = "Native checkpoint waits for a settled writable local file"
+    elif _link is not None:
         _live_tick()
     for window in bpy.context.window_manager.windows:
         for area in window.screen.areas:
@@ -271,6 +321,8 @@ def disconnect():
     _link = None
     requests.disconnected()
     _can_edit = False
+    if native_mode_requested and native_client is not None:
+        native_client.disconnect()
     live.reset()
     presence.clear()
     if bpy.app.timers.is_registered(poll):
@@ -301,16 +353,35 @@ def register():
         _draw_handle = bpy.types.SpaceView3D.draw_handler_add(_draw_status, (), "WINDOW", "POST_PIXEL")
     if _before_load not in bpy.app.handlers.load_pre:
         bpy.app.handlers.load_pre.append(_before_load)
+    from ..native_sync import ui as native_ui
+    native_ui.register()
+    for handlers in (bpy.app.handlers.depsgraph_update_post,
+                     bpy.app.handlers.undo_post, bpy.app.handlers.redo_post):
+        if _native_observe not in handlers:
+            handlers.append(_native_observe)
 
 
 def _before_load(*_):
     disconnect()
+    if native_client is not None:
+        native_client.has_native_document = False
+
+
+def _native_observe(*_):
+    if native_mode_requested and native_client is not None:
+        native_client.mark_dirty()
 
 
 def unregister():
     global _draw_handle
     import bpy
     disconnect()
+    from ..native_sync import ui as native_ui
+    native_ui.unregister()
+    for handlers in (bpy.app.handlers.depsgraph_update_post,
+                     bpy.app.handlers.undo_post, bpy.app.handlers.redo_post):
+        if _native_observe in handlers:
+            handlers.remove(_native_observe)
     if _draw_handle is not None:
         bpy.types.SpaceView3D.draw_handler_remove(_draw_handle, "WINDOW")
         _draw_handle = None
