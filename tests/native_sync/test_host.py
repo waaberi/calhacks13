@@ -276,3 +276,29 @@ def test_checkpoint_file_write_failure_cannot_leave_an_unreceipted_prepared_tran
     assert receipts[-1]["payload"]["outcome"] in {"unknown", "rejected"}
     assert f.host.state.pending is None and not f.host.busy
     assert f.session.committing == 0 and not f.native.applies
+    assert RID not in f.host.manifests
+
+
+def test_lease_revoked_during_async_apply_is_unknown_and_always_releases_guard(fixture):
+    f = fixture
+    _, payload = upload(f)
+    call(f, "native.commit", payload)
+    f.session.leases.clear()
+    f.native.done()
+    assert f.conn.sent[-1]["payload"]["outcome"] == "unknown"
+    assert not f.host.busy and f.session.committing == 0
+
+
+def test_receiving_timeout_releases_bytes_and_manifest_without_native_mutation(fixture, monkeypatch):
+    f = fixture
+    begin(f)
+    f.host.subscribers.add(f.conn)
+    now = f.host.last_upload + 61
+    monkeypatch.setattr(HOST_MODULE, "time", types.SimpleNamespace(monotonic=lambda: now))
+    f.host.next_audit = now + 100
+    f.host.poll()
+    assert f.host.state.pending is None and RID not in f.host.manifests
+    reply = call(f, "native.query", {**identity(f), "request_id": RID})
+    assert reply["payload"]["outcome"] == "rejected"
+    assert reply["payload"]["code"] == "transfer_timeout"
+    assert not f.native.applies
