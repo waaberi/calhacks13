@@ -57,7 +57,16 @@ namespace SpatialModeling
             return true;
         }
 
-        public bool SelectControllerObject(string id) => ControllerTargetingReady && SelectObject(id);
+        public bool SelectControllerObject(string id)
+        {
+            if (!ControllerTargetingReady || ObjectName(id) == null) return false;
+            if (SelectedObjectId != id) return SelectObject(id);
+            string name = ObjectName(id);
+            ClearObjectSelection();
+            Note("Deselected: " + name);
+            Debug.Log("VOICE_SELECTION target=none previous=" + id + " reason=trigger_toggle drag=False");
+            return true;
+        }
 
         public void ClearObjectSelection()
         {

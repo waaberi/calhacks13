@@ -66,11 +66,19 @@ public static class VoiceSelectionChecks
             Check(interaction.PointedObjectId == views[0].ObjectId && voice.SelectedObjectId == null, "controller mesh hit points without selecting");
             aim(right,left,toward(0),true,false);
             Check(voice.SelectedObjectId == views[0].ObjectId && !interaction.IsHolding, "front trigger selects exact object without beginning any hold");
+            aim(right,left,toward(0),false,false);
+            aim(right,left,toward(0),true,false);
+            Check(voice.SelectedObjectId==null && !interaction.IsHolding,"a second trigger click on the selected object deselects without dragging");
+            aim(right,left,toward(0),false,false);
+            aim(right,left,toward(0),true,false);
+            Check(voice.SelectedObjectId==views[0].ObjectId,"a later fresh trigger click can select it again");
             aim(right,left,toward(1),false,false);
             Check(voice.SelectedObjectId == views[0].ObjectId, "selection remains latched when pointer moves away");
             var core = (VoiceSession)Get(voice,"session");
             var command = core.Hear(new RecognitionResult("rotate it ninety degrees around x",1f)).Command;
             Check(command != null && command.TargetId == views[0].ObjectId, "actual VoiceSession resolves this/it to explicit selection rather than hover");
+            var namedCommand = core.Hear(new RecognitionResult("rotate " + views[1].name + " forty five degrees around x",1f)).Command;
+            Check(namedCommand!=null && namedCommand.TargetId==views[1].ObjectId,"an explicit spoken object name targets that object rather than silently overriding it with selection");
             for(int i=0;i<views.Length;i++)
                 Check(Vector3.Distance(poses[i].position,views[i].transform.position)<.000001f &&
                     Quaternion.Angle(poses[i].rotation,views[i].transform.rotation)<.0001f && views[i].NativePosition==native[i],

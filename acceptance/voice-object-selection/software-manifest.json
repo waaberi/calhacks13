@@ -3,8 +3,8 @@
   "branch": "codex/talia-voice-object-selection",
   "build_succeeded": true,
   "build_errors": 0,
-  "physical_acceptance": "PENDING",
-  "assembly_sha256": "2ac334439b5b9095619b775f7e9be808fd11e203fa4dd966af0d7cecdfd7367c",
+  "physical_acceptance": "PENDING on v2; v1 native/log rotation evidence recorded separately",
+  "assembly_sha256": "0013ed36bd28293173b39d4fb6b418847d1fd13e3d4b07128d00ca3c7e8ce499",
   "capture_launcher_tests": 30,
   "standalone_xr_flags": 34,
   "standalone_xr_flags_unchanged": true,
@@ -69,7 +69,7 @@
     "app\\Assets\\Editor\\RoomSpaceReplayChecks.cs.meta": "9eba7c168e30a147d08182e11ec34cd1affe1871412e5b9b882eb13b6f977804",
     "app\\Assets\\Editor\\SettingsMenuChecks.cs": "b4772b77b88c0f8ad2c8c154bcc19d66f9958e23cea2bd8d90f038ac707f81c1",
     "app\\Assets\\Editor\\SettingsMenuChecks.cs.meta": "78dce1bce436d7b80dd3d6a344f3d90b7f11fce85e2bd008f4d36118fb15fce0",
-    "app\\Assets\\Editor\\VoiceSelectionChecks.cs": "853190f082569d16a54fe8e47dc1a1d4a31c05a4a219c52c83cda56ea5548742",
+    "app\\Assets\\Editor\\VoiceSelectionChecks.cs": "40c3fb5b9d0c0c5d05ba0f19f74b0f017a7768d9436c1e72684e97db60fac80a",
     "app\\Assets\\Editor\\VoiceSelectionChecks.cs.meta": "807c680f9769e5011260a61d4cc60e34b89f8b1b59e5c193595c729cf90a79c1",
     "app\\Assets\\Editor\\WorkspaceChecks.cs": "bdf5c0aec577a4f5da4ebd189b2fb143fce04fde46ad8d667fc428e76491d874",
     "app\\Assets\\Editor\\WorkspaceChecks.cs.meta": "09a7df98c29678be648a4f20ff481c5ae2bb6339dd3aacbddf3f9672b3168972",
@@ -184,7 +184,7 @@
     "app\\Assets\\SpatialModeling\\Scripts\\TablePlacement.cs.meta": "9654143ddabc3bfe905302f8e52bc22cfe477ceb3484049a33d93d7a0ba504cb",
     "app\\Assets\\SpatialModeling\\Scripts\\VoiceUiAdapter.cs": "d19ba911487ff3724443b183e423fb3a441818758909b3f074a8c3a8f6bf2acd",
     "app\\Assets\\SpatialModeling\\Scripts\\VoiceUiAdapter.cs.meta": "7dba338151df8962e657d84b8097eaae2e448f6028d5fbd81a96ae4d8c4bfb43",
-    "app\\Assets\\SpatialModeling\\Scripts\\VoiceUiAdapter.Selection.cs": "1395a795ab343550c7e6be3597316780d921c454ad4f016fc4fd18444dfeea1c",
+    "app\\Assets\\SpatialModeling\\Scripts\\VoiceUiAdapter.Selection.cs": "2e134c0836f6821f87405a4c5db87d02be8ae3f9196cfbfc20391ac798afb124",
     "app\\Assets\\SpatialModeling\\Scripts\\VoiceUiAdapter.Selection.cs.meta": "051ae21f5170bbad5f83447bd1a854f9a721a0e5a5ad32f7812695070b0c54cd",
     "app\\Assets\\SpatialModeling\\Scripts\\WorkspaceArrangement.cs": "7bdc29b2ee40791053579c3efc8fe95ff19fda2d13c928fdfdc824ebf965b85d",
     "app\\Assets\\SpatialModeling\\Scripts\\WorkspaceArrangement.cs.meta": "416c3d97b0c2067dbc239b1d92fe2e4774f09dd2beaabdbf0c4872f9fedc9b28",
@@ -295,5 +295,7 @@
     "voice\\VoiceCore\\Prompts\\Resources\\VoiceCorePrompts\\wrong_unit_factor.ogg.meta": "fd953431c0802b011dd33364a54acd235655c80b3bd794712c7067671e9df784"
   },
   "initial_failure": "Editor fixture HostEvent constructor API mismatch; corrected before successful cumulative build",
-  "source_scope": "controller ray/trigger selection, persistent voice target, outline/menu feedback; no curvature or drag mapping change"
+  "source_scope": "controller ray/trigger selection, persistent voice target, outline/menu feedback; no curvature or drag mapping change",
+  "trigger_toggle": "same selected object fresh trigger click deselects; spoken Select remains idempotent",
+  "named_target_regression": "explicit spoken name overrides selection; it uses selected UUID"
 }
