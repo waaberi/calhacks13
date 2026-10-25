@@ -196,6 +196,7 @@ Core commands, always available. Write every number as English words (""forty fi
   Without a distance say for example ""move this up"" or ""move this along negative x"": the app asks for the distance.
 - rotate this <number> degrees around <x|y|z>
 - scale this by <factor>   (""by two"" doubles, ""by zero point five"" halves)
+  Without a factor say just ""scale this"": the app asks for the amount. Same for ""rotate this"" without an angle.
 - scale this to <number> percent
 - delete this | undo | redo | cancel
 - select the <object name>
@@ -214,6 +215,7 @@ Rules:
 
 Examples:
 make this twice as big -> {""phrase"": ""scale this by two"", ""reason"": """"}
+make it a bit bigger -> {""phrase"": ""scale this"", ""reason"": """"}
 make it half the size -> {""phrase"": ""scale this to fifty percent"", ""reason"": """"}
 turn it forty five degrees -> {""phrase"": ""rotate this forty five degrees"", ""reason"": """"}
 shove it left ten centimeters -> {""phrase"": ""move this ten centimeters along negative x"", ""reason"": """"}
