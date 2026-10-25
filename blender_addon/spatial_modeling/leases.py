@@ -158,7 +158,9 @@ class Leases:
             self.evicted = True
 
         def answer(reply):
-            self.requests[rid] = (digest, reply["type"], reply["payload"])
+            # A delayed decision must not resurrect an evicted request ID.
+            if rid in self.requests:
+                self.requests[rid] = (digest, reply["type"], reply["payload"])
             return reply
 
         return self._acquire(rid, p, conn, answer)
@@ -203,9 +205,31 @@ class Leases:
                            f"{', '.join(missing)}.")
         mode = p["mode"]
         covered = self.covered(p["targets"]) if mode == "shared" else []
+        generations = {target: self.editor.generation(target) for target in covered}
         now = {"deciding": True, "reply": None}
 
         def decided(lease, error):
+            # The network decision can outlive its connection, document or targets.
+            # Recheck on Blender's main thread before announcing any grant.
+            problem = None
+            current = self.session.participants.get(conn)
+            current_doc = self.session.document()
+            if current != actor or not getattr(conn, "can_edit", False):
+                problem = session_store.SessionError("permission_denied", "The requesting writer disconnected or changed.")
+            elif (p["session_id"], p["host_epoch"]) != (self.session.session_id, self.session.host_epoch):
+                problem = session_store.SessionError("wrong_session", "The host session changed while deciding this lease.")
+            elif (p["document_id"], p["open_epoch"]) != (current_doc["id"], current_doc["open_epoch"]):
+                problem = session_store.SessionError("wrong_document", "The document changed while deciding this lease.")
+            elif (any(self.editor.generation(target) != generation for target, generation in generations.items())
+                  or (mode == "shared" and self.covered(p["targets"]) != covered)):
+                problem = session_store.SessionError("stale_revision", "The lease targets changed while permission was pending; request again.")
+            if problem is not None:
+                if lease is not None:
+                    try:
+                        self.store.release(lease["lease_id"], actor["actor_id"])
+                    except session_store.SessionError:
+                        pass  # disconnect already removed the reservation
+                lease, error = None, problem
             if error is not None:
                 if error.code == "lease_conflict":
                     error = self._conflict(error.details and error.details.get("lease"),

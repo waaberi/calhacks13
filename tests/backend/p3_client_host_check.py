@@ -1,4 +1,5 @@
 """Isolated real native Host for the production P2 Client/operator proof."""
+import functools
 import json
 import sys
 import time
@@ -10,7 +11,18 @@ import bpy
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "blender_addon"))
-from spatial_modeling import commands, document, edits, host, lan, leases, server, session, sync
+from spatial_modeling import (
+    commands,
+    document,
+    edits,
+    host,
+    lan,
+    leases,
+    server,
+    session,
+    session_store,
+    sync,
+)
 
 folder = Path(sys.argv[sys.argv.index("--") + 1])
 config = json.loads((folder / "config.json").read_text())
@@ -23,7 +35,12 @@ bpy.ops.mesh.primitive_cube_add(size=.02 / scale, location=(.01 / scale, 0, 0))
 bpy.context.object.name = "Controlled host 20mm cube"
 bpy.ops.ed.undo_push(message="Controlled native baseline")
 doc = document.Document()
-sess = session.Session(sync.describe, sync.snapshot, uuid.uuid4().hex, client_can_edit=False)
+store = None
+if config.get("store"):
+    url, database = config["store"]
+    store = session_store.MirroredStore(functools.partial(
+        session_store.SpacetimeStore, folder / "private-store-token", url=url, database=database))
+sess = session.Session(sync.describe, sync.snapshot, uuid.uuid4().hex, client_can_edit=False, store=store)
 editor = edits.Editor(sync, host.undoable, doc)
 lses = leases.Leases(sess, editor)
 cmds = commands.Commands(sess, editor, leases=lses)
@@ -73,22 +90,33 @@ def tick():
     global delay, display_lease
     try:
         srv.drain()
+        sess.store.poll()
         for entry in list(deferred):
             when, msg, conn = entry
             if time.monotonic() >= when:
                 deferred.remove(entry)
                 # A disconnected actor must not be re-granted a lease.
                 if conn in sess.participants:
-                    conn.send(original_acquire(msg, conn))
+                    reply = original_acquire(msg, conn)
+                    if reply is not None:
+                        conn.send(reply)
         bpy.context.view_layer.update()
         sync.poll()
-        if not (folder / "ready.json").exists() and time.monotonic() - started > 1:
+        if (not (folder / "ready.json").exists() and time.monotonic() - started > 1
+                and (store is None or store.deciding)):
             (folder / "ready.json").write_text(json.dumps({"port": listener.port,
                 "cube_id": cube_id, "native": native()}), encoding="utf-8")
         action_file = folder / "action.json"
         if action_file.exists():
-            action = json.loads(action_file.read_text())
-            action_file.unlink()
+            try:
+                action = json.loads(action_file.read_text())
+                action_file.unlink()
+            except (PermissionError, json.JSONDecodeError):
+                # Windows can briefly lock a just-published fixture message.
+                # Keep servicing the real server; the overall deadline remains bounded.
+                if time.monotonic() - started > config.get("test_timeout", 150):
+                    raise
+                return .01
             name = action["action"]
             if name == "flag_on":
                 sess.client_can_edit = True
@@ -113,9 +141,12 @@ def tick():
                 (folder / "host-result.json").write_text(json.dumps(report), encoding="utf-8")
                 sync.stop()
                 srv.stop()
+                if store is not None:
+                    store.close()
+                    store._thread.join(5)
                 bpy.ops.wm.quit_blender()
                 return None
-        if time.monotonic() - started > 150:
+        if time.monotonic() - started > config.get("test_timeout", 150):
             raise TimeoutError("Production Client test did not finish")
         return .01
     except Exception:  # noqa: BLE001 - preserve timer failures before isolated Blender exits

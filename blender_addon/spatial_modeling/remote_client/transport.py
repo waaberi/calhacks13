@@ -152,6 +152,10 @@ class ReadOnlyLink:
                             elif kind in ("welcome", "scene.snapshot", "scene.update",
                                           "session.update", "activity", "result"):
                                 self._post(kind, body)
+                            elif kind == "lease.granted":
+                                self._post(kind, (reply_to, body))
+                            elif kind in ("native.head", "native.snapshot", "native.receipt"):
+                                self._post(kind, body)
                             elif kind == "receipts":
                                 self._post(kind, (reply_to, body))
                         if len(buffer) > protocol.MAX_LINE_BYTES:

@@ -4,6 +4,7 @@ import json
 import sys
 import time
 import traceback
+import urllib.request
 from pathlib import Path
 
 import bpy
@@ -22,7 +23,8 @@ hashes = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
           for p in (ROOT / "blender_addon/spatial_modeling").rglob("*.py")}
 
 
-def wait_for(test, timeout=12):
+def wait_for(test, timeout=None):
+    timeout = config.get("condition_timeout", 12) if timeout is None else timeout
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if (folder / "host-error.txt").exists():
@@ -39,6 +41,13 @@ def wait_for(test, timeout=12):
 
 
 def action(name):
+    if config.get("control_url"):
+        # Disposable cross-OS fixture control only; editing still uses production TLS.
+        request = urllib.request.Request(config["control_url"],
+            data=json.dumps({"action": name}).encode(), headers={"Content-Type": "application/json"})
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(request, timeout=config.get("condition_timeout", 12)) as reply:
+            return json.load(reply)["native"]
     response = folder / "action-result.json"
     response.unlink(missing_ok=True)
     temp = folder / "action.tmp"
@@ -64,7 +73,7 @@ try:
     prefs = bpy.context.preferences.addons["spatial_modeling"].preferences
     prefs.role = "CLIENT"
     addon.host.sync = original_sync
-    prefs.client_address, prefs.client_port = "127.0.0.1", ready["port"]
+    prefs.client_address, prefs.client_port = config.get("host_address", "127.0.0.1"), ready["port"]
     prefs.client_token, prefs.client_tls = config["token"], True
     assert bpy.ops.spatial_modeling.connect_readonly() == {"FINISHED"}
     wait_for(lambda: remote_client.state.current)

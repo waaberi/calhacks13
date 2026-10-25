@@ -16,7 +16,9 @@ namespace SpatialModeling
         string shown = "";
         string activityLine = "";
         float activityUntil;
-        // Lease IDs are never reused, so this only grows: a reconnect doesn't announce old leases again.
+        string identity = "";
+        bool visible, hadRemoteParticipant;
+        // Remember only this session's live reservations, not every historical lease.
         readonly HashSet<string> seenLeases = new HashSet<string>();
         readonly HashSet<string> editors = new HashSet<string>();
         readonly Dictionary<string, TextMesh> tags = new Dictionary<string, TextMesh>();
@@ -37,6 +39,7 @@ namespace SpatialModeling
             text = gameObject.AddComponent<TextMesh>();
             text.fontSize = 48; text.characterSize = 0.006f; text.anchor = TextAnchor.UpperLeft;
             text.color = Color.white;
+            text.text = "";
             VoiceUiAdapter.SetupText(text, gameObject);
         }
 
@@ -50,9 +53,13 @@ namespace SpatialModeling
 
         void OnDestroy()
         {
-            if (host == null) return;
-            host.ActivityReceived -= OnActivity;
-            host.SessionChanged -= OnSession;
+            if (host != null)
+            {
+                host.ActivityReceived -= OnActivity;
+                host.SessionChanged -= OnSession;
+            }
+            foreach (var tag in tags.Values) if (tag != null) Destroy(tag.gameObject);
+            tags.Clear();
         }
 
         void OnActivity(ActivityNote n)
@@ -64,6 +71,18 @@ namespace SpatialModeling
         // A lease you haven't seen before is the notice that someone started editing (contracts/README.md).
         void OnSession()
         {
+            string currentIdentity = host.MyActorId;
+            if (identity != currentIdentity)
+            {
+                identity = currentIdentity;
+                seenLeases.Clear(); activityLine = ""; activityUntil = 0;
+                hadRemoteParticipant = false;
+            }
+            if (HasRemoteParticipant) hadRemoteParticipant = true;
+            else if (!host.SceneIsStale) hadRemoteParticipant = false;
+            var live = new HashSet<string>();
+            foreach (var l in host.Leases) live.Add(l.Id);
+            seenLeases.RemoveWhere(id => !live.Contains(id));
             foreach (var l in host.Leases)
                 if (seenLeases.Add(l.Id) && l.Owner.Id != host.MyActorId)
                 {
@@ -86,14 +105,27 @@ namespace SpatialModeling
             return names.Count > 0 ? string.Join(", ", names) : "objects";
         }
 
+        public bool HasRemoteParticipant
+        {
+            get
+            {
+                if (host == null) return false;
+                foreach (var p in host.Participants)
+                    if (p.Id != host.MyActorId && p.Role != "host") return true;
+                return false;
+            }
+        }
+
         string BuildText()
         {
+            // The host desktop and its local VR preview are connections, not two people.
+            if (!HasRemoteParticipant && !(hadRemoteParticipant && host.SceneIsStale)) return "";
             sb.Length = 0;
             if (host.SceneIsStale)
                 sb.Append("Disconnected: this scene is stale.\nEdits are off until Blender is back.");
             else
             {
-                sb.Append("In session: ").Append(host.Participants.Count);
+                sb.Append("Session connections: ").Append(host.Participants.Count);
                 foreach (var p in host.Participants)
                     sb.Append('\n').Append(p.Name).Append(p.Id == host.MyActorId ? " (you)" : " (" + p.Role + ")");
                 editors.Clear();
@@ -104,7 +136,7 @@ namespace SpatialModeling
                         sb.Append('\n').Append(l.Owner.Name).Append(" is editing: ").Append(TargetNames(l));
                 }
                 // contracts/README.md, Leases and presence.
-                if (editors.Count >= 2) sb.Append("\nTwo people are editing");
+                if (editors.Count >= 2) sb.Append("\n").Append(editors.Count).Append(" active writers");
             }
             if (activityLine.Length > 0 && Time.time < activityUntil) sb.Append("\n\n").Append(activityLine);
             return sb.ToString();
@@ -115,11 +147,15 @@ namespace SpatialModeling
             var cam = Camera.main;
             if (host == null || cam == null) return;
             var head = cam.transform;
-            transform.position = head.TransformPoint(offset);
-            transform.rotation = Quaternion.LookRotation(transform.position - head.position, head.up);
-
             host.GetShownObjects(shownObjects);
             string t = BuildText();
+            bool show = t.Length > 0;
+            if (show && !visible)
+            {
+                transform.position = head.TransformPoint(offset);
+                transform.rotation = Quaternion.LookRotation(transform.position - head.position, head.up);
+            }
+            visible = show;
             if (t != shown) { shown = t; text.text = t; VoiceUiAdapter.FitBacking(text); }
             text.color = host.SceneIsStale ? new Color(1f, 0.7f, 0.25f) : Color.white;
             UpdateTags(head);
@@ -131,7 +167,7 @@ namespace SpatialModeling
             wanted.Clear();
             foreach (var l in host.Leases)
             {
-                if (l.Owner.Id == host.MyActorId || l.Mode == "exclusive") continue;
+                if (!HasRemoteParticipant || host.SceneIsStale || l.Owner.Id == host.MyActorId || l.Mode == "exclusive") continue;
                 foreach (var id in l.Targets)
                 {
                     // Only over objects drawn with a mesh: a camera or a hidden object has nowhere to put it.

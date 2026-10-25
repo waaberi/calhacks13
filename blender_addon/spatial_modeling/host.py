@@ -226,13 +226,20 @@ def _session_changed():
 def _drain():
     if _server is None:
         return None  # unregisters this timer
+    native = getattr(_server, "native_sync", None)
+    if native is not None and native.busy:
+        return DRAIN_INTERVAL  # a three-phase native transaction owns this context
     _document.tick()
-    _server.drain()
-    _session.store.poll()  # lease decisions SpacetimeDB made since the last drain
+    _server.drain(limit=1 if native is not None and native.subscribers else 100)
+    if native is not None:
+        native.poll()
+        if native.busy:
+            return DRAIN_INTERVAL
     if hasattr(_server, "preview_ui"):
         _server.preview_ui.poll()
     if hasattr(_server, "live_edit"):
         _server.live_edit.poll()
+    _session.store.poll()  # lease decisions SpacetimeDB made since the last drain
     scene_sync.poll()  # direct edits in this Blender reach clients as scene.update
     gate.poll()  # after an ungated edit of leased data, stop writes (#77)
     _commands.poll()  # after an unknown outcome, retry the fresh snapshot until it goes out
@@ -330,6 +337,8 @@ def _start_server(extra, sess, cmds, lses):
     srv = preview_spatial.attach(srv, sess, lses)
     from .live_edit import LiveEdits
     srv = LiveEdits(sess, cmds.editor, lses, undoable).attach(srv)
+    from .native_sync.host import NativeHost
+    srv = NativeHost(sess, cmds.editor.document, scene_sync).attach(srv)
     srv.start()
     return srv
 
@@ -347,9 +356,9 @@ def start():
         on_change=_session_changed,
         name=prefs.host_name if prefs else None,
         client_can_edit=bool(prefs and prefs.client_edits),
-        store=_store(prefs),
         capabilities=lambda: {"sketch": sketch.dependency_status()["available"], "preview_spatial": True,
-                              "live_edit": True},
+                              "live_edit": True, "native_sync": True},
+        store=_store(prefs),
     )
     editor = edits.Editor(scene_sync, undoable, doc, voice=_voice())
     lses = leases.Leases(sess, editor)
@@ -388,6 +397,8 @@ def stop():
         bpy.app.timers.unregister(_drain)
     if _server is not None and hasattr(_server, "live_edit"):
         _server.live_edit.stop()
+    if _server is not None and hasattr(_server, "native_sync"):
+        _server.native_sync.stop()
     scene_sync.stop()
     if _server is not None:
         _server.stop()

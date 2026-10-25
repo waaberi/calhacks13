@@ -11,10 +11,11 @@ import time
 from dataclasses import dataclass, field
 
 try:
-    from . import lan, protocol
+    from . import lan, protocol, session
 except ImportError:  # pure-Python backend tests
     import lan
     import protocol
+    import session
 
 PING_INTERVAL = 2.0
 _UUID = re.compile(r"[0-9a-f]{32}")
@@ -55,7 +56,7 @@ class RemoteConfig:
     address: str
     port: int
     token: str = field(repr=False)
-    version: str = "0.1.0"
+    version: str = session.APP["version"]
     name: str = "Controlled Blender editor"
     tls: bool = True
     timeout: float = 15.0

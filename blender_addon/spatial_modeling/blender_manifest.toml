@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "spatial_modeling"
-version = "0.1.0"
+version = "0.2.0"
 name = "Spatial Modeling"
 tagline = "Edit this Blender project from VR and from a second Blender"
 maintainer = "CalHacks 13 team"
@@ -10,4 +10,4 @@ blender_version_min = "5.2.0"
 license = ["SPDX:GPL-3.0-or-later"]
 
 [permissions]
-network = "Talks to the VR app on this PC and to a second Blender on the LAN"
+network = "Talks to the local VR app and authenticated Blender peers through the SpacetimeDB bridge"

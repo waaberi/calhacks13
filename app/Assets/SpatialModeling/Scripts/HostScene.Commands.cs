@@ -74,6 +74,7 @@ namespace SpatialModeling
                     welcomed = true;
                     sessionId = e.SessionId; hostEpoch = e.HostEpoch; actorId = e.ActorId; canEdit = e.CanEdit;
                     welcomeDocumentId = e.DocumentId; welcomeOpenEpoch = e.OpenEpoch;
+                    participants.Clear(); leases.Clear(); SessionChanged?.Invoke();
                     pendingOps.Clear();
                     queuedCommands.Clear(); queuedAiCommands.Clear();
                     pendingVoiceHandoffs.Clear();

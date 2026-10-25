@@ -150,7 +150,7 @@ def test_handshake():
     w = welcome["payload"]
     assert w["session_id"] == SESSION_ID and w["host_epoch"] == host.sess.host_epoch
     assert session.is_uuid(w["actor_id"]) and w["can_edit"] is True
-    assert w["app"] == {"name": "spatial_modeling", "version": "0.1.0"}
+    assert w["app"] == {"name": "spatial_modeling", "version": "0.2.0"}
     assert w["document"] == DOCUMENT
 
     assert snapshot["type"] == "scene.snapshot"

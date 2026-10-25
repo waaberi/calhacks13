@@ -55,6 +55,8 @@ def main():
     parser.add_argument("--scale", type=float, choices=(1.0, .001), required=True)
     parser.add_argument("--ownership", action="store_true")
     parser.add_argument("--relay", nargs=2, metavar=("URL", "DATABASE"))
+    parser.add_argument("--store", nargs=2, metavar=("URL", "DATABASE"),
+                        help="Use the production MirroredStore in the isolated native host")
     args = parser.parse_args()
     output = Path(args.output).resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -62,7 +64,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="p3-client-") as tmp:
         folder = Path(tmp)
         (folder / "config.json").write_text(json.dumps({"token": secrets.token_hex(24),
-            "scale": args.scale, "ownership": args.ownership}))
+            "scale": args.scale, "ownership": args.ownership, "store": args.store}))
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         bridges = []
         with (output / "host.log").open("w", encoding="utf-8") as log:
