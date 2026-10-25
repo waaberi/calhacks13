@@ -49,7 +49,11 @@ The host owns the original model; the Client receives its evaluated scene mirror
 
 Install the ZIP in Blender: Edit > Preferences > Get Extensions > menu > Install
 from Disk. Enable Spatial Modeling. The ZIP is already flat: do not extract or
-repack it before installation. Install matching code at BOTH ends.
+repack it before installation. Install this extension on the second user's Client.
+The existing live-modeling-v6-c Host is verified compatible with this Client;
+no Host add-on replacement or new VR build is needed for the basic LAN workflow.
+Do not reinstall the current Host just to try this feature. Retain the separate
+COMPATIBILITY.json evidence with the delivered artifact.
 
 Host: choose Host in Spatial Modeling preferences. Deliberately enable LAN joining
 and Client object editing. Keep TLS enabled. Share the host LAN address, port 8767,

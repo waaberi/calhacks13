@@ -1,5 +1,6 @@
 """Disposable native Host for ordinary Client object-operation acceptance."""
 import functools
+import hashlib
 import json
 import sys
 import time
@@ -10,7 +11,13 @@ from pathlib import Path
 import bpy
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "blender_addon"))
+folder = Path(sys.argv[sys.argv.index("--") + 1])
+config = json.loads((folder / "config.json").read_text())
+addon_root = Path(config.get("host_addon_root") or ROOT / "blender_addon").resolve()
+if addon_root.name == "spatial_modeling":
+    addon_root = addon_root.parent
+assert (addon_root / "spatial_modeling/blender_manifest.toml").is_file()
+sys.path.insert(0, str(addon_root))
 from spatial_modeling import (
     commands,
     document,
@@ -24,8 +31,12 @@ from spatial_modeling import (
     sync,
 )
 
-folder = Path(sys.argv[sys.argv.index("--") + 1])
-config = json.loads((folder / "config.json").read_text())
+assert Path(host.__file__).resolve().parent == addon_root / "spatial_modeling"
+source_hashes = {str(p.relative_to(addon_root)): hashlib.sha256(p.read_bytes()).hexdigest()
+                 for p in (addon_root / "spatial_modeling").rglob("*")
+                 if p.is_file() and "__pycache__" not in p.parts and p.suffix not in {".pyc", ".pyo"}}
+(folder.parent / "host-source.json").write_text(json.dumps({"root": str(addon_root),
+    "imported_host": host.__file__, "files": source_hashes}, indent=2))
 scale = config["scale"]
 bpy.ops.object.select_all(action="SELECT")
 bpy.ops.object.delete(use_global=False)
@@ -92,7 +103,9 @@ def tick():
     global delay, display_lease
     try:
         srv.drain()
-        sess.store.poll()
+        poll_store = getattr(sess.store, "poll", None)
+        if poll_store is not None:
+            poll_store()
         for entry in list(deferred):
             when, msg, conn = entry
             if time.monotonic() >= when:

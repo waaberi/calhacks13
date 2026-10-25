@@ -14,6 +14,8 @@ def main():
     parser.add_argument("--output", required=True)
     parser.add_argument("--store", nargs=2)
     parser.add_argument("--relay", nargs=2)
+    parser.add_argument("--host-addon-root",
+                        help="Existing Host module directory (or its parent); Client stays on current source")
     parser.add_argument("--keyboard-events", action="store_true",
                         help="Also dispatch Ctrl+Z through this test window; needs active GUI keymap dispatch")
     args = parser.parse_args()
@@ -22,7 +24,8 @@ def main():
     folder = out / "private"
     folder.mkdir()  # Fresh evidence only: never reuse stale ready/results or private credentials.
     config = {"token": secrets.token_hex(24), "scale": 1.0, "test_timeout": 190,
-              "store": args.store, "keyboard_events": args.keyboard_events}
+              "store": args.store, "keyboard_events": args.keyboard_events,
+              "host_addon_root": args.host_addon_root}
     (folder / "config.json").write_text(json.dumps(config))
     scripts = Path(__file__).parent
     startup = None
