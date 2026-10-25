@@ -101,8 +101,8 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
     client_edits: bpy.props.BoolProperty(
         name="Let the Client role edit (test only)",
         description=(
-            "Unfinished: lets a Client-role Blender send edit commands. Keep it off in "
-            "normal use. Changing it disconnects everyone; they reconnect"
+            "Experimental shared object move, rotate, scale and delete, with host Undo/Redo. "
+            "Changing it disconnects everyone; they reconnect"
         ),
         default=False,
         update=_restart,
@@ -155,7 +155,8 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
         layout = self.layout
         layout.prop(self, "role", expand=True)
         if self.role != "HOST":
-            layout.label(text="Read-only mirror — use a separate empty, unsaved session")
+            layout.label(text="Use a separate empty, unsaved Blender session")
+            layout.label(text="Shared object tools when host permits; otherwise view only")
             layout.prop(self, "host_name")  # the name the host, VR and lease owners show
             layout.prop(self, "client_address")
             layout.prop(self, "client_port")
@@ -221,10 +222,10 @@ class NewSessionToken(bpy.types.Operator):
 
 
 class ConnectReadOnly(bpy.types.Operator):
-    """Join without sending edits. Never loads into a personal file"""
+    """Shared object tools when host permits; otherwise view only"""
 
     bl_idname = "spatial_modeling.connect_readonly"
-    bl_label = "Connect read-only"
+    bl_label = "Connect"
 
     def execute(self, context):
         from .session import APP
