@@ -8,6 +8,10 @@ from native_fixture import CUBE, GROUP, IMAGE, LINKED, MATERIAL, RIG
 def value(item):
     if item is None or isinstance(item, (str, bool, int)):
         return item
+    if isinstance(item, dict):
+        return {str(key): value(part) for key, part in item.items()}
+    if hasattr(item, "to_dict"):
+        return value(item.to_dict())
     if isinstance(item, float):
         return round(item, 7)
     if isinstance(item, bpy.types.ID):
@@ -21,7 +25,7 @@ def value(item):
 def simple_rna(item):
     out = {}
     for prop in item.bl_rna.properties:
-        if prop.identifier == "rna_type" or prop.is_readonly:
+        if prop.identifier in {"rna_type", "select"} or prop.is_readonly:
             continue
         if prop.type not in {"BOOLEAN", "INT", "FLOAT", "STRING", "ENUM"}:
             continue
@@ -48,6 +52,11 @@ def node_tree(tree):
     return {"nodes": [{"name": node.name, "type": node.bl_idname,
                        "rna": simple_rna(node),
                        "image": value(getattr(node, "image", None)),
+                       "color_ramp": {"interpolation": node.color_ramp.interpolation,
+                           "color_mode": node.color_ramp.color_mode,
+                           "elements": [{"position": value(element.position), "color": value(element.color)}
+                                        for element in node.color_ramp.elements]}
+                           if hasattr(node, "color_ramp") else None,
                        "node_tree": value(getattr(node, "node_tree", None)),
                        "inputs": [{"name": socket.name, "id": socket.identifier,
                                    "default": value(getattr(socket, "default_value", None))}
@@ -69,6 +78,7 @@ def capture_graph():
     return {
         "cube": {"name": cube.name, "data": mesh.name, "matrix": value(cube.matrix_world),
                  "custom_scalar": value(cube.get("native_scalar")), "note": cube.get("native_note"),
+                 "native_properties": {key: value(prop_value) for key, prop_value in cube.items() if key.startswith("native_")},
                  "modifiers": [{"type": mod.type, "rna": simple_rna(mod), "object": value(getattr(mod, "object", None))}
                                for mod in cube.modifiers],
                  "vertex_groups": [group.name for group in cube.vertex_groups]},
@@ -86,7 +96,7 @@ def capture_graph():
                              for vertex in mesh.vertices]},
         "shape_keys": [{"name": key.name, "value": value(key.value),
                         "relative": key.relative_key.name, "coordinates": [value(p.co) for p in key.data]}
-                       for key in mesh.shape_keys.key_blocks],
+                       for key in (mesh.shape_keys.key_blocks if mesh.shape_keys is not None else [])],
         "linked_mesh": {"same_datablock": linked.data == mesh, "data": linked.data.name,
                         "matrix": value(linked.matrix_world)},
         "material": {"name": material.name, "color": value(material.diffuse_color),
@@ -107,10 +117,15 @@ def capture_graph():
     }
 
 
-def assert_original_data(graph):
-    assert len(graph["mesh"]["vertices"]) == 8
-    assert len(graph["mesh"]["faces"]) == 6 and all(len(face) == 4 for face in graph["mesh"]["faces"])
-    assert len(graph["mesh"]["uv_layers"]["NativeSync_UV"]) == 24
+def assert_original_data(graph, original_topology=True):
+    if original_topology:
+        assert len(graph["mesh"]["vertices"]) == 8
+        assert len(graph["mesh"]["faces"]) == 6 and all(len(face) == 4 for face in graph["mesh"]["faces"])
+        assert len(graph["mesh"]["uv_layers"]["NativeSync_UV"]) == 24
+    else:
+        assert len(graph["mesh"]["vertices"]) > 8
+        assert len(graph["mesh"]["faces"]) > 6
+        assert all(len(key["coordinates"]) == len(graph["mesh"]["vertices"]) for key in graph["shape_keys"])
     assert graph["linked_mesh"]["same_datablock"]
     assert [entry["name"] for entry in graph["shape_keys"]] == ["Basis", "NativeSync_RaisedCorner"]
     assert [entry["type"] for entry in graph["cube"]["modifiers"]] == ["BEVEL", "ARMATURE"]

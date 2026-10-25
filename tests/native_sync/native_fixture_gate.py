@@ -8,7 +8,7 @@ from pathlib import Path
 import bpy
 
 sys.path.insert(0, str(Path(__file__).parent))
-from native_fixture import build_fixture, edit_fixture
+from native_fixture import build_fixture, edit_fixture, edit_topology_fixture
 from native_graph import assert_original_data, capture_graph, differences
 
 parser = argparse.ArgumentParser()
@@ -25,7 +25,7 @@ def same(expected):
     actual = capture_graph()
     mismatch = differences(expected, actual)
     assert not mismatch, mismatch
-    assert_original_data(actual)
+    assert_original_data(actual, original_topology=len(expected["mesh"]["vertices"]) == 8)
 
 
 def save(name, graph):
@@ -77,6 +77,21 @@ def steps():
     bpy.ops.ed.redo()
     same(state["client"])
     report["checks"].append("Client native Redo restores complete second-side graph")
+    yield
+    edit_topology_fixture()
+    state["topology"] = capture_graph()
+    assert_original_data(state["topology"], original_topology=False)
+    save("topology-edited", state["topology"])
+    bpy.ops.ed.undo_push(message="Native topology and new shader node")
+    report["checks"].append("ordinary native Extrude creates topology and shader editor adds a linked node")
+    yield
+    bpy.ops.ed.undo()
+    same(state["client"])
+    report["checks"].append("native Undo of topology/node creation preserves both prior authors")
+    yield
+    bpy.ops.ed.redo()
+    same(state["topology"])
+    report["checks"].append("native Redo restores topology, all shape-key vertex counts and new node")
 
 
 def finish():

@@ -51,6 +51,7 @@ def build_fixture():
     cube.data.name = "NativeSync_QuadMesh"
     cube["native_scalar"] = 0.6
     cube["native_note"] = "original topology and native dependency graph"
+    cube["native_nested"] = {"label": "native metadata", "counts": [2, 3, 5]}
     cube.data.uv_layers.active.name = "NativeSync_UV"
     for i, loop in enumerate(cube.data.uv_layers.active.data):
         loop.uv = ((i % 4) * 0.19 + 0.03, (i // 4) * 0.11 + 0.07)
@@ -148,4 +149,32 @@ def edit_fixture(side):
         cube["native_note"] = "edited through ordinary native Client data"
     else:
         raise ValueError("side must be host or client")
+    bpy.context.view_layer.update()
+
+
+def edit_topology_fixture():
+    """Create native topology and a new shader node, beyond property-only editing."""
+    _owned()
+    cube = bpy.data.objects[CUBE]
+    if not cube.get(MARKER):
+        raise RuntimeError("Refusing to edit a non-fixture object")
+    select_only(cube)
+    cube.active_shape_key_index = 0
+    bpy.context.tool_settings.mesh_select_mode = (False, False, True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="DESELECT")
+    bpy.ops.object.mode_set(mode="OBJECT")
+    top = max(cube.data.polygons, key=lambda face: face.center.z)
+    top.select = True
+    bpy.ops.object.mode_set(mode="EDIT")
+    assert bpy.ops.mesh.extrude_region_move(
+        TRANSFORM_OT_translate={"value": (0, 0, .3)}) == {"FINISHED"}
+    bpy.ops.object.mode_set(mode="OBJECT")
+    material = bpy.data.materials[MATERIAL]
+    ramp = material.node_tree.nodes.new("ShaderNodeValToRGB")
+    ramp.name = "NativeSync_NewColorRamp"
+    ramp.color_ramp.elements[0].position = .15
+    ramp.color_ramp.elements[1].position = .85
+    material.node_tree.links.new(ramp.outputs["Color"],
+                                material.node_tree.nodes["Principled BSDF"].inputs["Roughness"])
     bpy.context.view_layer.update()
