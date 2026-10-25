@@ -110,10 +110,11 @@ public static class DirectToolGuidesChecks
             target.Create();camera.targetTexture=target;
             for(int tile=0;tile<tools.Length;tile++)
             {
+                camera.transform.position=tile==0?new Vector3(.55f,.3f,-1.15f):new Vector3(0,0,-1.3f);camera.transform.LookAt(Vector3.zero);
                 bool edge=tile==2||tile==3;var frame=Frame(tools[tile],edge?"edge":"face",new[]{edge?(tile==3?11:12):101});frame.Held=true;frame.ExtrudeNormalConstrained=true;
                 if(tile==0)frame.Acknowledged=new JObject{["translation_m"]=new JArray(0,-.02,0)};
                 if(tile==1)frame.Acknowledged=new JObject{["thickness_m"]=.012};if(tile==2)frame.Acknowledged=new JObject{["width_m"]=.006,["segments"]=3};if(tile==3)frame.Acknowledged=new JObject{["cuts"]=2,["slide"]=.2};
-                if(tile==4){frame.KnifePath=new[]{new Vector3(-.18f,-.12f,0),new Vector3(-.04f,.09f,0),new Vector3(.17f,-.05f,0)};frame.Acknowledged=new JObject{["path_m"]=new JArray(new JArray(0,0,0),new JArray(.1,0,.1))};}
+                if(tile==4){frame.KnifePath=new[]{new Vector3(-.18f,-.12f,0),new Vector3(-.04f,.09f,0),new Vector3(.17f,-.05f,0)};frame.Acknowledged=new JObject{["path_m"]=new JArray(new JArray(0,0,0),new JArray(.1,0,.1))};frame.Waiting=true;}
                 if(tile==5){frame.Radius=.24f;frame.Map=Matrix4x4.Scale(new Vector3(1.2f,.7f,1));frame.SnapPoint=new Vector3(.17f,-.08f,0);frame.Acknowledged=new JObject{["scale"]=new JArray(1.25,1,1)};}
                 guides.Draw(frame,camera);var root=GameObject.Find("Native Blender contextual guides");foreach(var child in root.GetComponentsInChildren<Transform>(true))child.gameObject.layer=30;
                 Canvas.ForceUpdateCanvases();camera.Render();RenderTexture.active=target;pixels.ReadPixels(new Rect(0,0,width,height),0,0);pixels.Apply();sheet.SetPixels(tile%3*width,(1-tile/3)*height,width,height,pixels.GetPixels());
