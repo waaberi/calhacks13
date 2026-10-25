@@ -23,7 +23,7 @@ namespace SpatialModeling
         public bool CapturesScroll { get; private set; }
         const string PointerHandPreference = "SpatialModeling.PreviewPointerLeft";
         public bool OwnsControllerButtons => inputEnabled || focusRequested || windowResuming || endAfterRelease || NativeInputOwned;
-        public bool ModelEditingActive => OwnsControllerButtons || guideShown || spatialRequested || pendingNativeCommand!=null || (DirectEditing != null && DirectEditing.Active)
+        public bool ModelEditingActive => modelEditingRequested || OwnsControllerButtons || guideShown || spatialRequested || pendingNativeCommand!=null || (DirectEditing != null && DirectEditing.Active)
             || (Drawing!=null&&Drawing.EnabledForInput);
         public XRNode PrimaryHand { get; private set; } = XRNode.RightHand;
         public void SetPointerHand(XRNode hand)
@@ -39,7 +39,7 @@ namespace SpatialModeling
         HostScene scene;
         RectTransform panel, keyboard, modelToolsPanel, guidePanel;
         Text guideText;
-        bool guideShown;
+        bool guideShown, modelEditingRequested;
         int guidePage;
         Action pendingNativeCommand;
         Action<string> pendingNativeFailure;
@@ -76,6 +76,7 @@ namespace SpatialModeling
         bool readingState, sendingEvent;
         bool inputEnabled, triggerWasDown, mouseHeld, keyboardShown, shiftText;
         bool focusRequested, endAfterRelease, releaseQueued, spatialRequested, objectsRequested, modelToolsShown;
+        bool nativeInputPreferred, nativeInputAutoReleased, nativeMenuReturnPending;
         string lastInputFailure = "", lastLoggedNotice = "", lastLoggedGates = "";
         bool numbersShown, shortcutsShown, fullKeyboard, editorPointSet;
         int shortcutPage;
@@ -226,11 +227,15 @@ namespace SpatialModeling
         }
 
         public void TrackingLost(XRNode hand)
-        { if (hand == PrimaryHand) { Suspend(); triggerWasDown = false; } }
+        { if (hand == PrimaryHand) Suspend(); }
 
         public void Suspend()
         {
             DirectEditing?.SetActive(false);
+            nativeInputAutoReleased = nativeMenuReturnPending = false;
+            // Preserve the explicitly selected mode, but never its gesture or
+            // native input ownership. A tracked release must rearm direct input.
+            triggerWasDown = true;
             CancelNativeCommand("Editing handoff cancelled because input or tracking changed; issue the command again when ready");
             ReleaseNative();
             if (inputEnabled || focusRequested || windowResuming || NativeInputOwned) RequestEndNativeUi();
@@ -276,6 +281,12 @@ namespace SpatialModeling
         {
             distance = 0;
             if (hand != PrimaryHand) return false;
+            if (modelEditingRequested && DirectEditing != null && !DirectEditing.Active
+                && !trigger && !grip && scene != null && scene.IsCurrent && scene.DisplayPlacementReady
+                && Drawing != null && Drawing.NativeStateCurrent && !Drawing.NativeUiTransitionPending
+                && !endAfterRelease && !DirectEditing.LiveBusy
+                && DirectInputPresenceReady())
+                DirectEditing.SetActive(true);
             bool pressed = trigger && !triggerWasDown;
             bool released = !trigger && triggerWasDown;
             triggerWasDown = trigger;
@@ -317,6 +328,17 @@ namespace SpatialModeling
             if (screen != null && screen.TryPreviewPoint(ray, out var point, out var imageDistance) && imageDistance <= nearest)
             {
                 distance = imageDistance;
+                if (nativeMenuReturnPending) return true;
+                if (!inputEnabled && pressed && !grip && !stick && CanReturnToNativeMenu())
+                {
+                    FocusNativeUi();
+                    if (focusRequested)
+                    {
+                        nativeMenuReturnPending = true;
+                        Notice = "Opening 2D input; release the trigger, then click the desired Blender tool again";
+                    }
+                    return true; // This deliberate focus press never becomes a Blender click.
+                }
                 if (PreviewInputMapping.CanRoute(inputEnabled, Ready(), true, false, true))
                 {
                     CapturesScroll = true;
@@ -358,6 +380,25 @@ namespace SpatialModeling
                 if (d <= nearest) { distance = d; if (pressed) Drawing.Press(ray); return true; }
             }
             return false;
+        }
+
+        bool CanReturnToNativeMenu() => modelEditingRequested && nativeInputPreferred && nativeInputAutoReleased
+            && !focusRequested && !windowResuming && !endAfterRelease && pendingNativeCommand == null
+            && lastInputFailure.Length == 0 && DirectEditing != null && DirectEditing.Active
+            && !DirectEditing.Gesturing && !DirectEditing.LiveBusy && Drawing != null
+            && Drawing.NativeCommandReady && !Drawing.Session.Busy && !Drawing.HasDraft
+            && scene != null && scene.IsCurrent && scene.DisplayPlacementReady && DirectInputPresenceReady();
+
+        static bool DirectInputPresenceReady()
+        {
+            if (!(XRSettings.enabled || XRSettings.isDeviceActive))
+                return Application.isEditor || (Array.IndexOf(Environment.GetCommandLineArgs(), "--desktop") >= 0 && Application.isFocused);
+            var head = InputDevices.GetDeviceAtXRNode(XRNode.Head);
+            bool tracked = head.TryGetFeatureValue(UnityEngine.XR.CommonUsages.isTracked, out var tracking) && tracking;
+            bool presenceKnown = head.TryGetFeatureValue(UnityEngine.XR.CommonUsages.userPresence, out var present);
+            bool metaReady = OVRPlugin.initialized;
+            bool worn = (presenceKnown || metaReady) && (!presenceKnown || present) && (!metaReady || OVRPlugin.userPresent);
+            return HostScene.HeadsetAllowsPlacement(true, tracked, presenceKnown || metaReady, worn, metaReady && OVRPlugin.hasVrFocus);
         }
 
         static bool Hit(RectTransform rect, Ray ray, out float d)
@@ -460,17 +501,20 @@ namespace SpatialModeling
             && screen.DisplayedCaptureGeometry == (string)state["capture_geometry"];
         string InputMode => endAfterRelease ? "Releasing" : lastInputFailure.Length != 0 ? "Blocked"
             : spatialRequested ? "Drawing pending" : Drawing != null && Drawing.EnabledForInput ? "Drawing"
-            : inputEnabled && Ready() ? "On" : inputEnabled || focusRequested || windowResuming ? "Enabling" : "Off";
+            : nativeMenuReturnPending ? "Enabling"
+            : inputEnabled && Ready() ? "On" : inputEnabled || focusRequested || windowResuming ? "Enabling"
+            : modelEditingRequested && DirectEditing != null && DirectEditing.Active ? "Direct" : "Off";
         void RefreshInputIndicator()
         {
             if (focusButton == null) return;
             string mode = InputMode;
             focusButton.GetComponentInChildren<Text>().text = mode == "On" ? "Input ON · turn off"
+                : mode == "Direct" ? nativeInputPreferred && nativeInputAutoReleased ? "3D edit ON · click Blender menu" : "3D edit ON · enable 2D input"
                 : mode == "Off" ? "Input OFF · enable" : mode == "Blocked" ? "Input blocked · retry"
                 : mode == "Drawing" ? "VR drawing ON" : mode == "Drawing pending" ? "Starting VR drawing…"
                 : mode == "Releasing" ? "Releasing input…" : "Enabling… · cancel";
             focusButton.interactable = !endAfterRelease;
-            GlassTheme.State(focusButton,mode=="On",mode=="Blocked");
+            GlassTheme.State(focusButton,mode=="On"||mode=="Direct",mode=="Blocked");
         }
         void ToggleNativeUi()
         {
@@ -482,6 +526,7 @@ namespace SpatialModeling
         }
         void DisableNativeInput()
         {
+            nativeInputPreferred = false;
             bool keepDirectMode = DirectEditing != null && DirectEditing.Active;
             bool keepAdditive=keepDirectMode&&DirectEditing.AdditiveSelection;
             Suspend();
@@ -491,6 +536,7 @@ namespace SpatialModeling
         }
         public void BeginModelEditing()
         {
+            modelEditingRequested = true;
             EnsureDirectEditing(); DirectEditing.SetActive(true);
             guideShown = true; guidePage = 0; RefreshGuide();
             if (screen == null) screen = FindFirstObjectByType<BlenderScreen>();
@@ -505,6 +551,8 @@ namespace SpatialModeling
         }
         public void EndModelEditing()
         {
+            nativeInputPreferred = false;
+            modelEditingRequested = false;
             guideShown = false;
             Suspend();
             Notice = "Arrange space · grip moves the VR display; Blender geometry stays unchanged";
@@ -518,6 +566,8 @@ namespace SpatialModeling
             if (Drawing == null || Drawing.NativeModalActive || Drawing.Session.Busy || Drawing.HasDraft)
             { failed?.Invoke("Finish or cancel the active Blender operation or VR drawing draft before this edit; Enter / Escape are available"); return; }
             pendingNativeCommand = execute; pendingNativeFailure = failed;
+            if (inputEnabled || focusRequested || windowResuming) nativeInputPreferred = true;
+            if (nativeInputPreferred && (OwnsControllerButtons || Drawing.NativeUiTransitionPending)) nativeInputAutoReleased = true;
             pendingNativeFromDirectModel = fromDirectModel;
             if (!fromDirectModel) DirectEditing?.Cancel("Voice or another native command cancelled the local direct draft");
             pendingNativeUntil = Time.unscaledTime + 8f;
@@ -563,6 +613,7 @@ namespace SpatialModeling
             lastInputFailure = "";
             if (state == null || (bool?)state["enabled"] != true || session.Length == 0)
             { Notice = "Start the P2.5 helper with input enabled and select the connected Blender window"; return; }
+            nativeInputPreferred = true; nativeInputAutoReleased = nativeMenuReturnPending = false;
             objectsRequested = modelToolsShown = false;
             windowAuthority.Clear(); windowResuming = windowReleaseQueued = inputResync = windowsShown = false;
             numbersShown = shortcutsShown = windowsShown = editorPointSet = false; Drawing.Numeric.Invalidate();
@@ -583,10 +634,12 @@ namespace SpatialModeling
         }
         void BeginSpatial()
         {
-            DirectEditing?.SetActive(false);
             mouseOptionsShown = false;
             if (Drawing.NativeModalActive)
             { Notice = "Finish the native operation with Enter or Escape before switching to VR drawing"; return; }
+            modelEditingRequested = false;
+            nativeInputPreferred = nativeInputAutoReleased = nativeMenuReturnPending = false;
+            DirectEditing?.SetActive(false);
             lastInputFailure = "";
             objectsRequested = modelToolsShown = false;
             numbersShown = shortcutsShown = windowsShown = editorPointSet = false; Drawing.Numeric.Invalidate();
@@ -816,7 +869,8 @@ namespace SpatialModeling
             else transport.Unknown();
             if ((bool?)fresh["enabled"] != true) Notice = "Start this feature's helper with --enable-input";
             else if (lastInputFailure.Length != 0) { ReleaseNative(); Notice = lastInputFailure; }
-            else if (!Ready() && !spatialRequested && (Drawing == null || !Drawing.EnabledForInput))
+            else if (!Ready() && !spatialRequested && (Drawing == null || !Drawing.EnabledForInput)
+                && !(modelEditingRequested && DirectEditing != null && DirectEditing.Active && !OwnsControllerButtons))
             {
                 ReleaseNative();
                 string why = (string)fresh["reason"];
@@ -908,15 +962,25 @@ namespace SpatialModeling
                         // The helper acknowledged exact-window foreground after
                         // verification. A later event still rechecks it natively.
                         if (state != null) state["focused"] = true;
-                        Notice = "Blender focused · trigger: mouse · stick: scroll · grip: move preview";
+                        NativeFocusAcknowledged();
                     }
                 }
                 sendingEvent = false;
             }
         }
 
+        void NativeFocusAcknowledged()
+        {
+            bool returning = nativeMenuReturnPending;
+            nativeMenuReturnPending = false;
+            if (returning) triggerWasDown = true; // Even an early release/repress during the ACK must start afresh.
+            Notice = returning ? "2D input ready; click the desired Blender tool again"
+                : "Blender focused · trigger: mouse · stick: scroll · grip: move preview";
+        }
+
         void FailTransport(string reason)
         {
+            nativeInputAutoReleased = nativeMenuReturnPending = false;
             lastInputFailure = reason;
             bool needsCleanup = inputEnabled || focusRequested || endAfterRelease || windowResuming || NativeInputOwned;
             transport.Unknown(); state = null; events.Clear(); pendingPointer = null;

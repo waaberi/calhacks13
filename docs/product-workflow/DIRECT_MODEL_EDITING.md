@@ -30,10 +30,27 @@ controller appearance and live microphone/Gemini acceptance remain pending.
 5. Release after an acknowledged live update to commit one native Undo step.
    Blender Undo/Redo and the existing voice Undo/Redo use that same history.
 
-Input remains OFF after the handoff; enable it again to choose another Blender
-tool or edit the 2D viewport. Manually turning Input OFF preserves explicit Edit
-model mode and sticky spatial SHIFT. Arrange space, tracking/pointer ownership
-loss and headset suspension end the direct interaction safely.
+After the automatic handoff, the input button shows **3D edit ON · click Blender menu**:
+the native window writer is released, while the selected Edit model mode stays
+on. To choose another Blender tool, enable 2D input, or press the trigger once
+on the Blender image to request it again. Wait for permission, release, then
+click the desired tool; the first press is never replayed as a delayed click.
+Manually turning Input OFF is respected and still preserves explicit Edit model
+mode and sticky spatial SHIFT. Arrange space ends this mode. Tracking loss or
+headset suspension cancels the current gesture and releases ownership; the
+selected mode can rearm only after fresh tracking and trigger/grip release.
+
+Choose Move, Rotate or Scale using Blender's toolbar icons. The floating-model
+status must show the corresponding native tool before beginning a gesture.
+G/R/S start Blender's native 2D modal operation; they do not select the toolbar
+tool for a floating-model gesture. Finish/cancel that modal before direct editing.
+
+With Rotate selected, red X, green Y and blue Z rings with arrowheads surround
+the selection. Aim at a coloured ring, hold the front trigger and sweep around
+it to rotate about that native axis. The chosen ring highlights and stays fixed
+at the starting pivot during the held edit. Release gives one native Undo step;
+grip or Escape cancels and restores the start. Rotation rings follow Blender's
+selected transform orientation and the same frozen native/display mapping.
 
 ## Direct gesture support
 

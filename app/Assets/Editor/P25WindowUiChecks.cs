@@ -27,7 +27,7 @@ public static class P25WindowUiChecks
     static void Check(bool ok, string why) { if (!ok) throw new Exception("P25_WINDOW_UI: " + why); }
     public static void Run()
     {
-        Chooser(); SelectionSequence(); Handoff(); Revocation(); InputIndicator(); ControllerControls(); WorkspaceRouting(); QuickActions(); DrawingMode();
+        Chooser(); SelectionSequence(); Handoff(); Revocation(); InputIndicator(); ControllerControls(); WorkspaceRouting(); QuickActions(); DrawingMode(); DirectModeIntent(); NativeMenuReturn();
         Debug.Log("P25_WINDOW_UI_CHECK PASS actual chooser/pages/stale-choice/bounded-refresh/no-image-recovery/current-sequence/stamped-handoff/lease-retention/typed-staleness/mode-exit/overlay; actual OS popup capture unverified");
     }
 
@@ -73,6 +73,103 @@ public static class P25WindowUiChecks
         Check(f.Preview.Notice.Contains("VR drawing ON") && !f.Drawing.StatusText.Contains("disabled"),
             "ordinary helper polling cannot replace active drawing feedback with the preview focus instruction");
         Debug.Log("P25_DRAWING_MODE_CHECK PASS explicit_mode_actionable_status no_false_input_off");
+    }
+
+    static void DirectModeIntent()
+    {
+        using var f = new Fixture();
+        const string pointerPreference = "SpatialModeling.PreviewPointerLeft";
+        bool hadPreference = PlayerPrefs.HasKey(pointerPreference); int previousPreference = PlayerPrefs.GetInt(pointerPreference, 0);
+        try
+        {
+        f.Preview.BeginModelEditing(); Set(f.Preview, "guideShown", false);
+        Check(f.Preview.DirectEditing.Active && f.Preview.ModelEditingActive, "explicit Edit model selects direct mode");
+        bool executed = false, cancelled = false;
+        f.Preview.HandoffNativeCommand(() => executed = true, reason => cancelled = true, true);
+        f.Preview.TrackingLost(XRNode.RightHand);
+        Check(f.Preview.ModelEditingActive && !f.Preview.DirectEditing.Active && cancelled && !executed
+            && (bool)Get(f.Preview, "triggerWasDown") && (bool)Get(f.Preview, "endAfterRelease"),
+            "tracking loss retains selected Edit model mode while cancelling its pending command and releasing native input");
+        var ray = new Ray(f.Image.transform.position - Vector3.forward * 2, Vector3.forward);
+        f.Preview.RouteControllerHand(XRNode.RightHand, ray, false, false, Vector2.zero, 3, out _, false);
+        Check(!f.Preview.DirectEditing.Active, "a released controller cannot rearm direct mode before native cleanup acknowledgement");
+        var unowned = P25WindowChecks.Native(f.Session); unowned["input_allowed"] = false; unowned["ui_session_id"] = ""; unowned["ui_owner"] = null;
+        f.Drawing.SetNativeState(unowned); f.Authority.Clear(); Set(f.Preview, "endAfterRelease", false); f.Events.Clear();
+        f.Preview.RouteControllerHand(XRNode.RightHand, ray, true, false, Vector2.zero, 3, out _, false);
+        Check(!f.Preview.DirectEditing.Active && !executed, "a held trigger cannot rearm or replay after tracking loss");
+        f.Preview.RouteControllerHand(XRNode.RightHand, ray, false, false, Vector2.zero, 3, out _, false);
+        Check(f.Preview.DirectEditing.Active && f.Preview.ModelEditingActive && !executed
+            && !(bool)Get(f.Preview, "inputEnabled") && !(bool)Get(f.Preview, "focusRequested") && f.Events.Count == 0,
+            "fresh tracked release restores only the selected direct mode without reacquiring 2D input or replaying a command");
+        Property(f.Preview, "Notice", "object.rotate · trigger + aim: live edit");
+        f.Apply((JObject)f.State.DeepClone()); Invoke(f.Preview, "RefreshInputIndicator");
+        Check(f.Preview.Notice.Contains("object.rotate") && f.Button("Focus Blender").GetComponentInChildren<Text>().text == "3D edit ON · enable 2D input",
+            "fresh helper polling preserves direct-tool feedback and distinguishes released 2D input from active 3D editing");
+        f.Preview.SetPointerHand(XRNode.LeftHand);
+        Check(f.Preview.ModelEditingActive && !f.Preview.DirectEditing.Active && (bool)Get(f.Preview, "triggerWasDown"),
+            "pointer-hand switch retains explicit mode but cancels its old hand and requires fresh release");
+        f.Preview.EndModelEditing();
+        Check(!f.Preview.ModelEditingActive && !f.Preview.DirectEditing.Active, "explicit Arrange exits persistent Edit model mode");
+        Debug.Log("P25_DIRECT_MODE_INTENT_CHECK PASS persistent_mode tracking_cancel fresh_release no_replay no_auto_2d focus_feedback pointer_switch explicit_exit");
+        }
+        finally
+        {
+            if (hadPreference) PlayerPrefs.SetInt(pointerPreference, previousPreference); else PlayerPrefs.DeleteKey(pointerPreference);
+            PlayerPrefs.Save();
+        }
+    }
+
+    static void NativeMenuReturn()
+    {
+        void Prepare(Fixture f)
+        {
+            f.Preview.BeginModelEditing(); Set(f.Preview, "guideShown", false);
+            f.Preview.HandoffNativeCommand(() => { }, reason => { throw new Exception(reason); }, true);
+            var unowned = P25WindowChecks.Native(f.Session); unowned["input_allowed"] = false; unowned["ui_session_id"] = ""; unowned["ui_owner"] = null;
+            f.Drawing.SetNativeState(unowned); f.Authority.Clear(); Set(f.Preview, "endAfterRelease", false); f.Events.Clear(); f.Tick();
+            Check((bool)Get(f.Preview, "nativeInputPreferred") && (bool)Get(f.Preview, "nativeInputAutoReleased")
+                && Get(f.Preview, "pendingNativeCommand") == null, "acknowledged automatic handoff preserves the user's native-input preference");
+        }
+        using (var f = new Fixture())
+        {
+            Prepare(f);
+            var ray = new Ray(f.Image.transform.position - Vector3.forward * 2, Vector3.forward);
+            void Route(bool trigger) => f.Preview.RouteControllerHand(XRNode.RightHand, ray, trigger, false, Vector2.zero, 3, out _, false);
+            Route(false);
+            Check(f.Button("Focus Blender").GetComponentInChildren<Text>().text == "3D edit ON · click Blender menu", "automatic handoff advertises returning through the existing Blender image");
+            Set(f.Preview, "endAfterRelease", true); Route(true);
+            Check(!(bool)Get(f.Preview, "focusRequested") && f.Sent.Count == 0, "menu press cannot overtake pending input cleanup");
+            Set(f.Preview, "endAfterRelease", false); Set(f.Drawing, "beginId", "pending-native-transition"); Route(false); Route(true);
+            Check(!(bool)Get(f.Preview, "focusRequested") && f.Sent.Count == 0, "menu press cannot overtake a pending native transition");
+            Set(f.Drawing, "beginId", null); Route(false); Route(true);
+            Check((bool)Get(f.Preview, "focusRequested") && (bool)Get(f.Preview, "nativeMenuReturnPending")
+                && f.Sent.Count == 1 && (string)f.Sent[0]["type"] == "preview.ui.begin" && f.Events.Count == 0,
+                "a fresh menu press requests only normal native input ownership and consumes the original click");
+            // Supply the fixture's native ownership grant; the existing HTTP suite separately checks exact helper ACK admission.
+            f.Drawing.SetNativeState(P25WindowChecks.Native(f.Session)); Set(f.Drawing, "beginId", null); Set(f.Drawing, "wantNativeUi", false); f.Tick();
+            Route(false); Route(true);
+            Check(f.Events.All(e => (string)e["type"] == "focus") && (bool)Get(f.Preview, "nativeMenuReturnPending"),
+                "even early release and repress cannot queue a Blender button before focus acknowledgement");
+            f.Events.Clear(); Invoke(f.Preview, "NativeFocusAcknowledged");
+            Check(f.Preview.Notice == "2D input ready; click the desired Blender tool again" && (bool)Get(f.Preview, "triggerWasDown"),
+                "focus acknowledgement requires another released/new trigger and gives clear next-tool instructions");
+            Route(true);
+            Check(!f.Events.Any(e => (string)e["type"] == "button"), "the held focus press is never replayed as a Blender click after acknowledgement");
+            Route(false); Route(true);
+            Check(f.Events.Any(e => (string)e["type"] == "button" && (string)e["action"] == "down"), "only a subsequent deliberate trigger click enters the normal 2D controller route");
+        }
+        using (var f = new Fixture())
+        {
+            Prepare(f); f.Click("Disable input"); f.Sent.Clear();
+            var ray = new Ray(f.Image.transform.position - Vector3.forward * 2, Vector3.forward);
+            f.Preview.RouteControllerHand(XRNode.RightHand, ray, false, false, Vector2.zero, 3, out _, false);
+            f.Preview.RouteControllerHand(XRNode.RightHand, ray, true, false, Vector2.zero, 3, out _, false);
+            Check(!(bool)Get(f.Preview, "nativeInputPreferred") && !(bool)Get(f.Preview, "focusRequested") && f.Sent.Count == 0,
+                "manual Input OFF prevents menu presses from automatically reacquiring native input");
+            f.Preview.EndModelEditing();
+            Check(!(bool)Get(f.Preview, "nativeInputPreferred"), "Arrange explicitly clears the native input preference");
+        }
+        Debug.Log("P25_NATIVE_MENU_RETURN_CHECK PASS automatic_preference fresh_image_press cleanup_transition_barriers consume_focus_press no_ack_replay manual_off explicit_arrange");
     }
 
     static void ControllerControls()

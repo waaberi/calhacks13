@@ -27,10 +27,21 @@ microphone/Gemini acceptance.
 5. Release to finish one native Undo step. Escape, voice Cancel or grip cancels
    the held operation; wait for native rollback before another edit or re-grip.
 
-Input remains OFF after direct editing. Enable it again to choose a different
-tool or return to 2D editing. Manually switching Input OFF retains Edit model and
-sticky spatial SHIFT. **Arrange space** ends direct editing safely. The configured
-pointer hand and existing grip/stick arrangement controls are preserved.
+After direct editing the button shows **3D edit ON · click Blender menu**. To choose
+another tool, enable 2D input, or press the trigger once on the Blender image to
+request it again. Wait for permission, release, then click the desired tool;
+that initial press is never replayed. Manually switching Input OFF is respected
+and retains Edit model and sticky spatial SHIFT. **Arrange space** ends direct
+editing safely. Temporary tracking loss cancels/releases the current gesture,
+while the selected Edit model mode waits for fresh tracking and released
+trigger/grip before rearming. The configured pointer hand and existing grip/stick
+arrangement controls are preserved.
+
+Select Move/Rotate/Scale with Blender's toolbar icons; G/R/S instead begin native
+2D modal operations. Check the floating status has changed to the chosen tool.
+For Rotate, grab a red X, green Y or blue Z rotation ring with the front trigger
+and sweep around the ring. Its arrowheads indicate the arc and the selected axis
+highlights during the live edit. Release commits one Undo; grip/Escape cancels.
 
 The floating axis/plane handles use the same trigger gesture. Transform
 orientation, pivot, constraints, snapping and proportional properties are chosen

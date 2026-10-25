@@ -18,7 +18,8 @@ public static class LiveControllerChecks
     {for(int i=0;i<16;i++)Check(Mathf.Abs(a[i]-b[i])<.00005f,why+" element "+i);}
     public static void Run()
     {
-        Selection();Presentation();GestureMath();LiveRoute();SelectionSync();ToolGestures();SelectionAndCancellation();SelectionOutlineBound();
+        Selection();Presentation();GestureMath();LiveRoute();SelectionSync();SelectionRecovery();ToolGestures();RotationRingRoute();SelectionAndCancellation();SelectionOutlineBound();
+        DirectRotationHandlesChecks.Run();
         Debug.Log("LIVE_CONTROLLER_CHECK PASS actual held native-update route/one commit/cancel/selection-only no-geometry/SHIFT multi-selection+input-off/epoch/native Inset+Bevel+LoopCut+surface Knife/native axis handle+settings cancellation/own-echo identity+sequence/affine M0 mirrored nonuniform live+commit+reset+restore; physical acceptance pending");
     }
     public static void Selection()
@@ -147,6 +148,39 @@ public static class LiveControllerChecks
         State(f,"updated",1,(string)update["id"]);var commit=f.Sent.Last(m=>(string)m["type"]=="live.edit.commit");State(f,"committed",1,(string)commit["id"]);
         Check(f.View.NativePosition==Vector3.zero,"selection alone leaves actual native transform unchanged");
     }
+    static void SelectionRecovery()
+    {
+        foreach(string nativeTool in new[]{"builtin.move","builtin.rotate","builtin.scale","builtin.select_box"})
+        {
+            using var f=new DirectModelEditingChecks.Fixture(nativeTool);NativeLive(f);
+            var model=(JObject)f.Drawing.NativeState["model_edit"];
+            var selectedSettings=(JObject)model["settings"].DeepClone();
+            // A selected-object tap must still explicitly deselect. Its native
+            // echo can arrive before the update receipt and remove all settings.
+            f.Route(true);f.Route(false);Invoke(f.Direct,"Update");GrantAndBegin(f);
+            var update=f.Sent.Last(m=>(string)m["type"]=="live.edit.update");
+            model["available"]=false;model["reason"]="Select an object in the Blender panel first.";
+            model["active_object_id"]="";model["settings"]=new JObject();
+            model["selection"]=new JObject { ["objects"]=new JArray(),["active_id"]="",["component"]="object",["indices"]=new JArray() };
+            Invoke(f.Direct,"Update");
+            Check(!f.Sent.Any(m=>(string)m["type"]=="live.edit.cancel"),"own deselection settings disappearing cannot cancel native selection: "+nativeTool);
+            State(f,"updated",1,(string)update["id"]);var commit=f.Sent.Last(m=>(string)m["type"]=="live.edit.commit");State(f,"committed",1,(string)commit["id"]);
+            Invoke(f.Direct,"Update");
+            Check(((JArray)f.Direct.SelectionSnapshot["objects"]).Count==0,"explicit native deselection stays empty: "+nativeTool);
+            // Reselect using the floating model while native availability is
+            // false and there is no active object or transform settings.
+            f.Route(true);f.Route(false);Invoke(f.Direct,"Update");GrantAndBegin(f);
+            update=f.Sent.Last(m=>(string)m["type"]=="live.edit.update");
+            model["available"]=true;model["reason"]="";model["active_object_id"]=A;model["settings"]=selectedSettings;
+            model["selection"]=new JObject { ["objects"]=new JArray(A),["active_id"]=A,["component"]="object",["indices"]=new JArray() };
+            Invoke(f.Direct,"Update");
+            Check(!f.Sent.Any(m=>(string)m["type"]=="live.edit.cancel"),"own reselect restoring native settings cannot cancel recovery: "+nativeTool);
+            State(f,"updated",1,(string)update["id"]);commit=f.Sent.Last(m=>(string)m["type"]=="live.edit.commit");State(f,"committed",1,(string)commit["id"]);
+            Invoke(f.Direct,"Update");
+            Check((string)f.Direct.SelectionSnapshot["active_id"]==A&&f.Direct.Active,"floating selection recovers without native active object or available tool: "+nativeTool);
+            Check(f.Sent.Count(m=>(string)m["type"]=="live.edit.commit")==2&&f.View.NativePosition==Vector3.zero,"deselect/reselect completes twice without geometry edits: "+nativeTool);
+        }
+    }
     static void ToolGestures()
     {
         foreach(string tool in new[]{"mesh.inset","mesh.bevel","mesh.loop_cut","mesh.knife"})
@@ -182,6 +216,34 @@ public static class LiveControllerChecks
             var begin=f.Sent.Last(m=>(string)m["type"]=="live.edit.begin");var constraint=(JArray)begin["payload"]["operation"]["settings"]["constraint_axis"];
             Check((bool)constraint[0]&&!(bool)constraint[1]&&!(bool)constraint[2],"native X constraint is frozen in actual typed operation");
         }
+    }
+    static void RotationRingRoute()
+    {
+        using var f=new DirectModelEditingChecks.Fixture("builtin.rotate");NativeLive(f,"object.rotate");
+        var model=(JObject)f.Drawing.NativeState["model_edit"];model["settings"]["pivot_m"]=new JArray(0,2,0);
+        Invoke(f.Direct,"Update");var live=(DirectLiveController)Get(f.Direct,"live");
+        var frame=(DirectRotationHandles.Frame)typeof(DirectLiveController).GetMethod("RotationFrame",Private).Invoke(live,new object[]{f.View});
+        Vector3 firstPoint=frame.Point(1,.65f),movedPoint=frame.Point(1,1f);
+        var first=new Ray(Vector3.zero,firstPoint.normalized);var moved=new Ray(Vector3.zero,movedPoint.normalized);
+        bool Route(Ray ray,bool trigger)=>f.Preview.RouteControllerHand(UnityEngine.XR.XRNode.RightHand,ray,trigger,false,Vector2.zero,4,out _,false);
+        Check(Route(first,true)&&f.Direct.Gesturing,"front trigger picks the actual rendered native Y rotation ring");
+        Check(((DirectRotationHandles.Gesture)Get(live,"rotationGesture")).Axis==1,"ring freezes the matching Blender axis");
+        Route(moved,true);GrantAndBegin(f);
+        var begin=f.Sent.Last(m=>(string)m["type"]=="live.edit.begin");
+        var constraint=(JArray)begin["payload"]["operation"]["settings"]["constraint_axis"];
+        Check(!(bool)constraint[0]&&(bool)constraint[1]&&!(bool)constraint[2],"the same ring axis reaches native held begin settings");
+        var update=f.Sent.Last(m=>(string)m["type"]=="live.edit.update");
+        var wire=(JArray)update["payload"]["parameters"]["rotation"];
+        var expected=DirectModelEditMath.ToWire(Quaternion.AngleAxis(.35f*Mathf.Rad2Deg,Vector3.forward));
+        for(int i=0;i<4;i++)Check(Mathf.Abs((float)wire[i]-(float)expected[i])<.0001f,"ring arc becomes a native quaternion during held trigger component "+i);
+        model["settings"]["pivot_m"]=new JArray(.1,2,.1);Invoke(f.Direct,"Update");
+        var root=GameObject.Find("Native Blender rotation rings");Check(root!=null&&root.activeSelf,"frozen rings stay visible during native handoff and held gesture");
+        var ring=root.transform.Find("Native Y rotation ring").GetComponent<LineRenderer>();
+        Check(Vector3.Distance(ring.GetPosition(0),frame.Point(1,0))<.00001f,"own native telemetry cannot slide the held ring pivot");
+        Check(ring.startColor.r>.9f&&ring.startColor.g>.7f,"the held axis visibly highlights in yellow");
+        State(f,"updated",1,(string)update["id"]);Route(moved,false);
+        var commit=f.Sent.Last(m=>(string)m["type"]=="live.edit.commit");State(f,"committed",1,(string)commit["id"]);
+        Check(f.Sent.Count(m=>(string)m["type"]=="live.edit.commit")==1&&!f.Direct.Gesturing,"one released ring gesture commits exactly one native Undo transaction");
     }
     static void SelectionAndCancellation()
     {
