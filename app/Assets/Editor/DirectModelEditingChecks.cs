@@ -282,7 +282,11 @@ public static class DirectModelEditingChecks
             var state=new JObject { ["session_id"]="session",["host_epoch"]="host",["document_id"]="doc",["open_epoch"]="open",["mode"]=mode,["model_edit"]=m,["modal_active"]=false,["editing_mode"]="exclusive",["ui_ending"]=false,["ui_owner"]=owned?new JObject { ["actor_id"]="actor" }:null,["ui_session_id"]=owned?"native-token":null,["input_allowed"]=owned };
             Drawing.SetNativeState(state);
         }
-        public Ray Ray(float x=0)=>new Ray(Vector3.zero,new Vector3(x,0,2).normalized);
+        public Ray Ray(float x=0)
+        {
+            var controller=new Vector3(0,-.3f,0);
+            return new Ray(controller,new Vector3(x,0,2)-controller);
+        }
         public bool Route(bool trigger,float x=0,bool grip=false)=>Preview.RouteControllerHand(XRNode.RightHand,Ray(x),trigger,grip,Vector2.zero,4,out _,false);
         public void Receive(string type,JObject payload,string re)
         {

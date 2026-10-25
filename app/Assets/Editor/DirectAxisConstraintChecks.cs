@@ -38,8 +38,34 @@ public static class DirectAxisConstraintChecks
     public static void Run()
     {
         foreach(int layout in new[]{0,1,2})foreach(int axis in new[]{0,1,2})ThickMeshAndOffAxis(layout,axis);
+        foreach(int axis in new[]{0,1,2})foreach(bool push in new[]{false,true})EndOnCapture(axis,push);
         ArrowPlaneOverlap();BodyFreeAndPlane();UiFence();
-        Debug.Log("DIRECT_AXIS_CONSTRAINT_CHECK PASS actual thick-own-mesh XYZ arrows; oblique/plane-overlap arbitration; large off-axis typed native payloads; reflected nonuniform+sheared affine display; immutable capture through visual query/native ACK+one commit; free body+plane selection preserved; nearer UI fence; physical acceptance pending");
+        Debug.Log("DIRECT_AXIS_CONSTRAINT_CHECK PASS actual thick-own-mesh XYZ arrows; strict rendered-cone+shaft nearparallel XYZ+controller-origin axial push; handle taps no lease/geometry; oblique/plane-overlap arbitration; large off-axis typed native payloads; reflected nonuniform+sheared affine display; immutable capture through visual query/native ACK+one commit; clear free body+plane selection preserved; nearer UI fence; physical acceptance pending");
+    }
+    static void EndOnCapture(int axis,bool push)
+    {
+        using var f=new DirectModelEditingChecks.Fixture("builtin.move");SurfaceScaleChecks.SetBox(f.View,new Vector3(0,0,2),Vector3.one*1.2f);Prepare(f);
+        var live=Live(f);var frame=Frame(f);var direction=frame.Axis(axis);
+        var side=Vector3.Cross(direction,Mathf.Abs(Vector3.Dot(direction,Vector3.up))<.8f?Vector3.up:Vector3.right).normalized;
+        var transverse=Vector3.Cross(direction,side).normalized;
+        var origin=push?frame.Start(axis)-direction*.35f+side*.0005f+transverse*.00023f:frame.Tip(axis)+direction*.8f+side*.001f+transverse*.00037f;
+        var first=new Ray(origin,push?direction:-direction);
+        bool hitPresent=DirectTranslationHandles.TryPick(frame,first,4,out var hit);
+        Check(Mathf.Abs(Vector3.Dot(first.direction,direction))>.999f&&hitPresent&&hit.Axis==axis,"strict real cone/shaft is pickable near parallel for native XYZ from either direction");
+        Check(!DirectTranslationHandles.TryPick(frame,first,hit.Distance-.001f,out _),"a nearer foreign UI fence still blocks end-on geometry");
+        var miss=new Ray(frame.Tip(axis)+direction*.8f+(side+transverse)*.06f,-direction);
+        Check(!DirectTranslationHandles.TryPick(frame,miss,4,out _),"nearparallel body area outside actual rendered cone/shaft is not a broad axis catchall");
+        Check(Route(f,first,true)&&f.Direct.Gesturing,"actual end-on controller press captures arrow");Constraint(live,axis,"end-on XYZ constraint is frozen on the real hit");
+        Route(f,first,false);
+        Check(f.Sent.Count==0&&!f.Direct.Gesturing,"tap on an end-on tool handle sends no geometry or lease and cannot toggle object selection");
+        Check(Route(f,first,true),"deliberate new press reacquires same end-on axis");
+        var moved=new Ray(origin+direction*.12f+side*.8f+transverse*.55f,first.direction);
+        Route(f,moved,true);Grant(f);
+        var begin=f.Sent.Last(message=>(string)message["type"]=="live.edit.begin");var flags=(JArray)begin["payload"]["operation"]["settings"]["constraint_axis"];
+        Check(Enumerable.Range(0,3).All(i=>(bool)flags[i]==(i==axis)),"end-on press sends actual single native XYZ constraint");
+        var update=f.Sent.Last(message=>(string)message["type"]=="live.edit.update");
+        Locked(update,f.View.NativeToDisplayMatrix.inverse.MultiplyVector(direction),"axial controller-origin push with large sideways motion remains locked to captured native axis");
+        f.Preview.CancelDirectModelDraft("fixture cleanup");
     }
     static void ThickMeshAndOffAxis(int layout,int axis)
     {
@@ -104,9 +130,9 @@ public static class DirectAxisConstraintChecks
     {
         using(var f=new DirectModelEditingChecks.Fixture("builtin.move"))
         {
-            Prepare(f);var first=f.Ray();Route(f,first,true);var live=Live(f);
-            Check(Get(live,"gizmoConstraint")==null&&Get(live,"translationGestureFrame")==null,"explicit body center keeps free movement");
-            Route(f,new Ray(Vector3.zero,new Vector3(.08f,.07f,2)),true);Grant(f);
+            Prepare(f);var first=new Ray(Vector3.zero,new Vector3(-.12f,-.12f,2));Route(f,first,true);var live=Live(f);
+            Check(Get(live,"gizmoConstraint")==null&&Get(live,"translationGestureFrame")==null,"clear body area outside visible handles keeps free movement");
+            Route(f,new Ray(Vector3.zero,new Vector3(-.03f,-.02f,2)),true);Grant(f);
             var update=f.Sent.Last(m=>(string)m["type"]=="live.edit.update");var value=(JArray)update["payload"]["parameters"]["translation_m"];
             Check(Mathf.Abs((float)value[0])>.01f&&Mathf.Abs((float)value[2])>.01f,"body movement retains two unconstrained native coordinates");
             f.Preview.CancelDirectModelDraft("fixture cleanup");
