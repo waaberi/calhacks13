@@ -80,6 +80,29 @@ on_change = None  # see the module docstring
 _assigned = {}  # session_uid -> the ID we gave that object; cleared when a file loads
 
 
+def native_identity_map():
+    """Canonical object IDs indexed by persistent native identity, before replacement.
+
+    A Client's newly created object gets its first VR ID on the Host. Until the
+    Client downloads another Host checkpoint its own copy lacks that property;
+    preserve the Host assignment through subsequent whole-native transactions.
+    """
+    return {obj.get("spatial_native_uuid"): obj.get(ID_PROPERTY) for obj in bpy.data.objects
+            if _valid_id(obj.get("spatial_native_uuid")) and _valid_id(obj.get(ID_PROPERTY))}
+
+
+def restore_native_identities(identities):
+    """Restore known IDs by UUID only; names and list positions are never identity."""
+    for obj in bpy.data.objects:
+        oid = identities.get(obj.get("spatial_native_uuid"))
+        if _valid_id(oid):
+            obj[ID_PROPERTY] = oid
+        elif ID_PROPERTY in obj:
+            # A native Duplicate copies properties. A genuinely new native UUID
+            # receives a fresh Host ID, instead of taking its original's ID.
+            del obj[ID_PROPERTY]
+
+
 class _Entry:
     """One object as clients have it."""
 

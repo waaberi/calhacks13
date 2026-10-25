@@ -50,7 +50,7 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
         update=_sync_roles,
     )
     lan_enabled: bpy.props.BoolProperty(
-        name="Let a Client-role Blender join over the LAN",
+        name="Let a Client-role Blender join",
         description=f"Listen on port {lan.PORT} for a second Blender with the session token",
         default=False,
         update=_restart,
@@ -101,7 +101,7 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
     client_edits: bpy.props.BoolProperty(
         name="Let the Client role edit (test only)",
         description=(
-            "Experimental shared object move, rotate, scale and delete, with host Undo/Redo. "
+            "Allow authenticated Client edits, including native data checkpoints. "
             "Changing it disconnects everyone; they reconnect"
         ),
         default=False,
@@ -150,6 +150,12 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
     client_port: bpy.props.IntProperty(name="Host port", default=lan.PORT, min=1, max=65535)
     client_token: bpy.props.StringProperty(name="Session token", subtype="PASSWORD")
     client_tls: bpy.props.BoolProperty(name="Use TLS with the token", default=True)
+    native_shared_editing: bpy.props.BoolProperty(
+        name="Share original Blender data",
+        description=("Use native Edit Mode, modifiers, materials and Blender history. "
+                     "Requires the matching Host upgrade; one person edits at a time"),
+        default=True,
+    )
 
     def draw(self, context):
         layout = self.layout
@@ -162,6 +168,7 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
             layout.prop(self, "client_port")
             layout.prop(self, "client_token")
             layout.prop(self, "client_tls")
+            layout.prop(self, "native_shared_editing")
             row = layout.row(align=True)
             row.operator(ConnectReadOnly.bl_idname)
             row.operator(DisconnectReadOnly.bl_idname)
@@ -236,7 +243,7 @@ class ConnectReadOnly(bpy.types.Operator):
             lan.normalize_token(prefs.client_token)  # a short token: say so, don't retry silently
             remote_client.connect(prefs.client_address, prefs.client_token, APP["version"],
                                   prefs.host_name or "Blender viewer", prefs.client_port,
-                                  prefs.client_tls)
+                                  prefs.client_tls, native=prefs.native_shared_editing)
         except (ValueError, OSError) as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
