@@ -302,3 +302,62 @@ def test_receiving_timeout_releases_bytes_and_manifest_without_native_mutation(f
     assert reply["payload"]["outcome"] == "rejected"
     assert reply["payload"]["code"] == "transfer_timeout"
     assert not f.native.applies
+
+
+def test_cancellable_direct_live_edit_is_not_exported_as_a_native_checkpoint(fixture):
+    f = fixture
+    f.srv.live_edit = types.SimpleNamespace(current={"actor_id": ACTOR, "lease": LEASE})
+    old = f.host.snapshot
+    f.native.data = b"BLENDER-intermediate-cancellable-controller-geometry"
+    reply = call(f, "native.get", {})
+    assert reply["payload"]["outcome"] == "rejected"
+    assert reply["payload"]["code"] in {"native_busy", "lease_conflict"}
+    assert f.host.snapshot is old and not f.host.outgoing
+
+
+@pytest.mark.parametrize("reservation", ["live_edit", "preview_ui"])
+def test_native_commit_cannot_replace_datablocks_owned_by_an_existing_reservation(fixture, reservation):
+    f = fixture
+    _, payload = upload(f)
+    if reservation == "live_edit":
+        f.srv.live_edit = types.SimpleNamespace(current={"actor_id": ACTOR, "lease": LEASE})
+    else:
+        # Retained UI state must remain authoritative even if its ordinary lease
+        # is just being handed off or is pending asynchronous cleanup.
+        f.srv.preview_ui = types.SimpleNamespace(owner=f.conn, lease=None, ending=True)
+    reply = call(f, "native.commit", payload)
+    assert reply["payload"]["outcome"] == "rejected"
+    assert reply["payload"]["code"] in {"native_busy", "lease_conflict"}
+    assert not f.native.applies and not f.host.busy
+
+
+def test_invalid_snapshot_metadata_cannot_escape_the_host_drain_timer(fixture):
+    f = fixture
+    capture = f.native.capture
+
+    def malformed(path):
+        snapshot = capture(path)
+        snapshot.manifest = {SCENE: {"group": "all_ids", "name": "Unsafe aggregate"}}
+        return snapshot
+
+    f.native.capture = malformed
+    reply = call(f, "native.get", {})
+    if reply is None:
+        f.host.poll()  # paced generator validation must not kill Blender's timer.
+        replies = [m for m in f.conn.sent if m["type"] == "native.receipt"]
+        assert replies and replies[-1]["payload"]["outcome"] == "rejected"
+    else:
+        assert reply["payload"]["outcome"] == "rejected"
+    assert not f.native.applies
+
+
+def test_periodic_native_copy_io_failure_is_contained_without_stopping_host(fixture):
+    f = fixture
+    f.host.subscribers.add(f.conn)
+
+    def failed_capture(_path):
+        raise OSError("isolated capture I/O failure")
+
+    f.native.capture = failed_capture
+    f.host.poll()
+    assert f.host.error and not f.host.busy
