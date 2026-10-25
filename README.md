@@ -52,7 +52,6 @@ flowchart LR
 - **[Blender add-on](blender_addon/spatial_modeling/)** (Python): one add-on with two roles, Host and Client. It needs nothing beyond the Python that ships with Blender. Every object gets a stable ID that survives renames, Undo and save/reopen.
 - **[VR app](app/)** (Unity 6, OpenXR, XR Interaction Toolkit): the room, the table, controller input, the hand menu and the Blender screen panel.
 - **[VoiceCore](voice/VoiceCore/)** (C#): local speech recognition with Whisper, voice command parsing and follow-up questions. It remembers the parts of a command it already has and asks only for what's missing.
-- **Secure LAN link:** the second Blender connects over TLS 1.3 using the session token as a pre-shared key. There are no certificates to set up.
 - **[SpacetimeDB](spacetime/):** tracks who is connected, who is editing which object, and a log of applied edits that survives a restart.
 - **[Wire format](contracts/README.md):** every message has a JSON Schema and an example, and CI checks both.
 
@@ -84,20 +83,5 @@ Then:
 - **SpacetimeDB (optional):** Node.js and the SpacetimeDB CLI. See [spacetime/README.md](spacetime/README.md). Without it, the host keeps session state in memory.
 
 Team notes and repo rules are in [CONTRIBUTING.md](CONTRIBUTING.md). The demo script is in [docs/demo/DEMO_STEPS.md](docs/demo/DEMO_STEPS.md).
-
-## Website
-
-The public site lives in [`website/`](website/). It uses static HTML, CSS and
-JavaScript with no build step. Run it locally with:
-
-```sh
-python3 -m http.server 4173 --directory website
-```
-
-Submit changes through a pull request. Vercel is connected to this repository
-with `website` as its Root Directory and `main` as its production branch.
-Changes to `website/` deploy automatically to [coplanar.design](https://coplanar.design)
-after merging. Changes elsewhere do not redeploy the site. See the
-[website README](website/README.md) for deployment settings.
 
 The add-on is licensed GPL-3.0-or-later.
