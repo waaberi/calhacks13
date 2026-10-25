@@ -20,7 +20,7 @@ public static class LiveControllerChecks
     {
         Selection();Presentation();GestureMath();LiveRoute();SelectionSync();SelectionRecovery();ToolGestures();RotationRingRoute();RotationBoundsFenceRoute();SelectionAndCancellation();SelectionOutlineBound();
         DirectRotationHandlesChecks.Run();
-        SurfaceScaleChecks.Run();SurfaceScaleRoute();
+        SurfaceScaleChecks.Run();SurfaceScaleRoute();SurfaceScaleCancellation();
         Debug.Log("LIVE_CONTROLLER_CHECK PASS actual held native-update route/one commit/cancel/selection-only no-geometry/SHIFT multi-selection+input-off/epoch/native Inset+Bevel+LoopCut+surface Knife/native axis handle+settings cancellation/own-echo identity+sequence/affine M0 mirrored nonuniform live+commit+reset+restore; physical acceptance pending");
     }
     public static void Selection()
@@ -310,6 +310,27 @@ public static class LiveControllerChecks
                 var commit=f.Sent.Last(m=>(string)m["type"]=="live.edit.commit");State(f,"committed",1,(string)commit["id"]);
                 Check(f.Sent.Count(m=>(string)m["type"]=="live.edit.commit")==1,"contact-based live scale preserves one native commit");
             }
+        }
+    }
+    static void SurfaceScaleCancellation()
+    {
+        foreach(string changed in new[]{"boundary","assist"})
+        {
+            using var f=new DirectModelEditingChecks.Fixture("builtin.scale");NativeLive(f,"object.scale");
+            SurfaceScaleChecks.SetBox(f.View,new Vector3(0,.15f,2),new Vector3(.2f,.3f,.2f));
+            var arrangement=f.Host.gameObject.AddComponent<WorkspaceArrangement>();Invoke(arrangement,"Awake");
+            var surfaces=(List<WorkspaceSurfaces.Surface>)Get(arrangement.Surfaces,"surfaces");
+            surfaces.Add(new WorkspaceSurfaces.Surface{Name="Desk",Id=Guid.NewGuid(),Pose=new Pose(new Vector3(0,0,2),Quaternion.LookRotation(Vector3.up,Vector3.forward)),
+                Size=new Vector2(4,4),Boundary=new[]{new Vector2(-2,-2),new Vector2(2,-2),new Vector2(2,2),new Vector2(-2,2)}});
+            f.Drawing.NativeState["model_edit"]["settings"]["pivot_m"]=new JArray(0,2,.15f);Invoke(f.Direct,"Update");Physics.SyncTransforms();
+            bool Route(bool trigger,float x)=>f.Preview.RouteControllerHand(UnityEngine.XR.XRNode.RightHand,new Ray(new Vector3(0,.15f,0),new Vector3(x,0,2).normalized),trigger,false,Vector2.zero,4,out _,false);
+            Route(true,0);Route(true,.05f);GrantAndBegin(f);var update=f.Sent.Last(m=>(string)m["type"]=="live.edit.update");
+            if(changed=="boundary")surfaces[0].Boundary[0]+=Vector2.right*.02f;else arrangement.ToggleAssist();
+            Invoke(f.Direct,"Update");Route(false,.05f);
+            Check(!f.Direct.Gesturing&&!f.Sent.Any(m=>(string)m["type"]=="live.edit.commit"),"changed support "+changed+" cancels the held scale instead of committing under stale contact");
+            State(f,"updated",1,(string)update["id"]);
+            var cancel=f.Sent.Single(m=>(string)m["type"]=="live.edit.cancel");State(f,"cancelled",1,(string)cancel["id"]);
+            Check(!f.Drawing.Session.ExternalEditBusy&&!f.Sent.Any(m=>(string)m["type"]=="live.edit.commit"),"acknowledged native rollback after "+changed+" releases ownership with no late commit");
         }
     }
     static void SelectionAndCancellation()

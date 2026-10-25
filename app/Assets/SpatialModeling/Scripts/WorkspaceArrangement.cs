@@ -128,11 +128,20 @@ namespace SpatialModeling
                 var normal=surface.Normal;float minimum=float.PositiveInfinity;
                 foreach(var point in points)minimum=Mathf.Min(minimum,Vector3.Dot(point-surface.Pose.position,normal));
                 if(minimum<-.004f||minimum>ScaleContactTolerance)continue;
-                Vector3 support=Vector3.zero;int count=0;
-                foreach(var point in points)if(Vector3.Dot(point-surface.Pose.position,normal)<=minimum+.001f){support+=point;count++;}
+                Vector3 support=Vector3.zero,firstSupport=Vector3.zero;int count=0;
+                foreach(var point in points)
+                {
+                    float height=Vector3.Dot(point-surface.Pose.position,normal);
+                    if(height>minimum+.0001f)continue;
+                    var footprint=point-normal*height;
+                    if(Vector3.Distance(WorkspaceSurfaces.ClosestPoint(surface,footprint),footprint)>.0001f)continue;
+                    if(count==0)firstSupport=point;support+=point;count++;
+                }
                 if(count==0)continue;support/=count;
                 var projected=support-normal*Vector3.Dot(support-surface.Pose.position,normal);
-                if(Vector3.Distance(WorkspaceSurfaces.ClosestPoint(surface,projected),projected)>.002f)continue;
+                // A concave footprint can exclude the centroid of valid support
+                // vertices. Use an actual admitted point rather than that gap.
+                if(Vector3.Distance(WorkspaceSurfaces.ClosestPoint(surface,projected),projected)>.0001f)support=firstSupport;
                 float score=Mathf.Abs(minimum);
                 if(found&&Mathf.Abs(score-best)<.001f&&Vector3.Dot(source.Normal,normal)<.999f){ambiguous=true;continue;}
                 if(found&&score>=best)continue;
@@ -141,8 +150,25 @@ namespace SpatialModeling
             return found&&!ambiguous;
         }
         public static bool SameScaleSurface(WorkspaceSurfaces.Surface a,WorkspaceSurfaces.Surface b)
-            =>a.Id==b.Id&&a.Name==b.Name&&Vector3.Distance(a.Pose.position,b.Pose.position)<.001f
-                &&Quaternion.Angle(a.Pose.rotation,b.Pose.rotation)<.1f&&Vector2.Distance(a.Size,b.Size)<.001f;
+        {
+            if(a.Id!=b.Id||a.Name!=b.Name||Vector3.Distance(a.Pose.position,b.Pose.position)>=.001f
+                ||Quaternion.Angle(a.Pose.rotation,b.Pose.rotation)>=.1f||Vector2.Distance(a.Size,b.Size)>=.001f)return false;
+            int count=a.Boundary?.Length??0;if(count!=(b.Boundary?.Length??0))return false;
+            for(int i=0;i<count;i++)if(Vector2.Distance(a.Boundary[i],b.Boundary[i])>.0001f)return false;
+            return true;
+        }
+        public static WorkspaceSurfaces.Surface FreezeScaleSurface(WorkspaceSurfaces.Surface value)
+        {if(value.Boundary!=null)value.Boundary=(Vector2[])value.Boundary.Clone();return value;}
+        public static bool ScalePoseRepresentable(Transform target)
+        {
+            var actual=target.localToWorldMatrix;var pose=Matrix4x4.TRS(target.position,target.rotation,target.lossyScale);
+            for(int column=0;column<3;column++)
+            {
+                float length=actual.GetColumn(column).magnitude;if(length<1e-8f)return false;
+                for(int row=0;row<3;row++)if(Mathf.Abs(actual[row,column]-pose[row,column])>Mathf.Max(.000001f,length*.0001f))return false;
+            }
+            return true;
+        }
         public static Pose ScaleAboutContact(Pose desired,Vector3 scale,Vector3 localPoint,Vector3 fixedWorldPoint)
         {
             desired.position+=fixedWorldPoint-(desired.position+desired.rotation*Vector3.Scale(localPoint,scale));return desired;
@@ -205,13 +231,13 @@ namespace SpatialModeling
             if(!AssistEnabled || bypass || Surfaces==null) { scaleSupports.Remove(target);HideGuide(); return desired; }
             bool scaling=previousScale.HasValue&&(previousScale.Value-target.lossyScale).sqrMagnitude>1e-10f;
             if(!scaling)scaleSupports.Remove(target);
-            if(scaling&&Quaternion.Angle(previous.rotation,desired.rotation)<.5f)
+            if(scaling&&ScalePoseRepresentable(target)&&Quaternion.Angle(previous.rotation,desired.rotation)<.5f)
             {
                 var before=Matrix4x4.TRS(previous.position,previous.rotation,previousScale.Value);
                 if(!scaleSupports.TryGetValue(target,out var support))
                 {
                     if(TryScaleContact(MeshPoints(target,before),Surfaces.Surfaces,out var surface,out var contact))
-                    {support=new ScaleSupport{Surface=surface,WorldPoint=contact,LocalPoint=before.inverse.MultiplyPoint3x4(contact)};scaleSupports[target]=support;}
+                    {support=new ScaleSupport{Surface=FreezeScaleSurface(surface),WorldPoint=contact,LocalPoint=before.inverse.MultiplyPoint3x4(contact)};scaleSupports[target]=support;}
                 }
                 if(support!=null)
                 {

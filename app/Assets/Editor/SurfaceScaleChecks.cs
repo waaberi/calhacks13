@@ -31,6 +31,13 @@ public static class SurfaceScaleChecks
         Near(contact,new Vector3(0,.003f,0),"existing3mm clearance is preserved without pulling geometry to the plane");
         Check(!WorkspaceArrangement.TryScaleContact(points.Select(p=>p+Vector3.up*.02f).ToArray(),new[]{desk},out _,out _),"floating object is not attached to a merely nearby desk");
         Check(!WorkspaceArrangement.TryScaleContact(points.Select(p=>p+Vector3.right*5).ToArray(),new[]{desk},out _,out _),"infinite extension outside detected finite desk never creates contact");
+        var small=desk;small.Size=Vector2.one*.05f;
+        Check(!WorkspaceArrangement.TryScaleContact(points,new[]{small},out _,out _),"an in-desk centroid cannot invent support when every actual supporting vertex lies outside the finite footprint");
+        var mutable=desk;mutable.Boundary=new[]{new Vector2(-2,-2),new Vector2(2,-2),new Vector2(2,2),new Vector2(-2,2)};
+        var frozen=WorkspaceArrangement.FreezeScaleSurface(mutable);
+        Check(WorkspaceArrangement.SameScaleSurface(frozen,mutable),"unchanged native boundary retains frozen contact");
+        mutable.Boundary[0]+=Vector2.right*.02f;
+        Check(!WorkspaceArrangement.SameScaleSurface(frozen,mutable),"in-place boundary-only updates cannot mutate or match a frozen support snapshot");
         var wall=Desk(Vector3.zero,Vector3.right);wall.Name="Wall";
         Check(!WorkspaceArrangement.TryScaleContact(Box(new Vector3(.1f,.15f,0),new Vector3(.2f,.3f,.2f)),new[]{desk,wall},out _,out _),"two intersecting equally valid support planes do not invent attachment ownership");
     }
@@ -73,6 +80,12 @@ public static class SurfaceScaleChecks
             prior=reduced;target.transform.localScale=Vector3.one*.25f;
             var free=arrangement.Apply(target.transform,prior,prior,false,true,Vector3.one*.5f);
             Near(free.position,prior.position,"existing explicit free-placement bypass releases contact scaling");
+            owner.transform.localScale=new Vector3(2,1,.6f);target.transform.localRotation=Quaternion.Euler(0,37,0);
+            Check(!WorkspaceArrangement.ScalePoseRepresentable(target.transform),"a rotated child under a nonuniform parent has shear that Pose/lossyScale cannot represent");
+            prior=new Pose(target.transform.position,target.transform.rotation);var oldScale=target.transform.lossyScale;target.transform.localScale*=.8f;
+            arrangement.Apply(target.transform,prior,prior,false,false,oldScale);
+            var contacts=(System.Collections.IDictionary)typeof(WorkspaceArrangement).GetField("scaleSupports",Private).GetValue(arrangement);
+            Check(contacts.Count==0,"arrangement scale conservatively skips fixed-contact anchoring when parent shear would corrupt its affine frame");
         }
         finally
         {

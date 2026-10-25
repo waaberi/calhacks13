@@ -391,7 +391,7 @@ namespace SpatialModeling
                 if(mesh==null||!mesh.isReadable)continue;
                 var points=new List<Vector3>();foreach(var vertex in mesh.vertices)points.Add(view.transform.TransformPoint(vertex));
                 if(WorkspaceArrangement.TryScaleContact(points,arrangement.Surfaces.Surfaces,out var surface,out var contact))
-                    scaleContacts[entry.Key]=new ScaleContact{Surface=surface,NativePoint=maps[entry.Key].inverse.MultiplyPoint3x4(contact)};
+                    scaleContacts[entry.Key]=new ScaleContact{Surface=WorkspaceArrangement.FreezeScaleSurface(surface),NativePoint=maps[entry.Key].inverse.MultiplyPoint3x4(contact)};
             }
         }
         bool ScaleContactsCurrent()
