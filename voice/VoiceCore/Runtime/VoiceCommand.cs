@@ -3,7 +3,9 @@ using System.Globalization;
 
 namespace SpatialModeling.VoiceCore
 {
-    public enum CommandKind { AddShape, Select, Move, Rotate, Scale, Delete, Undo, Redo, Apply, Cancel }
+    /// <summary>What a voice command does. <see cref="Run"/> is a Blender operation the host resolved from the words
+    /// (<c>voice.resolve</c>): the command runs the host's own candidate, and never names an operator itself.</summary>
+    public enum CommandKind { AddShape, Select, Move, Rotate, Scale, Delete, Undo, Redo, Apply, Cancel, Run }
 
     public enum Shape { Cube, Sphere, Cylinder }
 
@@ -66,7 +68,25 @@ namespace SpatialModeling.VoiceCore
             Unit = unit;
         }
 
+        /// <summary>A <see cref="CommandKind.Run"/> of the host's candidate.</summary>
+        internal VoiceCommand(string resolution, VoiceCandidate candidate, SceneObject target)
+            : this(CommandKind.Run, target, null, null, null, null)
+        {
+            Resolution = resolution;
+            Choice = candidate.Choice;
+            Say = candidate.Say;
+        }
+
         public CommandKind Kind { get; }
+
+        /// <summary>Run only: the host's <c>resolution</c> ID from <c>voice.candidates</c>.</summary>
+        public string Resolution { get; }
+
+        /// <summary>Run only: the chosen candidate's <c>choice</c>, 1 to 3.</summary>
+        public int Choice { get; }
+
+        /// <summary>Run only: what the operation is called, for display ("Subdivision Surface").</summary>
+        public string Say { get; }
 
         /// <summary>Stable object ID. Set for Select, Move, Rotate, Scale and Delete; null otherwise.</summary>
         public string TargetId { get; }
@@ -118,6 +138,7 @@ namespace SpatialModeling.VoiceCore
                 case CommandKind.Scale: return "Scale " + target + " by " + amount + unit;
                 case CommandKind.Select:
                 case CommandKind.Delete: return Kind + " " + target;
+                case CommandKind.Run: return Say + (TargetName == null ? "" : " on " + TargetName);
                 default: return Kind.ToString();
             }
         }

@@ -78,6 +78,10 @@ namespace SpatialModeling.VoiceCore.Tests
                     return new JsonArray(numbers.Select(n => (JsonNode)n).ToArray());
                 case double number:
                     return number;
+                case int integer:
+                    return integer;
+                case long integer:
+                    return integer;
                 case string text:
                     return text;
                 default:
@@ -87,6 +91,17 @@ namespace SpatialModeling.VoiceCore.Tests
 
         public static EvaluationResults Validate(JsonNode message) =>
             CommandSchema.Value.Evaluate(message, new EvaluationOptions { OutputFormat = OutputFormat.List });
+
+        /// <summary>Whether contracts/schemas has this schema (the voice ones arrive with the host's voice branch).</summary>
+        public static bool HasSchema(string name) => File.Exists(Path.Combine(Root, "contracts", "schemas", name));
+
+        /// <summary>Checks a message against any schema in contracts/schemas.</summary>
+        public static EvaluationResults Validate(string schema, JsonNode message)
+        {
+            _ = CommandSchema.Value; // registers every schema, so the $refs resolve
+            var registered = (JsonSchema)SchemaRegistry.Global.Get(new Uri(Path.Combine(Root, "contracts", "schemas", schema)));
+            return registered.Evaluate(message, new EvaluationOptions { OutputFormat = OutputFormat.List });
+        }
 
         public static string Errors(EvaluationResults results) =>
             string.Join("; ", (results.Details ?? new List<EvaluationResults>())

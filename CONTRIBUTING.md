@@ -54,3 +54,8 @@ compatibility. Test evidence and outstanding gates are recorded in GitHub #5.
 - `main` can't be force-pushed or deleted. Use `git revert` to undo a change.
 - Unity: commit each asset together with its `.meta` file.
 - Never commit tokens, machine paths, build outputs or speech models. `.env` and `*.local.json` are already ignored.
+
+## VR placement and arrangement
+
+- [Placement and orientation lifecycle contract](docs/product-workflow/PLACEMENT_ORIENTATION_CONTRACT.md)
+- [Direct workspace arrangement and surface assistance](docs/product-workflow/WORKSPACE_ARRANGEMENT.md)

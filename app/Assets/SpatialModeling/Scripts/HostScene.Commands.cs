@@ -40,29 +40,43 @@ namespace SpatialModeling
         // A scene is shown but the connection isn't current (disconnected, not responding): edits are off.
         public bool SceneIsStale => haveScene && !(link != null && link.SocketOpen && connected && status == Status.Connected);
 
-        string sessionId = "", hostEpoch = "", actorId = "", documentId = "", openEpoch = "";
+        // P4 voice (#146): the host resolver's messages, and errors answering any request (not only commands).
+        public event Action Welcomed;
+        public event Action<string, string> VoiceCandidatesReceived;   // (re, payload JSON)
+        public event Action<string, string> VoiceGrammarReceived;      // (re, payload JSON)
+        public event Action<string, string> RequestFailed;             // (re, error code)
+
+        string sessionId = "", hostEpoch = "", actorId = "";
+        // The document named by welcome. Kept apart from HostScene.documentId/openEpoch, which track
+        // the applied snapshot: P2 compares those to reset the scene and placement on a new document.
+        string welcomeDocumentId = "", welcomeOpenEpoch = "";
         bool canEdit;
+        bool welcomed;   // welcome arrived on this connection: voice.* requests may go before the snapshot
         readonly Dictionary<string, long> generations = new Dictionary<string, long>();
         readonly Dictionary<string, string> pendingOps = new Dictionary<string, string>();
 
         // True only while the scene is current and the host lets this connection edit.
         public bool CanSend => link != null && link.SocketOpen && connected && canEdit && status == Status.Connected;
 
-        void Handle(HostEvent e)
+        internal void Handle(HostEvent e)
         {
             bool wasConnected = connected;
             HandleCore(e);
             switch (e.Kind)
             {
                 case HostEventKind.Welcome:
-                    bool newDocument = documentId.Length > 0 && (documentId != e.DocumentId || openEpoch != e.OpenEpoch);
+                    bool newDocument = welcomeDocumentId.Length > 0 && (welcomeDocumentId != e.DocumentId || welcomeOpenEpoch != e.OpenEpoch);
+                    welcomed = true;
                     sessionId = e.SessionId; hostEpoch = e.HostEpoch; actorId = e.ActorId; canEdit = e.CanEdit;
-                    documentId = e.DocumentId; openEpoch = e.OpenEpoch;
+                    welcomeDocumentId = e.DocumentId; welcomeOpenEpoch = e.OpenEpoch;
                     pendingOps.Clear();
                     if (newDocument) DocumentChanged?.Invoke();
+                    Welcomed?.Invoke();
                     break;
+                case HostEventKind.VoiceCandidates: VoiceCandidatesReceived?.Invoke(e.Re, e.Text); break;
+                case HostEventKind.VoiceGrammar: VoiceGrammarReceived?.Invoke(e.Re, e.Text); break;
                 case HostEventKind.Closed:
-                    canEdit = false;
+                    canEdit = false; welcomed = false;
                     participants.Clear(); leases.Clear(); SessionChanged?.Invoke();
                     if (wasConnected) ConnectionLost?.Invoke();
                     // contracts/README.md, Outcomes: a connection lost before the result is an unknown outcome.
@@ -74,7 +88,7 @@ namespace SpatialModeling
                 case HostEventKind.Scene:
                     if (e.Snapshot) generations.Clear();
                     foreach (var id in e.Removed) generations.Remove(id);
-                    foreach (var o in e.Objects) if (o.Generation.HasValue) generations[o.Id] = o.Generation.Value;
+                    foreach (var o in e.Objects) generations[o.Id] = o.Generation;
                     SceneChanged?.Invoke();
                     break;
                 case HostEventKind.Result:
@@ -90,7 +104,7 @@ namespace SpatialModeling
                     { ActorName = e.ActorName, Op = e.Op, Outcome = e.Outcome, Summary = e.Text, Source = e.Source });
                     break;
                 case HostEventKind.Error:
-                    if (e.Re.Length > 0) Answer(e.Re, null, "rejected", e.Code, e.Text, null);
+                    if (e.Re.Length > 0) { Answer(e.Re, null, "rejected", e.Code, e.Text, null); RequestFailed?.Invoke(e.Re, e.Code); }
                     break;
             }
         }
@@ -119,8 +133,8 @@ namespace SpatialModeling
             {
                 ["session_id"] = sessionId,
                 ["host_epoch"] = hostEpoch,
-                ["document_id"] = documentId,
-                ["open_epoch"] = openEpoch,
+                ["document_id"] = welcomeDocumentId,
+                ["open_epoch"] = welcomeOpenEpoch,
                 ["actor_id"] = actorId,
                 ["base_revision"] = revision,
                 ["source"] = source,
@@ -135,6 +149,19 @@ namespace SpatialModeling
             string id = link.Send("command", payload);
             if (id != null) pendingOps[id] = op;
             return id;
+        }
+
+        // A voice.* request (voice.grammar_query, voice.resolve): the request ID, or null when it could not be sent.
+        public string SendVoice(string type, JObject payload)
+        {
+            if (link == null || !link.SocketOpen || !welcomed) return null;
+            return link.Send(type, payload ?? new JObject());
+        }
+
+        public bool TryGetGeneration(string id, out long generation)
+        {
+            generation = 0;
+            return id != null && generations.TryGetValue(id, out generation);
         }
 
         // The object is in the current scene (its generation is known, so a command can target it).

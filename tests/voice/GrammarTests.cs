@@ -75,6 +75,21 @@ namespace SpatialModeling.VoiceCore.Tests
             Assert.Equal("", VoskJson.ParseResult("{\n  \"text\" : \"\"\n}").Text);
             Assert.Equal(0f, VoskJson.ParseResult("{\"text\" : \"undo\"}").Confidence); // SetWords(true) missing
         }
+
+        [Fact]
+        public void ParsesEachWordWithItsConfidenceAndTimes()
+        {
+            const string json = "{\n  \"result\" : [{\n      \"conf\" : 0.760000,\n      \"end\" : 0.36,\n      \"start\" : 0.3,\n" +
+                "      \"word\" : \"it\"\n    }, {\n      \"conf\" : 1.000000,\n      \"end\" : 0.9,\n      \"start\" : 0.36,\n" +
+                "      \"word\" : \"end\"\n    }],\n  \"text\" : \"it end\"\n}"; // a word named like a key
+            IReadOnlyList<RecognizedWord> words = VoskJson.ParseResult(json).Words;
+            Assert.Equal(new[] { "it", "end" }, words.Select(w => w.Word));
+            Assert.Equal(new[] { 0.76f, 1f }, words.Select(w => w.Confidence));
+            Assert.Equal(new[] { 0.3f, 0.36f }, words.Select(w => w.Start));
+            Assert.Equal(new[] { 0.36f, 0.9f }, words.Select(w => w.End));
+            Assert.Null(VoskJson.ParseResult("{\"text\" : \"undo\"}").Words); // SetWords(true) missing
+            Assert.Null(new RecognitionResult("undo", 1f).Words);
+        }
     }
 
     public class ParserTests

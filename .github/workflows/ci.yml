@@ -18,6 +18,10 @@ jobs:
       - run: pip install ruff==0.17.2 pytest==9.1.1 jsonschema==4.26.0
       - run: ruff check .
       - run: pytest tests
+      - name: Capture helper tests (no desktop is captured; Windows-only cases skip)
+        run: |
+          pip install Pillow==12.3.0 numpy==2.5.4 opencv-python-headless==5.0.0.93
+          python -m unittest discover -s desktop-capture -p 'test_*.py' -v
 
   voicecore:
     runs-on: ubuntu-latest

@@ -2,6 +2,8 @@
 .env
 .env.*
 *.local.json
+# Meta generates this optional debug-agent asset with machine-specific credentials.
+/app/Assets/Resources/DevAgentSettings.asset*
 
 # Unity (project lives in app/)
 /app/[Ll]ibrary/
@@ -23,6 +25,9 @@ obj/
 
 # Speech models (voice/fetch-model.sh), wherever they are unpacked, and spike audio
 vosk-model-*
+# whisper-server and its models (voice/fetch-whisper.sh), with the .meta files Unity makes for them
+/app/Assets/StreamingAssets/whisper/
+/app/Assets/StreamingAssets/whisper.meta
 /voice/models/
 /voice/VoskSpike/samples/
 
