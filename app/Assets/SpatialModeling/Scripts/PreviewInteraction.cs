@@ -1066,7 +1066,7 @@ namespace SpatialModeling
                 action(); RefreshControlFeedback();
             }); buttons.Add(button);
             GlassTheme.StyleAction(go);
-            string caption=label=="BACKSPACE"?"Backspace":label=="PAGEUP"?"Page Up":label=="PAGEDOWN"?"Page Down":label=="DECIMAL"?"Num .":label.StartsWith("NUMPAD",StringComparison.Ordinal)?"Num "+label.Substring(6):label;
+            string caption=label=="Double click"?"Dbl click":label=="Lock screen position"?"Lock screen":label=="BACKSPACE"?"Backspace":label=="PAGEUP"?"Page Up":label=="PAGEDOWN"?"Page Down":label=="DECIMAL"?"Num .":label.StartsWith("NUMPAD",StringComparison.Ordinal)?"Num "+label.Substring(6):label;
             int typeSize=columns>=12?(caption.Length==1?22:19):25;
             MakeText(rect, Vector2.zero, rect.sizeDelta-new Vector2(24,8), caption,typeSize);
             return button;
