@@ -317,6 +317,10 @@ VoiceCore runs inside the Unity app. Every voice command is an ordinary `command
 | `text` | The transcript, 1 to 500 characters. |
 | `confidence` | The recognizer's, 0 to 1 (Vosk: its lowest word's). Below 0.5 the host only asks, never runs. |
 | `target` | Optional `{id, generation}`: the object the user means (selected or pointed at). |
+| `composition` | `true` enables complete deterministic chains and reviewed typed recipes. |
+| `recipe`, `context` | Optional complete typed AI draft and captured document/tool/component context. Both require `composition: true`; see the [recipe workflow](../docs/product-workflow/GEMINI_MODELING_RECIPES.md). |
+
+**Reviewed modeling recipes.** A host advertising `recipe_version: 1` and a `tools` catalog in `voice.grammar` accepts the shared definitions in `modeling.recipe.schema.json` inside `voice.resolve`; there is no separate recipe message. The host validates every step and stages the whole plan before returning `recipe_plan` with the ordered steps and preview information. Every recipe candidate requires explicit confirmation, expires after 120 seconds, belongs to its connection/document/generations and can be consumed once. A missing detail returns `clarify`; an unsupported tail rejects the whole request. Recipe execution uses the same catalog kernels as direct controllers, within one atomic Undo transaction. Native Edit Mode recipes preserve the captured component selection and never substitute Select All. Native live gestures and acknowledged preview input must finish before command execution. Old basic voice and composition keep their existing routes and expiry behavior.
 
 The host answers `voice.candidates` (with `re`) and changes nothing:
 

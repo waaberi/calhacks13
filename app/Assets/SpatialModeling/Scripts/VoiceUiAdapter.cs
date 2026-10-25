@@ -183,6 +183,7 @@ namespace SpatialModeling
             confirm.started += _ => { if (!leftGrip.IsPressed()) ConfirmDelete(); };
             cancel.started += _ => CancelPressed();
             talk.Enable(); confirm.Enable(); cancel.Enable(); leftGrip.Enable();
+            InitializeAi();
         }
 
         void Start()
@@ -198,9 +199,10 @@ namespace SpatialModeling
         void BindHost()
         {
             host.SceneChanged += OnScene;
-            host.ConnectionLost += () => { ResetObjectTargeting(); DropDelete(Prompt.ConnectionLost); Handle(session.ConnectionLost()); };
+            host.ConnectionLost += () => { InvalidateAi(); ResetObjectTargeting(); DropDelete(Prompt.ConnectionLost); Handle(session.ConnectionLost()); };
             host.DocumentChanged += () =>
             {
+                InvalidateAi();
                 // contracts/README.md, Wrong document: drop everything held for the old document. Object IDs survive
                 // a reopen, so a waiting delete would otherwise hit the same object in the reopened file.
                 DropDelete(Prompt.DocumentChanged);
@@ -213,11 +215,13 @@ namespace SpatialModeling
             {
                 session.SetHostGrammar(VoiceGrammar.FromJson(json));
                 session.EnableComposition((bool?)JObject.Parse(json)["composition"] == true);
+                AcceptAiCatalog(JObject.Parse(json));
                 input?.SetGrammar(session.GrammarPhrases());
                 Debug.Log("VOICE grammar: " + session.GrammarPhrases().Count + " phrases with the host's");
             };
             host.VoiceCandidatesReceived += (re, json) =>
             {
+                if (AcceptAiCandidates(re, JObject.Parse(json))) return;
                 VoiceCandidates answer = VoiceCandidates.FromJson(json);
                 Debug.Log($"VOICE candidates {answer.Decision} after {Since()} ms: {string.Join(" | ", answer.Candidates)}" +
                           (answer.Reason != null ? " (" + answer.Reason + ")" : ""));
@@ -263,6 +267,7 @@ namespace SpatialModeling
 
         void OnDestroy()
         {
+            InvalidateAi();
             DisposeObjectTargeting();
             talk?.Dispose(); confirm?.Dispose(); cancel?.Dispose(); leftGrip?.Dispose();
             if (mic != null) Microphone.End(micDevice);
@@ -273,6 +278,7 @@ namespace SpatialModeling
 
         void Update()
         {
+            TickAi();
             PumpMic();
             if (input != null)
             {
@@ -301,7 +307,7 @@ namespace SpatialModeling
                     }
                     heardLine = $"Heard: \"{result.Text}\" ({result.Confidence:0.00})";
                     if (prompts.Count == 0 && !playing) Note("Heard: " + result.Text);   // don't cover a prompt that is playing
-                    Handle(session.Hear(result));
+                    HearOrInterpret(result, true);
                 }
                 // A press that gave no result at all (#146): silence, or speech that matched no phrase.
                 while (input.TryGetNoResult(out NoResultReason why))
@@ -313,7 +319,7 @@ namespace SpatialModeling
                     // Silence says nothing (VoiceSession), so show why; speech that matched nothing says "Sorry, I
                     // didn't catch that" (Prompt.LowConfidence), which the prompt loop shows.
                     if (why == NoResultReason.Silence) Note(DidntHear);
-                    Handle(session.NothingRecognized(why));
+                    if (!TryInterpretUnmatched(why)) Handle(session.NothingRecognized(why));
                 }
             }
             if (talking) noteUntil = Time.time + 1f;   // keep "Listening..." up while the button is held
@@ -337,7 +343,9 @@ namespace SpatialModeling
             if (choice != null) panel.ShowChoice(choice);
             else if (pending != null) panel.Show(pending);
             else if (session.CompositionQuestion != null) panel.ShowComposition(session.CompositionQuestion, session.CompositionExpiresAt);
+            else if (deleteWaiting != null && ShowAiReview()) { }
             else if (deleteWaiting != null) panel.ShowDelete(deleteWaiting.ToString(), deleteExpiresAt);
+            else if (aiQuestion != null) panel.ShowComposition(aiQuestion, aiQuestionUntil);
             else if (panel.Visible) panel.Hide();
 
             if (feedback.gameObject.activeSelf && Time.time > noteUntil && prompts.Count == 0)
@@ -416,7 +424,7 @@ namespace SpatialModeling
                 string phrase = typed;
                 typed = "";
                 e.Use();
-                Handle(session.Hear(new RecognitionResult(phrase, 1f)));
+                HearOrInterpret(new RecognitionResult(phrase, 1f), false);
                 return;
             }
             GUI.SetNextControlName("voicebox");
@@ -478,7 +486,11 @@ namespace SpatialModeling
             if (turn.Resolve != null)
             {
                 long? g = turn.Resolve.TargetId != null && host.TryGetGeneration(turn.Resolve.TargetId, out long gen) ? gen : (long?)null;
-                string id = host.SendVoice(VoiceResolve.Type, JObject.FromObject(turn.Resolve.Payload(g)));
+                var voicePayload = JObject.FromObject(turn.Resolve.Payload(g));
+                if (aiPendingDraft != null)
+                { voicePayload["recipe"] = aiPendingDraft; voicePayload["context"] = aiExpectedContext; aiPendingDraft = null; }
+                string id = host.SendVoice(VoiceResolve.Type, voicePayload);
+                if (voicePayload["recipe"] != null) { aiRecipeRequest = id; aiFingerprint = CaptureAiContext().ToString(Newtonsoft.Json.Formatting.None); }
                 Debug.Log($"VOICE resolve '{turn.Resolve.Text}' target {turn.Resolve.TargetId ?? "-"} sent {id ?? "(not sent)"}");
                 Handle(session.ResolveSent(turn.Resolve, id));
             }
@@ -498,7 +510,7 @@ namespace SpatialModeling
             if (vc.RequiresConfirmation)
             {
                 deleteWaiting = vc;
-                deleteExpiresAt = DateTime.UtcNow.AddSeconds(15);
+                deleteExpiresAt = DateTime.UtcNow.AddSeconds(aiReview != null ? 120 : 15);
                 Enqueue(vc.Kind == CommandKind.Run ? Prompt.ConfirmSequence : Prompt.ConfirmDelete, vc.Say);
                 return;
             }
@@ -508,6 +520,7 @@ namespace SpatialModeling
         // Esc or "cancel": drops the delete waiting for its confirmation and the pending command.
         void CancelPressed()
         {
+            InvalidateAi();
             PreviewInteraction.Current?.CancelDirectModelDraft("Voice / Escape cancelled the local direct edit");
             DropDelete(Prompt.Cancelled);
             Handle(session.Cancel());
@@ -523,6 +536,7 @@ namespace SpatialModeling
         void ConfirmDelete()
         {
             if (deleteWaiting == null) return;
+            if (!CanConfirmAiReview()) return;
             HostCommand command = HostCommand.From(deleteWaiting);
             deleteWaiting = null;
             if (command != null) Send(command);

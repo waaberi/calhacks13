@@ -1,0 +1,317 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "modeling.recipe.schema.json",
+  "title": "Reviewed whole modeling recipe",
+  "$defs": {
+    "draft": {
+      "type": "object",
+      "required": [
+        "decision",
+        "steps"
+      ],
+      "properties": {
+        "decision": {
+          "enum": [
+            "propose",
+            "clarify",
+            "reject"
+          ]
+        },
+        "steps": {
+          "type": "array",
+          "maxItems": 24,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "tool",
+              "target",
+              "selection",
+              "params"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,47}$"
+              },
+              "tool": {
+                "type": "string",
+                "maxLength": 64
+              },
+              "target": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 128
+                  },
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "step",
+                      "output"
+                    ],
+                    "properties": {
+                      "step": {
+                        "type": "string",
+                        "maxLength": 48
+                      },
+                      "output": {
+                        "type": "string",
+                        "maxLength": 64
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "selection": {
+                "anyOf": [
+                  {
+                    "const": "captured"
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "component",
+                      "indices"
+                    ],
+                    "properties": {
+                      "component": {
+                        "enum": [
+                          "object",
+                          "vertex",
+                          "edge",
+                          "face"
+                        ]
+                      },
+                      "indices": {
+                        "type": "array",
+                        "maxItems": 256,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "step",
+                      "output"
+                    ],
+                    "properties": {
+                      "step": {
+                        "type": "string",
+                        "maxLength": 48
+                      },
+                      "output": {
+                        "type": "string",
+                        "maxLength": 64
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "params": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "missing": {
+          "type": "array",
+          "maxItems": 24,
+          "items": {
+            "type": "string",
+            "maxLength": 128
+          }
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 2048
+        },
+        "unhandled_intent": {
+          "type": "array",
+          "maxItems": 24,
+          "items": {
+            "type": "string",
+            "maxLength": 512
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "step": {
+      "type": "object",
+      "required": [
+        "id",
+        "tool",
+        "target",
+        "selection",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,47}$"
+        },
+        "tool": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "step",
+                "output"
+              ],
+              "properties": {
+                "step": {
+                  "type": "string",
+                  "maxLength": 48
+                },
+                "output": {
+                  "type": "string",
+                  "maxLength": 64
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "selection": {
+          "anyOf": [
+            {
+              "const": "captured"
+            },
+            {
+              "type": "object",
+              "required": [
+                "component",
+                "indices"
+              ],
+              "properties": {
+                "component": {
+                  "enum": [
+                    "object",
+                    "vertex",
+                    "edge",
+                    "face"
+                  ]
+                },
+                "indices": {
+                  "type": "array",
+                  "maxItems": 256,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "step",
+                "output"
+              ],
+              "properties": {
+                "step": {
+                  "type": "string",
+                  "maxLength": 48
+                },
+                "output": {
+                  "type": "string",
+                  "maxLength": 64
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "params": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "context": {
+      "type": "object",
+      "required": [
+        "document_id",
+        "open_epoch",
+        "revision",
+        "mode",
+        "native_tool",
+        "topology_token",
+        "selection"
+      ],
+      "properties": {
+        "document_id": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "open_epoch": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "revision": {
+          "$ref": "envelope.schema.json#/$defs/revision"
+        },
+        "mode": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "native_tool": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "topology_token": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "selection": {
+          "type": "object"
+        },
+        "objects": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "object"
+          }
+        },
+        "options": {
+          "type": "object"
+        },
+        "native_selection": {
+          "type": "object"
+        },
+        "gesture_epoch": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "gesture_active": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -61,6 +61,25 @@
         },
         "composition": {
           "type": "boolean"
+        },
+        "recipe_plan": {
+          "type": "object",
+          "required": [
+            "steps"
+          ],
+          "properties": {
+            "steps": {
+              "type": "array",
+              "maxItems": 24,
+              "items": {
+                "$ref": "modeling.recipe.schema.json#/$defs/step"
+              }
+            },
+            "preview": {
+              "type": "object"
+            }
+          },
+          "additionalProperties": false
         }
       },
       "allOf": [

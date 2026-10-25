@@ -37,6 +37,16 @@
         },
         "composition": {
           "type": "boolean"
+        },
+        "recipe_version": {
+          "const": 1
+        },
+        "tools": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object"
+          }
         }
       },
       "additionalProperties": false

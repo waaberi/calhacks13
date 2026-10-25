@@ -538,6 +538,20 @@ namespace SpatialModeling.VoiceCore
 
         bool Answers(string re) => resolving?.MessageId != null && re == resolving.MessageId;
 
+        // An external interpreter proposes a complete typed recipe. Force host
+        // resolution even when its words also contain a valid core prefix.
+        public VoiceTurn ResolveRecipe(string transcript)
+        {
+            var turn = Begin();
+            EndChoice(turn); ClearComposition(); pending = null;
+            var result = new RecognitionResult(transcript, 1);
+            var target = FromContext(CommandKind.Move);
+            var request = new VoiceResolve(transcript, 1, target, false, null, true);
+            resolving = new Resolving(request, result, target, clock());
+            turn.Resolve = request;
+            return turn.Build();
+        }
+
         /// <summary>After the host timeout, handles the waiting words as without a host. True if it did.</summary>
         bool TimedOutWaiting(Turn turn)
         {
@@ -550,8 +564,9 @@ namespace SpatialModeling.VoiceCore
         void HearWithoutHost(Turn turn)
         {
             RecognitionResult result = resolving.Result;
+            bool wholePlan = resolving.Request.Composition;
             resolving = null;
-            if (compositionToken != null || IsCompositionRequest(result.Text))
+            if (wholePlan || compositionToken != null || IsCompositionRequest(result.Text))
             {
                 ClearComposition();
                 turn.Prompts.Add(Prompt.Failed);

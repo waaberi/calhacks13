@@ -858,7 +858,7 @@ def wire_candidates(candidates):
     """voice.candidates' `candidates`: what Unity shows, numbered from 1. Display only."""
     return [{"choice": i, "say": say(c), "operator": c["op"], "properties": dict(c["props"]),
              "set": dict(c["post"]), "needs_target": c["needs"] is not None,
-             **({"requires_confirmation": c["confirm"], "target_id": c["primary"]} if c.get("intent") == "__sequence" else {})}
+             **({"requires_confirmation": c["confirm"], "target_id": c["primary"]} if c.get("intent") in ("__sequence", "__recipe") else {})}
             for i, c in enumerate(candidates, 1)]
 
 
@@ -941,7 +941,7 @@ def resolve_problem(msg):
     """Why msg doesn't match voice.resolve.schema.json, or None."""
     try:
         commands._envelope(msg)
-        p = commands._keys(msg["payload"], "payload", ("text", "confidence"), ("target", "continuation", "composition"))
+        p = commands._keys(msg["payload"], "payload", ("text", "confidence"), ("target", "continuation", "composition", "recipe", "context"))
         if not isinstance(p["text"], str) or not 1 <= len(p["text"]) <= MAX_TEXT:
             raise commands.Invalid(f"text must be a string of 1 to {MAX_TEXT} characters")
         commands._number(p["confidence"], "confidence", (0, 1))
@@ -951,6 +951,19 @@ def resolve_problem(msg):
             raise commands.Invalid("composition must be a boolean")
         if "continuation" in p and p.get("composition") is not True:
             raise commands.Invalid("continuation requires composition capability")
+        if "recipe" in p:
+            if p.get("composition") is not True or not isinstance(p["recipe"], dict) or not isinstance(p.get("context"), dict):
+                raise commands.Invalid("recipe requires composition capability and a captured context")
+            try:
+                try:
+                    from . import modeling_recipe
+                except ImportError:
+                    import modeling_recipe
+                modeling_recipe.validate_wire(p["recipe"], p["context"])
+            except modeling_recipe.InvalidRecipe as exc:
+                raise commands.Invalid(str(exc)) from exc
+        elif "context" in p:
+            raise commands.Invalid("context is only accepted with a typed recipe")
         if "target" in p:
             target = commands._keys(p["target"], "target", ("id", "generation"))
             commands._uuid(target["id"], "target.id")
@@ -983,6 +996,7 @@ class Voice:
         self.clock = clock
         self.composer = voice_composer.Planner(__import__(__name__, fromlist=["resolve"]), clock)
         self.resolutions = OrderedDict()  # id -> (expires at, candidates, target ID or None)
+        self.recipe_planner = None
 
     def attach(self, srv):
         """Handle voice.resolve and voice.grammar_query on srv. Returns srv."""
@@ -996,6 +1010,11 @@ class Voice:
             re_ = msg["id"] if commands.is_uuid(msg["id"]) else None
             return server.error("invalid_message", f"bad voice.grammar_query: {problem}", re_)
         payload = {"version": GRAMMAR_VERSION, "phrases": list(GRAMMAR), "composition": True}
+        try:
+            from . import tool_catalog
+            payload.update(recipe_version=1, tools=tool_catalog.catalog())
+        except ImportError:
+            pass  # Old host/package: deterministic voice remains available.
         return protocol.message("voice.grammar", payload, re=msg["id"])
 
     def on_resolve(self, msg, conn):
@@ -1004,6 +1023,8 @@ class Voice:
             re_ = msg["id"] if commands.is_uuid(msg["id"]) else None
             return server.error("invalid_message", f"bad voice.resolve: {problem}", re_)
         p = msg["payload"]
+        if "recipe" in p:
+            return self._recipe(msg, conn)
         if p.get("composition") is True:
             return self._compose(msg, conn)
         if voice_composer.has_chain_connector(p["text"]):
@@ -1034,6 +1055,47 @@ class Voice:
                    "reason": result["reason"], "expires_in": EXPIRES_IN,
                    "candidates": wire_candidates(cands)}
         return protocol.message("voice.candidates", payload, re=msg["id"])
+
+    def _recipe(self, msg, conn):
+        try:
+            from . import modeling_recipe, tool_catalog
+        except ImportError:
+            import modeling_recipe
+            import tool_catalog
+        p = msg["payload"]
+        try:
+            if p["confidence"] < ASR_RUN_MIN:
+                raise modeling_recipe.InvalidRecipe("The complete editing request was unclear; repeat it.")
+            self.sync.flush()
+            actual = modeling_recipe.capture_context(self.sync)
+            if self.recipe_planner is None:
+                self.recipe_planner = modeling_recipe.Planner(tool_catalog.catalog(), tool_catalog.validate, self.clock)
+            stage = None
+            if getattr(self, "editor", None) is not None:
+                try:
+                    from . import modeling_tools
+                except ImportError:
+                    import modeling_tools
+                if callable(getattr(modeling_tools, "stage_recipe", None)):
+                    stage = lambda steps, context: modeling_tools.stage_recipe(self.editor, steps, context)
+            resolution, candidate = self.recipe_planner.prepare(p["recipe"], p["context"], actual, conn, stage)
+            self._keep(resolution, [candidate], candidate["primary"])
+            self.resolutions[resolution] = (self.clock() + modeling_recipe.TTL, [candidate], candidate["primary"])
+            payload = {"resolution": resolution, "decision": "run", "reason": "Review the complete proposed edit. Nothing has run.",
+                       "expires_in": modeling_recipe.TTL, "candidates": wire_candidates([candidate]),
+                       "recipe_plan": {"steps": candidate["steps"], "preview": candidate["preview"]}}
+        except modeling_recipe.Clarify as exc:
+            payload = {"resolution": uuid.uuid4().hex, "decision": "clarify", "reason": str(exc),
+                       "missing": exc.field, "expires_in": EXPIRES_IN, "candidates": []}
+        except (modeling_recipe.InvalidRecipe, ValueError) as exc:
+            payload = {"resolution": uuid.uuid4().hex, "decision": "reject", "reason": str(exc),
+                       "expires_in": EXPIRES_IN, "candidates": []}
+        return protocol.message("voice.candidates", payload, re=msg["id"])
+
+    def is_recipe(self, args):
+        kept = self.resolutions.get(args.get("resolution"))
+        return bool(kept and kept[0] > self.clock() and 1 <= args.get("choice", 0) <= len(kept[1])
+                    and kept[1][args["choice"] - 1].get("intent") == "__recipe")
 
     def _compose(self, msg, conn):
         p = msg["payload"]
@@ -1075,13 +1137,22 @@ class Voice:
         if not 1 <= choice <= len(kept[1]):
             raise commands.Refused("not_found", "That voice choice is unavailable.")
         c = kept[1][choice - 1]
-        if c.get("intent") != "__sequence":
+        if c.get("intent") not in ("__sequence", "__recipe"):
             return {}
         if c["owner"] is not conn:
             raise commands.Refused("permission_denied", "This voice sequence belongs to another connection.")
         doc = self.sync.describe()
         if c["document"] != (doc["id"], doc["open_epoch"]):
             raise commands.Refused("wrong_document", "The sequence's document changed.")
+        if c.get("intent") == "__recipe":
+            try:
+                from . import modeling_recipe
+            except ImportError:
+                import modeling_recipe
+            try:
+                modeling_recipe.validate_context(c["context"], modeling_recipe.capture_context(self.sync))
+            except modeling_recipe.InvalidRecipe as exc:
+                raise commands.Refused("stale_revision", str(exc)) from exc
         return dict(c["generations"])
 
     def _keep(self, resolution, candidates, target_id):
@@ -1110,7 +1181,7 @@ class Voice:
         """
         c, target_id = self.take(args["resolution"], args["choice"])
         label = _spoken(c["label"])
-        if c.get("intent") == "__sequence":
+        if c.get("intent") in ("__sequence", "__recipe"):
             return c, obj
         if _refusal(c):
             raise commands.Refused("failed", _refusal(c))
@@ -1139,6 +1210,12 @@ class Voice:
 
         given = obj
         c, obj = self.choose(obj, args)
+        if c.get("intent") == "__recipe":
+            try:
+                from . import modeling_recipe
+            except ImportError:
+                import modeling_recipe
+            return modeling_recipe.execute(self, c, self.editor)
         if c.get("intent") == "__sequence":
             from . import voice_sequence
             return voice_sequence.run(self, c, self.editor)

@@ -37,6 +37,12 @@
         "composition": {
           "description": "New client opts into the advertised atomic voice composer. Omit for legacy single-command resolution.",
           "type": "boolean"
+        },
+        "recipe": {
+          "$ref": "modeling.recipe.schema.json#/$defs/draft"
+        },
+        "context": {
+          "$ref": "modeling.recipe.schema.json#/$defs/context"
         }
       },
       "additionalProperties": false,
@@ -50,6 +56,22 @@
               "const": true
             }
           }
+        },
+        "recipe": {
+          "required": [
+            "context",
+            "composition"
+          ],
+          "properties": {
+            "composition": {
+              "const": true
+            }
+          }
+        },
+        "context": {
+          "required": [
+            "recipe"
+          ]
         }
       }
     }
