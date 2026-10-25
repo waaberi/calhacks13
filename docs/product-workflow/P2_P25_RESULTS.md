@@ -2,6 +2,23 @@
 
 ## Physical activation failure and repair candidate
 
+The wearer briefly opened File with the green indicator on v6/929b78f, then
+reported that input immediately turns itself off repeatedly. Cursor movement
+was visible. The single successful click is retained as an observation;
+sustained native-preview input remains FAILED, not accepted.
+
+The live log captured HTTP429 after focus success. The helper uses this for
+`input_busy`, a pre-admission lock collision with its safety/state work. It
+consumes neither the sequence nor the action. The next repair discards the
+old gesture and queue, obtains authoritative state/sequence, confirms exact
+release acknowledgement, then admits a new gesture in the same verified window.
+Rejected input is never replayed. Other failures retain their existing cleanup
+gates; bounded rejection-code logs identify any separate cause.
+The fresh v7 software run passed actual Unity HTTP7+2+9 (including this exact
+unconsumed-sequence/no-replay case), all35 cumulative build markers and frozen
+34 XR flags, with61 compiler inputs/154metas matched. Its physical result is
+pending; v6's instability is not relabelled a pass.
+
 The human approved starting physical testing. The wearer could not click
 Blender's captured interface on v4/a779f98. Clearing the disposable Blender's
 first-run setup/splash did not resolve that reported failure. Physical acceptance
