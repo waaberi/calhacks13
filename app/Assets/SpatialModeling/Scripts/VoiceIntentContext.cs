@@ -9,6 +9,16 @@ namespace SpatialModeling
     // selection identifies an intended object; it never invents mesh selection.
     public static class VoiceIntentContext
     {
+        public static JObject ForRequest(JObject native,string id,double defaultAddSize,
+            double maxMove=10,double minScale=.01,double maxScale=100,double maxTurn=360)
+        {
+            var result=SelectedObject(native,id);
+            result["limits"]=new JObject { ["max_move_m"]=maxMove,["min_scale_magnitude"]=minScale,
+                ["max_scale_magnitude"]=maxScale,["max_turn_degrees"]=maxTurn };
+            if((string)native?["mode"]=="OBJECT")result["basic_add_defaults"]=new JObject {
+                ["location"]=new JArray(0d,0d,0d),["dimensions"]=new JArray(defaultAddSize,defaultAddSize,defaultAddSize) };
+            return result;
+        }
         public static bool NeedsInterpretation(string text) =>
             Regex.IsMatch(text ?? "", @"\b(resize|smaller|bigger|larger|shrink|grow|halve|double|half|twice)\b|\b(scale|size)\b.*\b(down|up)\b",RegexOptions.IgnoreCase);
 

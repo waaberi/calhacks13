@@ -26,8 +26,31 @@ public static class AICancellationChecks
 
     public static void Run()
     {
-        TargetClarification();ReplacedRequestFence();ReviewPageFence();QueuedCancellation();SentCancellation();ControlRouting();NativeAiContext();
+        AxisAndChainRouting();TargetClarification();ReplacedRequestFence();ReviewPageFence();QueuedCancellation();SentCancellation();ControlRouting();NativeAiContext();
         Debug.Log("AI_CANCELLATION_CHECK PASS actual reviewed-confirm/queued-vs-wire state/Cancel+context fence/no delayed replay/other owner preserved/sent receipt+unknown honest/core Undo+Redo synonyms+Save+Cancel in Edit Mode; no AI service or interactive runtime");
+    }
+    static void AxisAndChainRouting()
+    {
+        foreach(var sample in new[]{("x",0),("why",1),("zee",2),("z i mean y",1)})
+        {
+            using var f=new Fixture();
+            Invoke(f.Voice,"HearOrInterpret",new RecognitionResult("move this object ten centimeters",1),false);
+            Check(!f.DataAvailable,"incomplete move waits for an axis without sending a prefix");
+            Invoke(f.Voice,"HearOrInterpret",new RecognitionResult(sample.Item1,1),false);
+            var wire=f.Read("command");
+            Check((string)wire["payload"]["op"]=="object.move"&&(string)wire["payload"]["target"]["id"]==A,"axis answer retains exact native move/target");
+            var vector=(JArray)wire["payload"]["args"]["by"];
+            for(int axis=0;axis<3;axis++)Check(Math.Abs((double)vector[axis]-(axis == sample.Item2 ? .1 : 0))<1e-9,"each spoken axis maps to matching native component");
+            Check(!f.DataAvailable,"axis answer sends exactly one native edit");
+        }
+        foreach(string axis in new[]{"x","y","z"})
+        {
+            string text="move this object ten centimeters along "+axis+" then rotate it forty five degrees about z";
+            Check(VoiceRouting.Decide(text,true,true,false)==VoiceRoute.Gemini,"complete multi-step request goes to Gemini on every axis");
+        }
+        Check(VoiceRouting.Decide("move Cube ten centimeters along x then export it",true,true,false)==VoiceRoute.Gemini,
+            "unsupported tail remains part of the full Gemini request");
+        Debug.Log("VOICE_AXIS_CHAIN_ROUTING_CHECK PASS actual adapter/pending-axis X/Y-why/Z-zee/correction/native vector+target+unit/one wire/whole-chain Gemini route; no service");
     }
     static void TargetClarification()
     {

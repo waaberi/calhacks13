@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -70,13 +71,34 @@ namespace SpatialModeling
                     if (!current()) yield break;
                     if (web.result == UnityWebRequest.Result.Success)
                     {
-                        try { answer.Draft = Read(web.downloadHandler.text); ValidateDraft(answer.Draft,catalog); }
+                        try { answer.Draft = Read(web.downloadHandler.text); ValidateDraft(answer.Draft,catalog); ValidateVoiceLimits(answer.Draft,voiceContext); }
+                        catch (VoiceLimitFailure e) { answer.Draft=null; answer.Error=e.Message; }
                         catch (Exception e) when (e is FormatException || e is JsonException || e is InvalidOperationException)
                         { answer.Draft = null; answer.Error = "AI response did not contain a complete typed plan"; }
                     }
                     else answer.Error = RequestFailure(web.responseCode);
             }
             answer.Ms = clock.ElapsedMilliseconds; if (current()) done(answer);
+        }
+
+        public sealed class VoiceLimitFailure : FormatException
+        { public VoiceLimitFailure(string message):base(message){} }
+        public static void ValidateVoiceLimits(JObject draft,JObject voiceContext)
+        {
+            if(!(voiceContext?["limits"] is JObject limits)||!(draft?["steps"] is JArray steps))return;
+            foreach(JObject step in steps)
+            {
+                if((string)step["tool"]=="object.translate"&&step["params"]?["translation_m"] is JArray move)
+                {
+                    double length=Math.Sqrt(move.Sum(value=>(double)value*(double)value));
+                    if(length>(double)limits["max_move_m"]||length==0)
+                        throw new VoiceLimitFailure("Requested move is outside the existing voice distance limit. Use a smaller nonzero distance");
+                }
+                if((string)step["tool"]=="object.scale"&&step["params"]?["scale"] is JArray scale)
+                    foreach(var value in scale)
+                        if(Math.Abs((double)value)<(double)limits["min_scale_magnitude"]||Math.Abs((double)value)>(double)limits["max_scale_magnitude"])
+                            throw new VoiceLimitFailure("Requested scale is outside the existing voice size limits. Use a smaller nonzero scale factor");
+            }
         }
 
         public static string RequestFailure(long status)
@@ -115,9 +137,10 @@ namespace SpatialModeling
 Return ONLY this exact JSON envelope with all five fields: {""decision"":""propose|clarify|reject"",""steps"":[],""missing"":[],""reason"":"""",""unhandled_intent"":[]}. No other root fields. steps contains EVERY requested operation in order. Never return only the first clause or discard an unsupported tail.
 Each step id MUST be a unique string such as s1, NEVER an integer. References use that exact string id and only an output actually declared by that tool. For example mesh.inset declares inner_faces and boundary_edges, not selection. For clarify or reject return steps:[]; never include an executable prefix.
 Each step has id, tool, target, selection and params. Use exact catalog tool IDs and typed parameters; lengths are meters, rotations wxyz quaternions. Preserve the user's units by converting exactly. Never invent a missing amount, axis, target, selection or Knife endpoint.
+Honor voice_context.limits, which are the existing voice control limits, even if a catalog tool accepts a wider range. Never clamp or reinterpret an excessive amount into range: clarify it with no executable steps. A missing rotation/translation axis uses 'axis' in missing. An axis answer such as 'why' may mean Y only when answering that missing-axis question; an explicit correction such as 'Z, I mean Y' uses the corrected final axis and retains the original amount/target.
 Existing app policy for qualitative object scaling: 'scale down', 'make smaller', 'shrink' without an amount proposes a uniform 0.9 factor (10 percent smaller); 'scale up', 'make bigger/larger', 'grow' proposes 1.1. State this default in reason so it is visible in the required review. Explicit amounts override defaults. 'Two times smaller', 'half the size' or 'scale down two times' means uniform factor 0.5; N times smaller means divide by N, not multiply by N or reflect. Conflicting negative/down phrasing asks whether the user means shrink or reflection. These defaults apply only to object scale, never invent missing lengths, rotations or component edits.
 voice_context.selected_object is the explicit object selected by the user in VR. In OBJECT mode use that exact ID for a deictic request or an answer such as 'item selected', 'this one', 'selected it' or 'done' to an object-target question. Preserve and complete the original request plus all clarification answers; an acknowledgement is not a new modeling task. This hint never replaces native mesh/edge/face selection. With no identifiable object ask which object and include 'target' in missing; never guess from the first catalog object. For object scale use an explicit object selection with empty indices when needed, while preserving the supplied native fingerprint unchanged.
-For object.add the user must specify dimensions AND location. If either is absent, ask a short clarification with steps:[]; never silently choose Blender's two-metre cube or world origin. The app handles simple basic Add commands separately with its established small-object placement defaults.
+For an unqualified object.add clause such as 'add a cube', use only the explicit voice_context.basic_add_defaults dimensions and location, and explain these app defaults in reason. This preserves the existing basic Add behavior; never silently choose Blender's two-metre default. If the user supplies a position/dimension qualifier, preserve it exactly and clarify genuinely missing or ambiguous remaining values; 'from an axis' or 'here' is not a coordinate. When app defaults are absent, missing creation values must be clarified. The same rule applies to a bare Add clause within a chain; compose declared outputs for the later clauses.
 Target is an exact object UUID or object_N alias from context.objects, selected when exactly one object is selected, null only for creation, or {step,output:object} from an earlier creation.
 Selection is captured, {component:object|vertex|edge|face,indices:[...]}, or {step,output} referring to a declared earlier geometry output. Do not guess indices; use captured selections or catalog outputs. For multiple objects emit explicit steps for every intended object. Never select the whole mesh in place of the selected components.
 Explicit object selection is EXACTLY {""component"":""object"",""indices"":[]}. NEVER copy objects, active_id, selection_token or any other context metadata into a step selection. Example object scaling step: {""id"":""s1"",""tool"":""object.scale"",""target"":""EXACT_OBJECT_UUID"",""selection"":{""component"":""object"",""indices"":[]},""params"":{""scale"":[0.5,0.5,0.5]}}. The parameter is scale, not factor; always follow the actual tool catalog.

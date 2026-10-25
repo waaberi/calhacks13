@@ -178,6 +178,23 @@ existing core phrases such as **undo that** and **redo that** stay outside Gemin
 
 ## Local configuration and verification
 
+With AI enabled and a current catalog, new modeling requests and complete
+command chains go through Gemini, including ordinary object moves on X, Y or Z.
+The full transcript is retained; vocabulary overlap with the basic grammar no
+longer decides whether a request bypasses interpretation. Undo, Redo, Cancel,
+Save, simple selection and an existing deterministic clarification stay local.
+Without AI availability the deterministic path remains available.
+
+An active missing-axis question accepts spoken letter variants such as `why`
+for Y and `zee` for Z, including explicit corrections such as `Z, I mean Y`.
+These aliases apply only to that live question, retaining its amount and target;
+an ambiguous answer or an additional command is never reduced to one axis.
+Gemini receives the existing move/scale limits and explicit basic Add defaults
+(a 5 cm primitive at the native origin for an unqualified Add). Typed move/scale
+output is checked against those limits before the complete plan reaches review.
+Unsupported trailing requests refuse the whole plan. Native validation, context
+checks and the existing review/confirmation requirement still apply.
+
 The client reads `GEMINI_API_KEY`, or the existing local `gemini_key.txt` lookup
 beside the Player, in its persistent-data directory or working directory. The
 source default model string is `gemini-3.5-flash-lite`; `GEMINI_MODEL` takes

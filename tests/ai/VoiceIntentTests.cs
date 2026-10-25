@@ -5,6 +5,15 @@ using Xunit;
 
 public class VoiceIntentTests
 {
+    [Fact] public void GeminiFrontDoorGetsExistingSmallAddDefaultsWithoutChangingNativeState()
+    {
+        var native=Context();string before=native.ToString(Formatting.None);
+        var hints=VoiceIntentContext.ForRequest(native,"a",.05);
+        Assert.Equal(new JArray(.05,.05,.05).ToString(),hints["basic_add_defaults"]["dimensions"].ToString());
+        Assert.Equal(new JArray(0d,0d,0d).ToString(),hints["basic_add_defaults"]["location"].ToString());
+        Assert.Equal(before,native.ToString(Formatting.None));Assert.Equal("a",(string)hints["selected_object"]["id"]);
+        native["mode"]="EDIT_MESH";Assert.Null(VoiceIntentContext.ForRequest(native,"a",.05)["basic_add_defaults"]);
+    }
     static JObject Context()=>JObject.Parse(@"{'mode':'OBJECT','document_id':'doc','open_epoch':'open','revision':7,'native_tool':'builtin.scale','topology_token':'topology','options':{},'gesture_epoch':1,'gesture_active':false,'native_selection':{'objects':[]},'selection':{'component':'object','objects':[],'indices':[]},'objects':[{'id':'a','name':'Cube','generation':3}]}");
     [Theory]
     [InlineData("scale down two times",true)]
