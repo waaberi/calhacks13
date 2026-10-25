@@ -1,0 +1,61 @@
+{
+  "scope": "Isolated deterministic voice chaining and five editing additions; not imported into P2/P2.5/P3 integration",
+  "source": "0826a4279a9a05ae50070b83bc34b5ef5e9901e8",
+  "compiled_app_source": "f5ae3fa595a9f6c6fb2f567fcafd9b5de88817a5",
+  "base": "db0dc2489f9d3757d55c65c3971f403e0aa23c36",
+  "branch": "codex/talia-voice-command-chaining",
+  "recorded_at_utc": "2026-10-25T03:59:53.256045+00:00",
+  "physical_acceptance": "PENDING_NEW_FEATURES_NOT_LAUNCHED",
+  "tests": {
+    "backend": {
+      "passed": 1265,
+      "skipped": 37,
+      "failed": 0,
+      "skip_limits": "bpy/GUI-only gates, openssl command absent, local SpacetimeDB absent"
+    },
+    "voice_dotnet10": {
+      "sdk": "10.0.402",
+      "passed": 476,
+      "skipped": 11,
+      "failed": 0,
+      "includes": "actual supplied Vosk model/native DLL and offline speech fixtures; new grammar words; raw Whisper HTTP/client tests",
+      "skip_limits": "real Whisper/GPU integration and platform-specific process tests not exercised"
+    },
+    "native_blender": {
+      "version": "5.2.2 LTS",
+      "unit_scales": [
+        1,
+        0.001
+      ],
+      "passes": "actual chained native edits, one Undo/Redo, exact dimensions, signed scaling, colours/shared-data isolation/reset, duplicate/name/target identity, save/reopen, rollback including conversion/modifier pointers/post-delete failure",
+      "curated_chains_passed": 45,
+      "expected_geometry_budget_refusals": 1,
+      "result": "PASS"
+    },
+    "packaged_native": "same production fixture PASS using the actual packaged add-on; no interactive session",
+    "unity_windows": {
+      "result": "PASS zero errors",
+      "entry": "VoiceCompositionChecks.Windows",
+      "includes": "real conversation and receipt decoding, actual final-target local selection/no-drag, destructive confirmation, prior selection toggle/routing and cumulative P2/P1 checks",
+      "xr_feature_flags": 34,
+      "xr_flags_exact_match": true
+    }
+  },
+  "package": {
+    "folder": "artifacts/voice-command-chaining-v2",
+    "launched": false,
+    "payload_files": 343,
+    "payload_bytes": 2187667182,
+    "matching_python_sources": 30,
+    "assembly_sha256": "856a0aeccb77a451e3e5ccfffb2040538dd609bf8a5fba7836f38dc128984074",
+    "manifest_sha256": "debe2871cab4cbf5e1fad492d7ad86e80e61afcce1045c6bdfada9bf09e59d08",
+    "addon_zip_sha256": "945cccf0fb9975356a4de90b4d2639767ede42dfe64168183a9657e2d81a1352"
+  },
+  "limits": [
+    "New Quest speech/controller/visual and combined-context physical acceptance remains pending. Earlier db0dc24 passes do not accept these additions.",
+    "No integration branch, headset/runtime/native GUI/capture/input changes, PR action, main action or FPS work.",
+    "Matched Player/add-on required; composer is advertised and explicitly opted into per request. Up to24 steps/500characters, existing native context/lease/revision/geometry restrictions retained.",
+    "Unexpected native exceptions retain unknown-outcome/reconciliation handling and are never retried automatically."
+  ],
+  "evidence": "external evidence/voice-command-chaining-v2: build/native/packaged-native/backend/dotnet logs, source inputs, package/source matches, frozen XR flags and generated-settings archive"
+}
