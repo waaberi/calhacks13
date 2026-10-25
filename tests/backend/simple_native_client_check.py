@@ -86,6 +86,28 @@ def location(x, y=0):
     return abs(obj().location.x - x) < 1e-6 and abs(obj().location.y - y) < 1e-6
 
 
+def history(op):
+    if not config.get("keyboard_events"):
+        assert getattr(bpy.ops.spatial_modeling, "client_" + op)() == {"FINISHED"}
+        return
+    region = bpy.context.region
+    x, y = region.x + region.width // 2, region.y + region.height // 2
+    window = bpy.context.window
+    window.event_simulate(type="MOUSEMOVE", value="NOTHING", x=x, y=y)
+    window.event_simulate(type="LEFT_CTRL", value="PRESS", x=x, y=y, ctrl=True)
+    if op == "redo":
+        window.event_simulate(type="LEFT_SHIFT", value="PRESS", x=x, y=y, ctrl=True, shift=True)
+    window.event_simulate(type="Z", value="PRESS", x=x, y=y, ctrl=True, shift=op == "redo")
+    window.event_simulate(type="Z", value="RELEASE", x=x, y=y)
+    window.event_simulate(type="LEFT_CTRL", value="RELEASE", x=x, y=y)
+    if op == "redo":
+        window.event_simulate(type="LEFT_SHIFT", value="RELEASE", x=x, y=y)
+
+
+def history_done(op, before):
+    return idle() and sum(r.op == "history." + op for r in rc.requests.requests.values()) > before
+
+
 def seq():
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete(use_global=False)
@@ -167,13 +189,15 @@ def seq():
     checks.append("real conflicting host lease rejects native move; Client snaps back once and never resends")
     yield action("ownership_off")
     yield lambda: not rc.ownership_state()[0]
-    assert bpy.ops.spatial_modeling.client_undo() == {"FINISHED"}
-    yield idle
+    before_undo = sum(r.op == "history.undo" for r in rc.requests.requests.values())
+    history("undo")
+    yield lambda: history_done("undo", before_undo)
     yield action("probe")
     assert result()["commands"][-1]["payload"]["op"] == "history.undo"
     assert all(abs(v-1)<1e-5 for v in result()["object_scale"])
-    assert bpy.ops.spatial_modeling.client_redo() == {"FINISHED"}
-    yield idle
+    before_redo = sum(r.op == "history.redo" for r in rc.requests.requests.values())
+    history("redo")
+    yield lambda: history_done("redo", before_redo)
     yield action("probe")
     assert result()["commands"][-1]["payload"]["op"] == "history.redo"
     assert all(abs(v-1.5)<1e-5 for v in result()["object_scale"])
@@ -207,7 +231,7 @@ def seq():
     assert source_hashes == {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
                              for p in (ROOT / "blender_addon/spatial_modeling").rglob("*.py")}
     (folder / "client-result.json").write_text(json.dumps({"passed": True, "checks": checks,
-        "actual_modal_operator_ids": modal_evidence, "source_hashes": source_hashes, "physical_mouse_keyboard": False,
+        "actual_modal_operator_ids": modal_evidence, "source_hashes": source_hashes, "physical_mouse_keyboard": False, "simulated_ctrl_z_keymap": bool(config.get("keyboard_events")),
         "headset": False, "full_native_data_sync": False}, indent=2))
 
 

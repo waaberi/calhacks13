@@ -14,13 +14,15 @@ def main():
     parser.add_argument("--output", required=True)
     parser.add_argument("--store", nargs=2)
     parser.add_argument("--relay", nargs=2)
+    parser.add_argument("--keyboard-events", action="store_true",
+                        help="Also dispatch Ctrl+Z through this test window; needs active GUI keymap dispatch")
     args = parser.parse_args()
     out = Path(args.output).resolve()
     out.mkdir(parents=True, exist_ok=True)
     folder = out / "private"
-    folder.mkdir(exist_ok=True)
+    folder.mkdir()  # Fresh evidence only: never reuse stale ready/results or private credentials.
     config = {"token": secrets.token_hex(24), "scale": 1.0, "test_timeout": 190,
-              "store": args.store}
+              "store": args.store, "keyboard_events": args.keyboard_events}
     (folder / "config.json").write_text(json.dumps(config))
     scripts = Path(__file__).parent
     startup = None
@@ -42,6 +44,17 @@ def main():
             args_ = [args.blender, "--factory-startup", "--disable-autoexec", "--threads", "2"]
             if side == "client":
                 args_.append("--enable-event-simulate")
+                if args.keyboard_events:
+                    # The first-run Quick Setup popup consumes normal keyboard
+                    # events. Seed preferences only in this disposable profile.
+                    with (out / "client-profile-bootstrap.log").open("w") as bootstrap_log:
+                        subprocess.run([args.blender, "--background", "--factory-startup",
+                            "--disable-autoexec", "--threads", "2", "--python-expr",
+                            "import bpy; bpy.context.preferences.view.show_splash=False; "
+                            "bpy.ops.wm.save_userpref()"], env=env, stdout=bootstrap_log,
+                            stderr=subprocess.STDOUT, startupinfo=startup, timeout=25,
+                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), check=True)
+                    args_.remove("--factory-startup")
             log = (out / f"{side}.log").open("w", encoding="utf-8")
             logs.append(log)
             p = subprocess.Popen([*args_, "--python", str(scripts / f"simple_native_{side}_check.py"),
