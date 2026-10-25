@@ -70,6 +70,10 @@ namespace SpatialModeling
         string pickedComponent="object";
         float depth,nextUpdate,lastTransportAt,nextKeepAlive;
         bool enabled,held,moved,waiting,dirtySelection,terminalObserved;
+        bool selectingObjectForEdit,awaitingObjectState;
+        JObject objectSelectionReceiptModel;
+        long objectSelectionGeneration;
+        float objectStateDeadline;
         public bool Enabled => enabled;
         public bool Gesturing => held;
         public bool Busy => Session.Busy||waiting;
@@ -120,6 +124,23 @@ namespace SpatialModeling
                 if(cause==null&&scaleContacts.Count>0&&!ScaleContactsCurrent())cause="scale_contact_plane_changed";
                 if(cause!=null)CancelWithCause("Native document, tool, settings, geometry or placement changed; cancelling live edit",cause);
             }
+            if(selectingObjectForEdit&&awaitingObjectState&&held&&!Session.Busy)
+            {
+                if(picked==null||picked.Generation!=objectSelectionGeneration
+                    ||!drawing.Session.Objects.TryGetValue(picked.ObjectId,out var selectedRecord)
+                    ||(long?)selectedRecord["generation"]!=objectSelectionGeneration)
+                    CancelWithCause("The pointed object changed while Blender selected it; release and select again","selected_target_changed");
+                else if(!ReferenceEquals(Model,objectSelectionReceiptModel)&&ObjectSelectionCurrent())
+                {
+                    selectingObjectForEdit=awaitingObjectState=waiting=false;objectSelectionReceiptModel=null;
+                    Selection.ObserveNative(Model,drawing.Session.Objects,true);
+                    frozenModel=(JObject)Model.DeepClone();context=ToolContext(frozenModel);operation=null;terminalObserved=false;
+                    views.Clear();maps.Clear();targets=null;
+                    StartMovement();
+                }
+                else if(Time.unscaledTime>objectStateDeadline)
+                    CancelWithCause("Waiting for Blender's selected object and current tool settings; release and select again","selected_state_timeout");
+            }
             if(Session.Busy&&Time.unscaledTime-lastTransportAt>10f){lastTransportAt=Time.unscaledTime;Session.Timeout();}
             if(held&&Session.Active&&Time.unscaledTime>=nextKeepAlive)
             {nextKeepAlive=Time.unscaledTime+4f;Session.KeepAlive();}
@@ -162,7 +183,8 @@ namespace SpatialModeling
                 if(attempted&&!controllerCancelled&&Session.Phase!="committed")Refuse(false,Session.Notice);
                 terminalObserved=true;
                 foreach(var view in views.Values)if(view!=null&&boundId!=null)view.EndLivePresentation(boundId,Session.Phase=="committed");
-                boundId=null;held=waiting=false;rotationGesture=null;translationGestureFrame=null;scaleContacts.Clear();scaleFeedback.Hide();
+                bool continueObject=selectingObjectForEdit&&held&&Session.Phase=="committed";
+                boundId=null;held=waiting=continueObject;rotationGesture=null;translationGestureFrame=null;scaleContacts.Clear();scaleFeedback.Hide();
                 if(Session.Phase=="committed")
                 {
                     dirtySelection=false;
@@ -170,6 +192,12 @@ namespace SpatialModeling
                     if(!string.IsNullOrEmpty(final))selectCommitted?.Invoke(final);
                 }
                 Selection.InvalidateIntent();Notice=Session.Notice;
+                if(continueObject)
+                {
+                    awaitingObjectState=true;objectSelectionReceiptModel=Model;objectStateDeadline=Time.unscaledTime+3f;
+                    Notice="Object selected in Blender; keep holding while current tool settings arrive";
+                }
+                else {selectingObjectForEdit=awaitingObjectState=false;objectSelectionReceiptModel=null;}
             }
         }
         void SynchronizeSelection()
@@ -193,13 +221,30 @@ namespace SpatialModeling
             void BeginSelection()
             {
                 if(requestedGesture!=gestureEpoch||!enabled)return;waiting=false;
-                if(!ValidStart()){dirtySelection=false;Notice="Selection context changed; select again";return;}
+                if(!ValidStart()){dirtySelection=false;Notice="Selection context changed; select again";if(selectingObjectForEdit)Cancel(Notice);return;}
                 dirtySelection=false;
-                if(!Session.Begin(operation,targets)){dirtySelection=false;Notice=Session.Notice;return;}
+                if(!Session.Begin(operation,targets)){dirtySelection=false;Notice=Session.Notice;if(selectingObjectForEdit)Cancel(Notice);return;}
                 Session.Update(new JObject());Session.Commit();
             }
             if(drawing.NativeCommandReady)BeginSelection();
-            else preview.HandoffNativeCommand(BeginSelection,reason=>{if(requestedGesture==gestureEpoch){waiting=false;dirtySelection=false;Notice=reason;}},true);
+            else preview.HandoffNativeCommand(BeginSelection,reason=>{if(requestedGesture==gestureEpoch){waiting=false;dirtySelection=false;Notice=reason;if(selectingObjectForEdit)Cancel(reason);}},true);
+        }
+        bool ObjectNeedsSelection()
+        {
+            if(pickedComponent!="object"||(string)frozenModel?["mode"]!="OBJECT")return false;
+            string active=(string)frozenModel["active_object_id"];
+            if(string.IsNullOrEmpty(active))return true;
+            return frozenModel["selection"]?["objects"] is JArray objects
+                ?!objects.Any(row=>(row.Type==JTokenType.String?(string)row:(string)row["id"])==picked.ObjectId)
+                :active!=picked.ObjectId;
+        }
+        bool ObjectSelectionCurrent()
+        {
+            if(!drawing.NativeStateCurrent||Model==null||(string)Model["mode"]!="OBJECT"
+                ||(string)Model["active_object_id"]!=picked?.ObjectId||!(Model["selection"]?["objects"] is JArray actual)
+                ||!(operation?["selection"]?["objects"] is JArray expected))return false;
+            var current=new HashSet<string>(actual.Select(row=>row.Type==JTokenType.String?(string)row:(string)row["id"]));
+            return current.SetEquals(expected.Select(row=>row.Type==JTokenType.String?(string)row:(string)row["id"]));
         }
         public bool Route(XRNode hand,Ray ray,bool trigger,bool pressed,bool grip,Vector2 axis,float nearest,out float distance)
         {
@@ -210,6 +255,16 @@ namespace SpatialModeling
                 if(grip){Cancel("Grip cancelled live editing; wait for native rollback, then release and re-grip to arrange");return Session.Busy;}
                 currentPoint=ray.GetPoint(depth);
                 lastRay=ray;
+                if(selectingObjectForEdit)
+                {
+                    if(!trigger)
+                    {
+                        held=false;
+                        if(awaitingObjectState){selectingObjectForEdit=awaitingObjectState=waiting=false;objectSelectionReceiptModel=null;}
+                    }
+                    Notice="Selecting the floating object in Blender; keep holding to edit, or release to select only";
+                    return true;
+                }
                 rotationGesture?.Update(ray);
                 if(trigger)
                 {
@@ -346,6 +401,15 @@ namespace SpatialModeling
             string canonical=CanonicalTool((string)frozenModel["native_tool"],pickedComponent);
             if(canonical==null||!Available&&(string)frozenModel["mode"]!="EDIT_MESH")
             {Refuse(true,(string)frozenModel["reason"]??"This Blender tool is not available for direct 3D editing. Use the Blender view.");return;}
+            if(Available&&ObjectNeedsSelection())
+            {
+                Selection.Pick(picked.ObjectId,picked.Generation,"object",-1,(string)frozenModel["topology_token"],true);
+                objectSelectionGeneration=picked.Generation;
+                selectingObjectForEdit=true;awaitingObjectState=false;dirtySelection=true;
+                SynchronizeSelection();
+                Notice="Selecting the floating object in Blender; keep holding to edit, or release to select only";
+                return;
+            }
             if(!Available||!SupportedOperation(tool))
             {Refuse(false,(string)frozenModel["reason"]??"Choose mesh Edit mode and the appropriate vertex, edge or face selection mode in Blender for this tool.");return;}
             if(tool.EndsWith(".selection",StringComparison.Ordinal))
@@ -777,6 +841,7 @@ namespace SpatialModeling
         {
             if(attempted&&cause!="request")Refuse(false,reason);
             controllerCancelled=true;
+            selectingObjectForEdit=awaitingObjectState=false;objectSelectionReceiptModel=null;
             if(held||Busy||waiting)
                 Debug.Log("P25_LIVE_CANCEL cause="+cause+" phase="+DiagnosticFlag(Session.Phase)+" tool="+DiagnosticFlag((string)Model?["tool"])
                     +" native="+DiagnosticFlag((string)Model?["native_tool"])+" mode="+DiagnosticFlag((string)Model?["mode"])

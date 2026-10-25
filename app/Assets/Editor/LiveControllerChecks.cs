@@ -18,7 +18,7 @@ public static class LiveControllerChecks
     {for(int i=0;i<16;i++)Check(Mathf.Abs(a[i]-b[i])<.00005f,why+" element "+i);}
     public static void Run()
     {
-        Selection();Presentation();GestureMath();LiveRoute();SelectionSync();SelectionRecovery();ToolGestures();RotationRingRoute();RotationBoundsFenceRoute();SelectionAndCancellation();SelectionOutlineBound();
+        Selection();Presentation();GestureMath();LiveRoute();SelectionSync();SelectionRecovery();VRSelectionFirst();ToolGestures();RotationRingRoute();RotationBoundsFenceRoute();SelectionAndCancellation();SelectionOutlineBound();
         DirectRotationHandlesChecks.Run();
         DirectManipulationFeedbackChecks.Run();
         NativeSelectionRecoveryChecks.Run();
@@ -184,6 +184,53 @@ public static class LiveControllerChecks
             Check((string)f.Direct.SelectionSnapshot["active_id"]==A&&f.Direct.Active,"floating selection recovers without native active object or available tool: "+nativeTool);
             Check(f.Sent.Count(m=>(string)m["type"]=="live.edit.commit")==2&&f.View.NativePosition==Vector3.zero,"deselect/reselect completes twice without geometry edits: "+nativeTool);
         }
+    }
+    static void VRSelectionFirst()
+    {
+        foreach(string tool in new[]{"builtin.move","builtin.rotate","builtin.scale"})
+        foreach(bool releaseEarly in new[]{false,true})SelectionFirstHold(tool,releaseEarly,false);
+        SelectionFirstHold("builtin.move",false,true);
+        SelectionFirstHold("builtin.move",false,false,true);
+        Debug.Log("VR_SELECTION_FIRST_CHECK PASS actual cold no-active Move/Rotate/Scale 3mm-jitter/held-selection native ACK; post-receipt exact fresh target telemetry required before geometry; old locked target to new unlocked target; release before selection ACK/cancel after receipt never replay edit; one geometry commit; explicit tap deselect remains separately verified");
+    }
+    static void SelectionFirstHold(string nativeTool,bool releaseEarly,bool oldLocked,bool cancelAfterReceipt=false)
+    {
+        using var f=new DirectModelEditingChecks.Fixture(nativeTool);
+        string tool=DirectLiveController.CanonicalTool(nativeTool,"object");NativeLive(f,tool);
+        var selected=(JObject)f.Drawing.NativeState["model_edit"].DeepClone();
+        var missing=(JObject)selected.DeepClone();missing["available"]=false;missing["tool"]="";missing["settings"]=new JObject();
+        missing["active_object_id"]=oldLocked?B:"";missing["topology_token"]=oldLocked?new string('b',64):"";
+        missing["reason"]=oldLocked?"Use the Blender panel for these native options, or disable them before direct editing: Locked transform channels":"Select an object in the Blender panel first.";
+        missing["selection"]=new JObject{["objects"]=oldLocked?new JArray(B):new JArray(),["active_id"]=oldLocked?B:"",["component"]="object",["indices"]=new JArray()};
+        f.Drawing.NativeState["model_edit"]=missing;Invoke(f.Direct,"Update");
+        var live=(DirectLiveController)Get(f.Direct,"live");int blocked=0;live.BlockedAttempt+=_=>blocked++;
+        Check(f.Route(true),"cold floating body press is routed without native 2D selection");f.Route(true,.005f);
+        Check(f.Direct.Gesturing&&f.Sent.Count(m=>(string)m["type"]=="lease.acquire")==1&&blocked==0,"ordinary hand jitter requests native selection instead of trapping an unavailable old target");
+        GrantAndBegin(f);var begin=f.Sent.Last(m=>(string)m["type"]=="live.edit.begin");
+        Check((bool?)begin["payload"]["operation"]["selection_only"]==true&&(string)begin["payload"]["operation"]["tool"]=="object.selection","first held transaction is selection only");
+        var selectionUpdate=f.Sent.Last(m=>(string)m["type"]=="live.edit.update");
+        Check(!((JObject)selectionUpdate["payload"]["parameters"]).Properties().Any(),"selection ACK sequence carries no geometry parameters");
+        if(releaseEarly)f.Route(false,.005f);
+        State(f,"updated",1,(string)selectionUpdate["id"]);var commit=f.Sent.Last(m=>(string)m["type"]=="live.edit.commit");State(f,"committed",1,(string)commit["id"]);
+        Invoke(f.Direct,"Update");
+        Check(f.Sent.Count(m=>(string)m["type"]=="lease.acquire")==1,"selection receipt alone cannot execute geometry against old native telemetry");
+        if(cancelAfterReceipt)f.Preview.CancelDirectModelDraft("Explicit controller cancel while waiting for selected state");
+        var wrong=(JObject)f.Drawing.NativeState.DeepClone();wrong["model_edit"]=selected.DeepClone();wrong["model_edit"]["active_object_id"]=B;
+        wrong["model_edit"]["selection"]["objects"]=new JArray(B);f.Drawing.SetNativeState(wrong);Invoke(f.Direct,"Update");
+        Check(f.Sent.Count(m=>(string)m["type"]=="lease.acquire")==1,"fresh telemetry for a different native target cannot admit the pointed object's edit");
+        var fresh=(JObject)f.Drawing.NativeState.DeepClone();fresh["model_edit"]=selected;f.Drawing.SetNativeState(fresh);Invoke(f.Direct,"Update");
+        if(releaseEarly||cancelAfterReceipt)
+        {
+            Check(!f.Direct.Gesturing&&!f.Direct.LiveBusy&&f.Sent.Count(m=>(string)m["type"]=="lease.acquire")==1,"release before selection ACK cannot replay a geometry gesture on later telemetry");
+            return;
+        }
+        Check(f.Direct.Gesturing&&f.Sent.Count(m=>(string)m["type"]=="lease.acquire")==2,"still-held original gesture proceeds only after the new selected target's native state arrives");
+        GrantAndBegin(f);begin=f.Sent.Last(m=>(string)m["type"]=="live.edit.begin");
+        Check((string)begin["payload"]["operation"]["tool"]==tool&&(bool?)begin["payload"]["operation"]["selection_only"]!=true,"fresh selected target starts the requested actual native tool");
+        var update=f.Sent.Last(m=>(string)m["type"]=="live.edit.update");
+        Check(((JObject)update["payload"]["parameters"]).Properties().Any()&&blocked==0,"new target tool parameters pass native selection-first admission without a false old-target lock refusal");
+        State(f,"updated",1,(string)update["id"]);f.Route(false,.005f);commit=f.Sent.Last(m=>(string)m["type"]=="live.edit.commit");State(f,"committed",1,(string)commit["id"]);
+        Check(f.Sent.Count(m=>(string)m["type"]=="live.edit.begin"&&(bool?)m["payload"]["operation"]["selection_only"]!=true)==1&&!f.Direct.LiveBusy,"one held gesture produces exactly one actual geometry transaction after selection");
     }
     static void ToolGestures()
     {
