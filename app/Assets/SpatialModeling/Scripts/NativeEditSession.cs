@@ -32,6 +32,8 @@ namespace SpatialModeling
         public bool CanEdit { get; private set; }
         public bool SketchAvailable { get; private set; }
         public bool Busy => acquireId != null || commandId != null;
+        public bool AwaitingPermission => acquireId != null;
+        public bool NativeCommandExecuting => commandId != null;
         public bool OutcomeUnknown { get; private set; }
         public long Revision => (long?)Document["revision"] ?? 0;
         public Action<JObject> Send;

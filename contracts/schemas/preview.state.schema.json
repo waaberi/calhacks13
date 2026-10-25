@@ -138,6 +138,9 @@
             "shared",
             "exclusive"
           ]
+        },
+        "model_edit": {
+          "$ref": "#/$defs/model_edit"
         }
       },
       "additionalProperties": false
@@ -145,5 +148,139 @@
   },
   "required": [
     "re"
-  ]
+  ],
+  "$defs": {
+    "model_edit": {
+      "type": "object",
+      "required": [
+        "available",
+        "reason",
+        "native_tool",
+        "mode",
+        "component",
+        "active_object_id",
+        "generation",
+        "topology_token",
+        "vertices",
+        "edges",
+        "faces",
+        "triangles"
+      ],
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "native_tool": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "active_object_id": {
+          "type": "string"
+        },
+        "generation": {
+          "$ref": "envelope.schema.json#/$defs/revision"
+        },
+        "topology_token": {
+          "type": "string"
+        },
+        "vertices": {
+          "type": "array",
+          "maxItems": 8192,
+          "items": {
+            "type": "object",
+            "required": [
+              "index",
+              "position"
+            ],
+            "properties": {
+              "index": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "position": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "edges": {
+          "type": "array",
+          "maxItems": 16384,
+          "items": {
+            "$ref": "#/$defs/component"
+          }
+        },
+        "faces": {
+          "type": "array",
+          "maxItems": 8192,
+          "items": {
+            "$ref": "#/$defs/component"
+          }
+        },
+        "triangles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "face",
+              "vertices"
+            ],
+            "properties": {
+              "face": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "vertices": {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 3,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "component": {
+      "type": "object",
+      "required": [
+        "index",
+        "vertices"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "vertices": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "minItems": 2
+        }
+      },
+      "additionalProperties": false
+    }
+  }
 }

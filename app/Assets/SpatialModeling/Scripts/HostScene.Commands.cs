@@ -9,6 +9,8 @@ namespace SpatialModeling
     {
         public string RequestId, Op, Outcome, ErrorCode, Message;
         public long? Revision;
+        public bool SelectionSpecified;
+        public string SelectedId;
     }
 
     // #96: what the voice and menu code needs from the host connection.
@@ -32,6 +34,7 @@ namespace SpatialModeling
         bool welcomed;   // welcome arrived on this connection: voice.* requests may go before the snapshot
         readonly Dictionary<string, long> generations = new Dictionary<string, long>();
         readonly Dictionary<string, string> pendingOps = new Dictionary<string, string>();
+        readonly HashSet<string> pendingVoiceHandoffs = new HashSet<string>();
 
         // True only while the scene is current and the host lets this connection edit.
         public bool CanSend => link != null && link.SocketOpen && connected && canEdit && status == Status.Connected;
@@ -48,6 +51,7 @@ namespace SpatialModeling
                     sessionId = e.SessionId; hostEpoch = e.HostEpoch; actorId = e.ActorId; canEdit = e.CanEdit;
                     welcomeDocumentId = e.DocumentId; welcomeOpenEpoch = e.OpenEpoch;
                     pendingOps.Clear();
+                    pendingVoiceHandoffs.Clear();
                     if (newDocument) DocumentChanged?.Invoke();
                     Welcomed?.Invoke();
                     break;
@@ -55,6 +59,7 @@ namespace SpatialModeling
                 case HostEventKind.VoiceGrammar: VoiceGrammarReceived?.Invoke(e.Re, e.Text); break;
                 case HostEventKind.Closed:
                     canEdit = false; welcomed = false;
+                    pendingVoiceHandoffs.Clear();
                     if (wasConnected) ConnectionLost?.Invoke();
                     // contracts/README.md, Outcomes: a connection lost before the result is an unknown outcome.
                     // Report it (never replay it), so the sender can say "check the model".
@@ -69,7 +74,7 @@ namespace SpatialModeling
                     SceneChanged?.Invoke();
                     break;
                 case HostEventKind.Result:
-                    Answer(e.Re, e.Op, e.Outcome, e.Code, e.Text, e.Revision);
+                    Answer(e.Re, e.Op, e.Outcome, e.Code, e.Text, e.Revision, e.SelectionSpecified, e.SelectedId);
                     break;
                 case HostEventKind.Error:
                     if (e.Re.Length > 0) { Answer(e.Re, null, "rejected", e.Code, e.Text, null); RequestFailed?.Invoke(e.Re, e.Code); }
@@ -77,7 +82,7 @@ namespace SpatialModeling
             }
         }
 
-        void Answer(string re, string op, string outcome, string code, string text, long? rev)
+        void Answer(string re, string op, string outcome, string code, string text, long? rev, bool selectionSpecified = false, string selectedId = null)
         {
             if (string.IsNullOrEmpty(re) || !pendingOps.TryGetValue(re, out var sentOp)) return;
             pendingOps.Remove(re);
@@ -88,6 +93,8 @@ namespace SpatialModeling
                 Outcome = outcome,
                 ErrorCode = code,
                 Message = text,
+                SelectionSpecified = selectionSpecified,
+                SelectedId = selectedId,
                 Revision = rev
             });
         }
@@ -174,7 +181,40 @@ namespace SpatialModeling
         public string SendVoice(string type, JObject payload)
         {
             if (link == null || !link.SocketOpen || !welcomed) return null;
-            return link.Send(type, payload ?? new JObject());
+            var preview = PreviewInteraction.Current;
+            if (type != "voice.resolve" || preview == null || !preview.NeedsNativeCommandHandoff)
+                return link.Send(type, payload ?? new JObject());
+
+            // Resolve after the same acknowledged input release as voice.run.
+            // A plan must capture the fresh native scene, never the preview's
+            // still-owned state. Keep the original target generation and refuse
+            // a changed context rather than silently retargeting the words.
+            string id = Guid.NewGuid().ToString("N");
+            string identity = CommandIdentity;
+            var frozen = (JObject)(payload ?? new JObject()).DeepClone();
+            pendingVoiceHandoffs.Add(id);
+            preview.HandoffNativeCommand(() =>
+            {
+                if (!pendingVoiceHandoffs.Remove(id)) return;
+                if (VoiceHandoffContextError(identity, frozen) != null
+                    || link == null || !link.SocketOpen || !welcomed)
+                { RequestFailed?.Invoke(id, "stale_context"); return; }
+                link.SendEnvelope(new JObject { ["v"] = 1, ["type"] = type, ["id"] = id, ["payload"] = frozen });
+            }, reason => StartCoroutine(ReportVoiceHandoffFailure(id)));
+            return id;
+        }
+
+        string VoiceHandoffContextError(string identity, JObject payload)
+        {
+            var target = payload?["target"];
+            return CommandHandoffContextError(identity, (string)target?["id"], (long?)target?["generation"] ?? 0);
+        }
+
+        System.Collections.IEnumerator ReportVoiceHandoffFailure(string id)
+        {
+            // VoiceSession registers a request only after SendVoice returns.
+            yield return null;
+            if (pendingVoiceHandoffs.Remove(id)) RequestFailed?.Invoke(id, "busy");
         }
 
         public bool TryGetGeneration(string id, out long generation)

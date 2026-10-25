@@ -5,16 +5,53 @@
   "description": "Client to host. What the recognizer heard, for the host to match against its voice operations. The host answers voice.candidates and changes nothing. A host without voice answers error unknown_type: the client falls back to its own commands.",
   "$ref": "envelope.schema.json",
   "properties": {
-    "type": { "const": "voice.resolve" },
+    "type": {
+      "const": "voice.resolve"
+    },
     "payload": {
       "type": "object",
-      "required": ["text", "confidence"],
+      "required": [
+        "text",
+        "confidence"
+      ],
       "properties": {
-        "text": { "description": "The transcript, as heard.", "type": "string", "minLength": 1, "maxLength": 500 },
-        "confidence": { "description": "The recognizer's confidence in the transcript (Vosk: its lowest word's).", "type": "number", "minimum": 0, "maximum": 1 },
-        "target": { "description": "The object the user means (selected or pointed at), with the generation the client has. Leave out when there is none.", "$ref": "command.schema.json#/$defs/target" }
+        "text": {
+          "description": "The transcript, as heard.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "confidence": {
+          "description": "The recognizer's confidence in the transcript (Vosk: its lowest word's).",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "target": {
+          "description": "The object the user means (selected or pointed at), with the generation the client has. Leave out when there is none.",
+          "$ref": "command.schema.json#/$defs/target"
+        },
+        "continuation": {
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "composition": {
+          "description": "New client opts into the advertised atomic voice composer. Omit for legacy single-command resolution.",
+          "type": "boolean"
+        }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "dependentSchemas": {
+        "continuation": {
+          "required": [
+            "composition"
+          ],
+          "properties": {
+            "composition": {
+              "const": true
+            }
+          }
+        }
+      }
     }
   }
 }

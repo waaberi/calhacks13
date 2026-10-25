@@ -12,6 +12,8 @@ namespace SpatialModeling
         public NativeEditSession Session { get; } = new NativeEditSession();
         public bool EnabledForInput { get; private set; }
         public bool ObjectToolsEnabled { get; private set; }
+        public bool DirectModelToolsActive { get; set; }
+        public event Action<JObject> BeforeNativeSessionMessage;
         NativeObjectTools objectTools;
         public NativeObjectTools ObjectTools => objectTools ?? (objectTools = new NativeObjectTools(Session));
         NativeNumericTools numeric;
@@ -33,6 +35,12 @@ namespace SpatialModeling
         public bool HasDraft => first.HasValue;
         public bool NativeStateCurrent => scene != null && scene.IsCurrent && Session.Ready && Session.SceneCurrent
             && Time.unscaledTime - stateAt < 2f;
+        public bool ApplyDirectModelDraft()
+        {
+            if (!DirectModelToolsActive || !NativeCommandReady) return false;
+            pendingAt = Time.unscaledTime;
+            return Session.Apply();
+        }
 
         HostScene scene;
         Material solvedMaterial, draftMaterial;
@@ -141,7 +149,7 @@ namespace SpatialModeling
             if (scene == null) return;
             Session.SceneCurrent = scene.IsCurrent;
             if (!scene.IsCurrent || !scene.DisplayPlacementReady) CancelLocal();
-            if ((EnabledForInput || ObjectToolsEnabled || Session.Busy || wantNativeUi || beginId != null || endId != null || !string.IsNullOrEmpty((string)NativeState["ui_session_id"]))
+            if ((EnabledForInput || ObjectToolsEnabled || DirectModelToolsActive || Session.Busy || wantNativeUi || beginId != null || endId != null || !string.IsNullOrEmpty((string)NativeState["ui_session_id"]))
                 && Session.Ready && Time.unscaledTime >= nextQuery)
             { scene.Link?.Send("preview.state.query", new JObject()); nextQuery = Time.unscaledTime + 0.4f; }
             if (objectRequestPending && !ObjectContextCurrent()) Session.Cancel();
@@ -178,6 +186,7 @@ namespace SpatialModeling
             if (objectRequestPending && !ObjectContextCurrent()) Session.Cancel();
             ValidateSpatialContext();
             bool hadObjectRequest = objectRequestPending;
+            BeforeNativeSessionMessage?.Invoke(msg);
             Session.Receive(msg);
             if (spatialRequestPending && !Session.Busy) spatialRequestPending = false;
             ObjectTools.Observe(msg);

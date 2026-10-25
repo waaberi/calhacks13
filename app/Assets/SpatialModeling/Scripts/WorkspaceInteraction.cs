@@ -499,10 +499,19 @@ namespace SpatialModeling
             float pointerDistance = 4f;
             bool hit = h.target != null;
             Vector3 endpoint;
+            var direct=PreviewInteraction.Current?.DirectEditing;
+            Vector3 directEndpoint=default;
+            bool directGesture=direct!=null&&direct.TryGestureVisual(h.node,currentRay,out directEndpoint);
             if(h.target!=null)
             {
                 endpoint=h.target.TransformPoint(h.localContact);
                 pointerDistance=Vector3.Distance(currentRay.origin,endpoint);
+            }
+            else if(directGesture)
+            {
+                endpoint=directEndpoint;
+                pointerDistance=Vector3.Distance(currentRay.origin,endpoint);
+                hit=true;
             }
             else
             {
@@ -644,7 +653,7 @@ namespace SpatialModeling
             hand.timingSeconds = hand.maximumFrameTime = hand.largestRawStep = hand.largestGripStep = hand.largestGripTurn = hand.largestDisplayStep = 0;
         }
 
-        public void CancelGrabs() { Release(left); Release(right); }
+        public void CancelGrabs() { Release(left); Release(right); PreviewInteraction.Current?.DirectEditing?.Cancel("Placement or tracking changed"); }
         public void TogglePartMode() { CancelGrabs(); MoveIndividualParts = !MoveIndividualParts; }
         public void ResetArrangement() { CancelGrabs(); scene?.ResetObjectArrangement(); }
         public static Pose ToWorldPose(Transform origin, Pose local) => origin == null ? local

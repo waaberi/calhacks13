@@ -23,7 +23,7 @@ namespace SpatialModeling
         public bool CapturesScroll { get; private set; }
         const string PointerHandPreference = "SpatialModeling.PreviewPointerLeft";
         public bool OwnsControllerButtons => inputEnabled || focusRequested || windowResuming || endAfterRelease || NativeInputOwned;
-        public bool ModelEditingActive => OwnsControllerButtons || guideShown || spatialRequested || pendingNativeCommand!=null
+        public bool ModelEditingActive => OwnsControllerButtons || guideShown || spatialRequested || pendingNativeCommand!=null || (DirectEditing != null && DirectEditing.Active)
             || (Drawing!=null&&Drawing.EnabledForInput);
         public XRNode PrimaryHand { get; private set; } = XRNode.RightHand;
         public void SetPointerHand(XRNode hand)
@@ -34,6 +34,7 @@ namespace SpatialModeling
         }
         public string Notice { get; private set; } = "Focus Blender to enable native preview input";
         public PreviewSpatialDrawing Drawing { get; private set; }
+        public DirectModelEditing DirectEditing { get; private set; }
         BlenderScreen screen;
         HostScene scene;
         RectTransform panel, keyboard, modelToolsPanel, guidePanel;
@@ -42,9 +43,11 @@ namespace SpatialModeling
         int guidePage;
         Action pendingNativeCommand;
         Action<string> pendingNativeFailure;
+        bool pendingNativeFromDirectModel;
         float pendingNativeUntil;
         public bool NeedsNativeCommandHandoff => OwnsControllerButtons || pendingNativeCommand != null
-            || (Drawing != null && Drawing.NativeUiTransitionPending);
+            || (Drawing != null && (Drawing.NativeUiTransitionPending || Drawing.Session.Busy || Drawing.HasDraft))
+            || (DirectEditing != null && DirectEditing.Gesturing);
         RectTransform shortcutPanel, numberPanel, windowPanel, mouseOptionsPanel;
         readonly List<Button> basicKeys = new List<Button>(), fullKeys = new List<Button>(), shortcutButtons = new List<Button>();
         readonly List<Button> numberFields = new List<Button>();
@@ -101,6 +104,7 @@ namespace SpatialModeling
             scene = FindFirstObjectByType<HostScene>();
             Drawing = GetComponent<PreviewSpatialDrawing>() ?? gameObject.AddComponent<PreviewSpatialDrawing>();
             Drawing.Initialize(scene, scene != null ? scene.ObjectDisplayMaterial : null);
+            EnsureDirectEditing();
             OVRManager.HMDUnmounted += Suspend;
             OVRManager.VrFocusLost += Suspend;
             StartCoroutine(ReadState());
@@ -226,6 +230,7 @@ namespace SpatialModeling
 
         public void Suspend()
         {
+            DirectEditing?.SetActive(false);
             CancelNativeCommand("Editing handoff cancelled because input or tracking changed; issue the command again when ready");
             ReleaseNative();
             if (inputEnabled || focusRequested || windowResuming || NativeInputOwned) RequestEndNativeUi();
@@ -263,6 +268,8 @@ namespace SpatialModeling
                 float drawingDistance = Vector3.Distance(ray.origin, drawPoint);
                 if (drawingDistance <= distance) { distance = drawingDistance; found = true; }
             }
+            if (DirectEditing != null && DirectEditing.TryVisualAim(ray, out float directDistance) && directDistance <= distance)
+            { distance = directDistance; found = true; }
             return found;
         }
         bool RoutePointer(XRNode hand, Ray ray, bool trigger, bool grip, Vector2 axis, float nearest, out float distance, bool controller, bool stick)
@@ -275,6 +282,9 @@ namespace SpatialModeling
             bool sidePressed = grip && !sideWasDown, stickPressed = stick && !stickWasDown;
             sideWasDown = grip; stickWasDown = stick;
             CapturesScroll = false;
+            if (DirectEditing != null && DirectEditing.Gesturing
+                && DirectEditing.RouteHand(hand, ray, trigger, pressed, grip, axis, nearest, out distance))
+            { Notice = DirectEditing.Notice; return true; }
             bool sideMouse = controller && questControls && screen != null && screen.PositionLocked
                 && screen.TryPreviewPoint(ray, out _, out var sideDistance) && sideDistance <= nearest;
             if (grip && !sideMouse) { ReleaseNative(); Drawing?.Cancel(); return false; }
@@ -340,6 +350,8 @@ namespace SpatialModeling
                 return true;
             }
             ReleasePointer();
+            if (DirectEditing != null && DirectEditing.RouteHand(hand, ray, trigger, pressed, grip, axis, nearest, out distance))
+            { Notice = DirectEditing.Notice; return true; }
             if (Drawing != null && Drawing.TryAim(ray, out var drawPoint))
             {
                 float d = Vector3.Distance(ray.origin, drawPoint);
@@ -463,17 +475,31 @@ namespace SpatialModeling
         {
             if (endAfterRelease) return;
             if (inputEnabled || focusRequested || windowResuming)
-            { Suspend(); Notice = "Input disabled; releasing held keys and buttons"; }
+                DisableNativeInput();
             else FocusNativeUi();
             RefreshInputIndicator();
         }
+        void DisableNativeInput()
+        {
+            bool keepDirectMode = DirectEditing != null && DirectEditing.Active;
+            Suspend();
+            if (keepDirectMode) DirectEditing.SetActive(true);
+            Notice = keepDirectMode ? "Native window input OFF · direct model editing remains ON after input cleanup"
+                : "Input disabled; releasing held keys and buttons";
+        }
         public void BeginModelEditing()
         {
+            EnsureDirectEditing(); DirectEditing.SetActive(true);
             guideShown = true; guidePage = 0; RefreshGuide();
             if (screen == null) screen = FindFirstObjectByType<BlenderScreen>();
             if (screen != null && !screen.Visible) screen.Toggle();
             if (!inputEnabled && !focusRequested && !windowResuming) FocusNativeUi();
-            else Notice = "Edit in Blender: point at its viewport or menus and use the front trigger. Open the guide for steps.";
+            else Notice = "Choose a native Blender tool, then trigger + aim on the floating object; the 2D preview remains editable";
+        }
+        void EnsureDirectEditing()
+        {
+            if (DirectEditing == null) DirectEditing = GetComponent<DirectModelEditing>() ?? gameObject.AddComponent<DirectModelEditing>();
+            DirectEditing.Initialize(scene, this, Drawing);
         }
         public void EndModelEditing()
         {
@@ -483,13 +509,15 @@ namespace SpatialModeling
         }
         // One explicit command may cross the release barrier. Never queue a
         // second writer, replay rejected input, or confirm/cancel a native modal.
-        public void HandoffNativeCommand(Action execute, Action<string> failed)
+        public void HandoffNativeCommand(Action execute, Action<string> failed, bool fromDirectModel = false)
         {
             if (pendingNativeCommand != null)
             { failed?.Invoke("Wait for the previous edit handoff to finish"); return; }
             if (Drawing == null || Drawing.NativeModalActive || Drawing.Session.Busy || Drawing.HasDraft)
             { failed?.Invoke("Finish or cancel the active Blender operation or VR drawing draft before this edit; Enter / Escape are available"); return; }
             pendingNativeCommand = execute; pendingNativeFailure = failed;
+            pendingNativeFromDirectModel = fromDirectModel;
+            if (!fromDirectModel) DirectEditing?.Cancel("Voice or another native command cancelled the local direct draft");
             pendingNativeUntil = Time.unscaledTime + 8f;
             Drawing.SetEnabled(false); Drawing.SetObjectToolsEnabled(false);
             spatialRequested = objectsRequested = false;
@@ -501,7 +529,16 @@ namespace SpatialModeling
         {
             var failed = pendingNativeFailure;
             pendingNativeCommand = null; pendingNativeFailure = null;
+            pendingNativeFromDirectModel = false;
             if (failed != null) { Notice = reason; failed(reason); }
+        }
+        public void CancelDirectModelDraft(string reason = "Direct edit cancelled; native geometry unchanged")
+        {
+            // Stop only the unsubmitted direct gesture. Keep helper/native input
+            // cleanup running and leave a queued voice command or sent native
+            // transaction under its existing owner until its receipt arrives.
+            if (pendingNativeFromDirectModel) CancelNativeCommand(reason);
+            DirectEditing?.Cancel(reason);
         }
         void FlushNativeCommand()
         {
@@ -511,6 +548,7 @@ namespace SpatialModeling
             if (endAfterRelease || Drawing == null || !Drawing.NativeCommandReady) return;
             var execute = pendingNativeCommand;
             pendingNativeCommand = null; pendingNativeFailure = null;
+            pendingNativeFromDirectModel = false;
             Notice = "Blender input released · sending the requested 3D edit once";
             execute();
         }
@@ -541,6 +579,7 @@ namespace SpatialModeling
         }
         void BeginSpatial()
         {
+            DirectEditing?.SetActive(false);
             mouseOptionsShown = false;
             if (Drawing.NativeModalActive)
             { Notice = "Finish the native operation with Enter or Escape before switching to VR drawing"; return; }
@@ -882,7 +921,7 @@ namespace SpatialModeling
             panel = MakePanel("P2.5 controls", new Vector2(0, -760), new Vector2(1840, 176));
             focusButton = AddButton(panel, "Focus Blender", 0, 0, ToggleNativeUi);
             RefreshInputIndicator();
-            AddButton(panel, "Disable input", 1, 0, Suspend);
+            AddButton(panel, "Disable input", 1, 0, DisableNativeInput);
             AddButton(panel, "Keyboard", 2, 0, () => { if (keyboardShown) keyboardShown = false; else OpenKeyboard(false); });
             AddButton(panel, "Lock screen position", 3, 0, ToggleScreenLock);
             AddButton(panel, "Controller controls", 4, 0, () => { ReleaseNative(); questControls = true; mouseOptionsShown = false; Notice = "Front: click · side: right-click with screen locked · stick: scroll/zoom · hold stick + tilt: pan"; });
@@ -891,7 +930,7 @@ namespace SpatialModeling
                 mouseOptionsShown = !mouseOptionsShown;
                 if (mouseOptionsShown) keyboardShown = numbersShown = shortcutsShown = windowsShown = modelToolsShown = false;
             });
-            AddButton(panel, "Escape / cancel", 0, 1, () => { Drawing.Cancel(); Key("ESC"); });
+            AddButton(panel, "Escape / cancel", 0, 1, () => { DirectEditing?.Cancel(); Drawing.Cancel(); Key("ESC"); });
             AddButton(panel, "Enter", 1, 1, () => Key("ENTER"));
             // Input routing only. Native tools/history/file actions stay in Blender.
             AddButton(panel, "Draw in VR", 2, 1, BeginSpatial);
@@ -968,9 +1007,9 @@ namespace SpatialModeling
         {
             if (guideText == null) return;
             string[] pages = {
-                "1 / 3 · EDIT THE REAL BLENDER MODEL\n\nClose this guide, then point at Blender's viewport or native menus. Front trigger clicks; hold and aim to drag.\n\nSelect an object. Use Blender's Object / Add menus or left toolbar to move, rotate, scale and create geometry. These edits update the 3D model.\n\nLock screen position for side-grip right-click. Stick tilt scrolls / zooms; hold stick and tilt to pan. Grip on unlocked displays arranges the VR view only.",
-                "2 / 3 · MESH EDITING AND TYPING\n\nSelect a mesh in Blender, then choose Edit Mode in Blender's top-left mode menu. Select vertices / edges / faces and choose Blender's Mesh menu or toolbar tools.\n\nKeyboard opens letters and numbers; Full keyboard adds function / numpad keys. Click the intended Blender editor before typing. G / R / S start move / rotate / scale; Tab changes mode. Enter confirms, Escape cancels.\n\nA laptop keyboard is usable when Windows focus is on the captured Blender window.",
-                "3 / 3 · DIRECT VR DRAWING AND VOICE\n\nIn Blender choose a CAD sketch and its Line, Circle or Corner Rectangle tool. Return to Draw in VR. Input releases safely before the VR controller places two points on the native sketch plane.\n\nVoice edits automatically release preview input before sending one native edit. Finish / cancel a running Blender tool first. Input stays OFF afterward; enable it to return to Blender menus.\n\nTriggering a floating 3D object selects it for voice. Gripping it arranges its VR display; it does not change Blender geometry."
+                "1 / 3 · EDIT THE FLOATING MODEL\n\nClose this guide. In Blender's left toolbar choose Move, Rotate or Scale. Point at the floating object, hold the front trigger and aim to edit. Orange is an uncommitted preview. Release commits to Blender with one Undo. A click without dragging only selects / deselects.\n\nThe first drag safely releases native-window input. Keep holding until orange appears. Releasing early sends no edit. Escape or grip cancels a draft. Grip keeps arranging the VR display.\n\nInput ON still edits the native 2D Blender window with controllers. Enable it again to choose another native tool.",
+                "2 / 3 · DIRECT MESH EDITING\n\nIn Blender select a mesh, choose Edit Mode, then one vertex / edge / face selection mode. Choose Move, Rotate or Scale in Blender's toolbar. Aim at a visible floating component, hold the front trigger, aim, then release. Face mode also supports Extrude Region.\n\nOne gesture edits one picked component. Scale is uniform; rotation follows aim. Modifiers, multi-object Edit Mode, mixed component modes and other tools stay available in the native 2D preview.\n\nUse Blender Undo / Redo or voice Undo / Redo. Keyboard and Full keyboard still type into the intended Blender editor.",
+                "3 / 3 · NATIVE PREVIEW, DRAWING AND VOICE\n\nInput ON: front trigger clicks / drags Blender menus and viewport. Locked screen: side grip right-clicks, stick scrolls / zooms, hold stick + tilt pans. The real laptop keyboard remains visible through its passthrough window.\n\nDraw in VR follows Blender's CAD Line, Circle or Corner Rectangle tool. Voice and direct edits wait for acknowledged input release; a running native modal must finish / cancel first. Input stays OFF afterward.\n\nGripping arranges the VR display; it does not change Blender geometry. Native tool, target or document changes cancel local direct drafts."
             };
             guideText.text = pages[guidePage];
         }

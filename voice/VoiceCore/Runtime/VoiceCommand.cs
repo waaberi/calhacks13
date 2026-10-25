@@ -75,6 +75,7 @@ namespace SpatialModeling.VoiceCore
             Resolution = resolution;
             Choice = candidate.Choice;
             Say = candidate.Say;
+            confirmation = candidate.RequiresConfirmation;
         }
 
         public CommandKind Kind { get; }
@@ -122,7 +123,8 @@ namespace SpatialModeling.VoiceCore
 
         /// <summary>Destructive: the UI asks for a deliberate controller confirmation before sending.
         /// A spoken "yes" must not confirm it.</summary>
-        public bool RequiresConfirmation => Kind == CommandKind.Delete;
+        readonly bool confirmation;
+        public bool RequiresConfirmation => Kind == CommandKind.Delete || confirmation;
 
         public override string ToString()
         {

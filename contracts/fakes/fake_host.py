@@ -86,7 +86,8 @@ SKETCH_OPS = (
     "sketch.constrain",
     "sketch.set_dimension",
 )
-CONTRACT_OPS = SUPPORTED_OPS + SKETCH_OPS
+# The fake knows this contract but has no native toolbar/base mesh to apply it.
+CONTRACT_OPS = SUPPORTED_OPS + SKETCH_OPS + ("object.spatial_edit",)
 UNTARGETED_OPS = ("object.add", "history.undo", "history.redo", "document.save", "sketch.create")
 NO_ARGS_OPS = ("object.delete", "history.undo", "history.redo", "document.save")
 OPTIONAL_TARGET_OPS = ("voice.run",)

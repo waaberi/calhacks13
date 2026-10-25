@@ -174,18 +174,20 @@ def editing_mode(context):
                                "spatial_editing_mode", "EXCLUSIVE") == "SHARED" else "exclusive"
 
 
-def read_state(context):
+def read_state(context, model_sync=None):
     """Read the pinned CAD API's actual workspace tool and active sketch object.
 
     Ambiguous tools across Blender windows are not silently resolved to the
     first window. Input capture binding is a separate identity check.
     """
+    from . import spatial_model_edit
     dependency = sketch.dependency_status()
     state = {"available": dependency["available"], "reason": dependency.get("reason", ""),
              "tool": "", "native_tool": "", "sketch_id": "", "mode": context.mode,
              "editing_mode": editing_mode(context),
              "selected_entities": [], "unsupported_options": [],
-             "unsupported_sketches": sketch.snapshot_problems()}
+             "unsupported_sketches": sketch.snapshot_problems(),
+             "model_edit": spatial_model_edit.read_state(context, model_sync)}
     if not dependency["available"]:
         return state
     group = getattr(context.scene, "sketcher", None)
@@ -240,7 +242,8 @@ def attach(srv, session, leases):
         if msg["payload"]:
             from . import server
             return server.error("invalid_message", "preview.state.query takes an empty payload", msg["id"])
-        state = read_state(context())
+        from . import sync as scene_sync
+        state = read_state(context(), scene_sync)
         doc = session.document()
         state.update(session_id=session.session_id, host_epoch=session.host_epoch,
                      document_id=doc["id"], open_epoch=doc["open_epoch"])

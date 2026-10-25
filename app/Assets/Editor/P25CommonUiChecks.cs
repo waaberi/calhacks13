@@ -116,6 +116,21 @@ public static class P25CommonUiChecks
 
     public static void RunEditingWorkflow()
     {
+        foreach (string disableButton in new[] { "Focus Blender", "Disable input" })
+        {
+            using var f = new Fixture(); f.NativeReady();
+            f.Preview.BeginModelEditing(); f.Tick(); f.Click("Close editing guide"); f.Tick();
+            Check(f.Preview.DirectEditing != null && f.Preview.DirectEditing.Active,
+                "existing Edit model entry activates direct editing without removing native-window input");
+            f.Anchor();
+            Check(!f.Preview.DirectEditing.Gesturing && f.Preview.DirectEditing.Active,
+                "controller click on the nearer Blender image retains native 2D route while direct mode is active");
+            f.Click(disableButton);
+            Check(f.Preview.DirectEditing.Active && (bool)Get(f.Preview,"endAfterRelease") && !(bool)Get(f.Preview,"inputEnabled"),
+                "actual native-input OFF button preserves explicit direct mode through release cleanup: " + disableButton);
+            f.Preview.TrackingLost(f.Preview.PrimaryHand);
+            Check(!f.Preview.DirectEditing.Active,"tracking loss still disables direct mode after an explicit input OFF");
+        }
         using (var f = new Fixture())
         {
             f.NativeReady();

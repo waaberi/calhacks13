@@ -4,29 +4,105 @@
   "title": "voice.candidates",
   "description": "Host to client, answers voice.resolve. run: send command voice.run with choice 1 now. ask: ask the user to choose, then send the choice. reject: nothing to run; say the reason. Candidates are for display: voice.run names a resolution and a choice, never an operator.",
   "$ref": "envelope.schema.json",
-  "required": ["re"],
+  "required": [
+    "re"
+  ],
   "properties": {
-    "type": { "const": "voice.candidates" },
+    "type": {
+      "const": "voice.candidates"
+    },
     "payload": {
       "type": "object",
-      "required": ["resolution", "decision", "reason", "expires_in", "candidates"],
+      "required": [
+        "resolution",
+        "decision",
+        "reason",
+        "expires_in",
+        "candidates"
+      ],
       "properties": {
-        "resolution": { "description": "What voice.run names. Single use; a rejected one can't be run.", "$ref": "envelope.schema.json#/$defs/uuid" },
-        "decision": { "enum": ["run", "ask", "reject"] },
-        "reason": { "description": "A sentence to speak: why it was rejected, or a note such as \"levels capped at 2\".", "type": ["string", "null"], "maxLength": 1024 },
-        "expires_in": { "description": "Seconds after which voice.run gets not_found.", "type": "number", "exclusiveMinimum": 0, "maximum": 3600 },
+        "resolution": {
+          "description": "What voice.run names. Single use; a rejected one can't be run.",
+          "$ref": "envelope.schema.json#/$defs/uuid"
+        },
+        "decision": {
+          "enum": [
+            "run",
+            "ask",
+            "reject",
+            "clarify"
+          ]
+        },
+        "reason": {
+          "description": "A sentence to speak: why it was rejected, or a note such as \"levels capped at 2\".",
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1024
+        },
+        "expires_in": {
+          "description": "Seconds after which voice.run gets not_found.",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 3600
+        },
         "candidates": {
           "description": "Best first; choice 1 is the one to run. Empty for reject.",
           "type": "array",
           "maxItems": 3,
-          "items": { "$ref": "#/$defs/candidate" }
+          "items": {
+            "$ref": "#/$defs/candidate"
+          }
+        },
+        "missing": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "composition": {
+          "type": "boolean"
         }
       },
       "allOf": [
         {
-          "if": { "properties": { "decision": { "const": "reject" } } },
-          "then": { "properties": { "candidates": { "maxItems": 0 } } },
-          "else": { "properties": { "candidates": { "minItems": 1 } } }
+          "if": {
+            "properties": {
+              "decision": {
+                "enum": [
+                  "reject",
+                  "clarify"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "candidates": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "candidates": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "decision": {
+                "const": "clarify"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "missing"
+            ]
+          }
         }
       ],
       "additionalProperties": false
@@ -35,14 +111,57 @@
   "$defs": {
     "candidate": {
       "type": "object",
-      "required": ["choice", "say", "operator", "properties", "set", "needs_target"],
+      "required": [
+        "choice",
+        "say",
+        "operator",
+        "properties",
+        "set",
+        "needs_target"
+      ],
       "properties": {
-        "choice": { "description": "What voice.run sends: 1, 2 or 3, in order.", "type": "integer", "minimum": 1, "maximum": 3 },
-        "say": { "description": "What to show and speak, with its values: \"Array, 5 copies along Z\".", "type": "string", "minLength": 1, "maxLength": 256 },
-        "operator": { "description": "The Blender operator, for display only.", "type": "string", "maxLength": 128 },
-        "properties": { "description": "Its operator properties, for display only.", "type": "object" },
-        "set": { "description": "Modifier properties set afterwards, for display only.", "type": "object" },
-        "needs_target": { "description": "voice.run must name the target that voice.resolve named.", "type": "boolean" }
+        "choice": {
+          "description": "What voice.run sends: 1, 2 or 3, in order.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "say": {
+          "description": "What to show and speak, with its values: \"Array, 5 copies along Z\".",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "operator": {
+          "description": "The Blender operator, for display only.",
+          "type": "string",
+          "maxLength": 128
+        },
+        "properties": {
+          "description": "Its operator properties, for display only.",
+          "type": "object"
+        },
+        "set": {
+          "description": "Modifier properties set afterwards, for display only.",
+          "type": "object"
+        },
+        "needs_target": {
+          "description": "voice.run must name the target that voice.resolve named.",
+          "type": "boolean"
+        },
+        "requires_confirmation": {
+          "type": "boolean"
+        },
+        "target_id": {
+          "anyOf": [
+            {
+              "$ref": "envelope.schema.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
       },
       "additionalProperties": false
     }

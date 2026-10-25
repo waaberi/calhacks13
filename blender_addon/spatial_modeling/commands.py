@@ -66,7 +66,7 @@ MAX_QUERY = 100
 RECONCILE_RETRY = 0.5  # seconds between attempts to re-read the scene while writes are stopped
 MAX_REVISION = 9007199254740991
 REQUEST_FIELDS = ("session_id", "host_epoch", "document_id", "open_epoch", "actor_id")
-OBJECT_OPS = ("object.add", "object.move", "object.rotate", "object.scale", "object.delete")
+OBJECT_OPS = ("object.add", "object.move", "object.rotate", "object.scale", "object.delete", "object.spatial_edit")
 HISTORY_OPS = ("history.undo", "history.redo")
 SKETCH_OPS = ("sketch.create", "sketch.add_line", "sketch.add_rectangle", "sketch.add_circle",
               "sketch.constrain", "sketch.set_dimension")
@@ -118,6 +118,7 @@ class Applied:
     created: list = field(default_factory=list)
     revision: int = 0
     solver: dict | None = None
+    selection: dict | None = None
 
 
 # Step 1: the schema, by hand.
@@ -284,11 +285,23 @@ def _sketch_set_dimension_args(args):
     _number(args["value"], "args.value", (None, DIMENSION_MAX), above=0)
 
 
+def _spatial_edit_args(args):
+    try:
+        from .spatial_model_edit import validate_args
+    except ImportError:  # pure command tests import this module without the package
+        from spatial_model_edit import validate_args
+    try:
+        validate_args(args)
+    except ValueError as exc:
+        raise Invalid(str(exc)) from exc
+
+
 ARGS_CHECKS = {
     "object.add": _add_args,
     "object.move": _move_args,
     "object.rotate": _rotate_args,
     "object.scale": _scale_args,
+    "object.spatial_edit": _spatial_edit_args,
     "sketch.create": _sketch_create_args,
     "sketch.add_line": _points_args("start", "end"),
     "sketch.add_rectangle": _points_args("corner", "opposite"),
@@ -533,12 +546,25 @@ class Commands:
         if op in HISTORY_OPS and p["base_revision"] != revision:
             return rejected("stale_revision", "The document changed since you last saw it. "
                             "Look again, then retry.", {"revision": revision})
+        extra_targets = {}
+        if hasattr(self.editor, "command_targets"):
+            try:
+                extra_targets = self.editor.command_targets(op, p["args"], conn)
+            except Refused as exc:
+                return rejected(exc.code, exc.message, exc.details)
+            for oid, expected_generation in extra_targets.items():
+                if self.editor.generation(oid) != expected_generation:
+                    return rejected("stale_revision", "A sequence target changed. Repeat the full sequence.")
         # 6. Leases, immediately before the write
         if self.leases is not None:
             refusal = self.leases.check(actor["actor_id"], op, target and target["id"],
                                         p.get("lease"))
             if refusal is not None:
                 return rejected(*refusal)
+            for oid in extra_targets:
+                refusal = self.leases.check(actor["actor_id"], op, oid, p.get("lease"))
+                if refusal is not None:
+                    return rejected(*refusal)
         elif "lease" in p:
             return rejected("not_found", "That lease doesn't exist.")
         # 7. Apply, read back, publish (scene.update) and commit as one Undo step
@@ -551,7 +577,7 @@ class Commands:
             log.exception("%s failed halfway", op)
             return self._unknown(conn, rid, p, e)
         return self._receipt(conn, rid, p, "applied", done.revision, summary=done.summary,
-                             created=done.created, solver=done.solver)
+                             created=done.created, solver=done.solver, selection=done.selection)
 
     def _unknown(self, conn, rid, p, exc):
         """Blender may or may not have changed: stop writes until _reconcile() succeeds."""
@@ -589,12 +615,15 @@ class Commands:
             log.exception("could not read the document's revision")
             return 0
 
-    def _receipt(self, conn, rid, p, outcome, revision, summary=None, created=None, error=None, solver=None):
+    def _receipt(self, conn, rid, p, outcome, revision, summary=None, created=None, error=None,
+                 solver=None, selection=None):
         receipt = {"request_id": rid, "op": p["op"]}
         if "target" in p:
             receipt["target"] = p["target"]["id"]
         actor = self.session.participants[conn]  # server.py hands over joined connections only
         receipt.update(actor=dict(actor), source=p["source"], outcome=outcome, revision=revision)
+        if selection is not None:
+            receipt["selection"] = dict(selection)
         if created:
             receipt["created"] = list(created)
         if solver is not None:
