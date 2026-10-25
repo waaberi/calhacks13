@@ -130,7 +130,11 @@ public static class GuideInteractionChecks
             if(blocked=="native-button")Set(f.Native.Preview,"mouseHeld",true);
             if(blocked=="transition")Set(f.Native.Preview,"focusRequested",true);
             if(blocked=="modal")f.Native.Drawing.NativeState["modal_active"]=true;
-            if(blocked=="direct-draft"){f.Route(XRNode.RightHand,f.Native.Ray(),true);f.Route(XRNode.RightHand,f.Native.Ray(.05f),true);}
+            if(blocked=="direct-draft")
+            {
+                f.Route(XRNode.RightHand,f.Native.Ray(),true);f.Route(XRNode.RightHand,f.Native.Ray(.05f),true);
+                Check(f.Native.Direct.Gesturing&&Get(f.Native.Direct,"ghost")!=null,"busy admission fixture owns a real visible direct draft before requesting Guide");
+            }
             if(blocked=="drawing-draft")Set(f.Native.Drawing,"first",(Vector3?)Vector3.zero);
             if(blocked=="placement")f.HandField(XRNode.RightHand,"target",f.Native.Host.Placement);
             bool directHeld=f.Native.Direct.Gesturing;
@@ -248,7 +252,7 @@ public static class GuideInteractionChecks
             owner=new GameObject("Guide route fixture");Workspace=owner.AddComponent<WorkspaceInteraction>();Workspace.enabled=false;
             arrangement=owner.AddComponent<WorkspaceArrangement>();Property(arrangement,"Surfaces",owner.AddComponent<WorkspaceSurfaces>());Set(arrangement,"scene",Native.Host);
             Table=owner.AddComponent<TablePlacement>();Set(Native.Host,"table",Table);material=new Material(Shader.Find("UI/Default"));Table.Initialize(Native.Host.Placement,material);
-            Set(Table,"seeded",true);Invoke(Table,"CreatePanel");Table.Menu.SetPositionAndRotation(new Vector3(-.8f,.1f,1),Quaternion.identity);Table.Menu.gameObject.SetActive(true);
+            Set(Table,"seeded",true);Table.Place();Invoke(Table,"CreatePanel");Table.Menu.SetPositionAndRotation(new Vector3(-.8f,.1f,1),Quaternion.identity);Table.Menu.gameObject.SetActive(true);
             Screen=Native.Host.gameObject.AddComponent<BlenderScreen>();ScreenRoot=new GameObject("Guide foreign native image",typeof(RectTransform),typeof(Canvas));ScreenRoot.transform.position=Vector3.forward*3;ScreenRoot.transform.localScale=Vector3.one*.001f;
             var body=new GameObject("Native image body",typeof(RectTransform),typeof(RoundedGlassImage));body.transform.SetParent(ScreenRoot.transform,false);body.GetComponent<RectTransform>().sizeDelta=new Vector2(1800,1100);
             var image=new GameObject("Native image pixels",typeof(RectTransform),typeof(RawImage));image.transform.SetParent(ScreenRoot.transform,false);image.GetComponent<RectTransform>().sizeDelta=new Vector2(1800,1100);
@@ -256,6 +260,9 @@ public static class GuideInteractionChecks
             left=Activator.CreateInstance(handType,true);right=Activator.CreateInstance(handType,true);HandField(XRNode.LeftHand,"node",XRNode.LeftHand);HandField(XRNode.RightHand,"node",XRNode.RightHand);HandField(XRNode.LeftHand,"armed",true);HandField(XRNode.RightHand,"armed",true);
             Set(Workspace,"left",left);Set(Workspace,"right",right);Set(Workspace,"scene",Native.Host);Set(Workspace,"screen",Screen);Set(Workspace,"arrangement",arrangement);
             Native.Drawing.Session.Select(Native.View.ObjectId);Physics.SyncTransforms();
+            Check(Table.IsPlaced&&Native.Host.DisplayPlacementReady&&Native.Host.Placement.gameObject.activeInHierarchy&&Native.View.gameObject.activeInHierarchy,"fixture has an explicitly placed visible native display");
+            Check(Native.Host.PickObject(Native.Ray(),out float modelDistance)==Native.View&&Screen.RaycastSurface(Native.Ray(),out float screenDistance)&&modelDistance<screenDistance,
+                "actual visible native mesh is the nearest target before the foreign Blender image");
         }
         object Hand(XRNode node)=>node==XRNode.LeftHand?left:right;
         public void HandField(XRNode node,string name,object value)=>handType.GetField(name).SetValue(Hand(node),value);
