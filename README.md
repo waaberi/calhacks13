@@ -12,7 +12,7 @@
 
 Put on a Quest and your scene appears on a table in your room, at real size. Grab objects, move them, rotate them and type exact values. Give it voice commands. Every edit happens in Blender itself, so the file, Undo, Redo and Save all work as usual. A teammate on another PC can open the same session in their own Blender and edit alongside you.
 
-Built at CalHacks 13 by Waaberi Ibrahim, Lee Jae-yeon, Jihyeon and Talia.
+Built at CalHacks 13 by Waaberi, Jaeyeon, Jihyeon and Talia.
 
 ## Features
 
