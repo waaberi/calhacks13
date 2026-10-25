@@ -12,8 +12,12 @@ namespace SpatialModeling
             var canvas=GetComponent<Canvas>();var camera=eventCamera;
             if(canvas==null||camera==null||GetComponent<GlassCurvedCanvas>()==null){base.Raycast(data,results);return;}
             var ray=camera.ScreenPointToRay(data.position);
-            foreach(var graphic in GraphicRegistry.GetGraphicsForCanvas(canvas))
+            // uGUI returns an IndexedSet through IList. Its enumerator throws;
+            // use the same indexed access as Unity's built-in GraphicRaycaster.
+            var graphics=GraphicRegistry.GetGraphicsForCanvas(canvas);
+            for(int i=0;i<graphics.Count;i++)
             {
+                var graphic=graphics[i];
                 if(graphic==null||!graphic.raycastTarget||!graphic.isActiveAndEnabled||graphic.depth<0||graphic.canvasRenderer.cull)continue;
                 if(!GlassRaycast.Hit(graphic.rectTransform,ray,out float distance,out _))continue;
                 bool blocked=false;

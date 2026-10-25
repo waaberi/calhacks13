@@ -5,6 +5,7 @@ public static class GlassBuild
     {
         GlassChecks.Run();
         GlassControllerChecks.Run();
+        GlassEventRaycastChecks.Run();
         P25Build.Windows();
         CombinedGlassChecks.Run();
         Debug.Log("P3_GLASS_BUILD_RESULT Succeeded cumulative_P1_P2_P25=True physical_acceptance=False");
