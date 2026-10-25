@@ -27,6 +27,7 @@ class NativeClient:
         self.directory.mkdir(parents=True, exist_ok=True)
         self.capture_path = self.directory / "checkpoint.blend"
         self.clock = clock
+        self._epoch = 0
         self.watcher = NativeChangeTracker(quiet_seconds, clock=clock)
         self.receiver = wire.ChunkReceiver()
         self.enabled = self.connected = self.can_edit = False
@@ -65,6 +66,7 @@ class NativeClient:
         return {**self.identity, "actor_id": self.actor_id, "lease_id": self.lease_id}
 
     def welcome(self, payload):
+        self._epoch += 1
         self.receiver.reset()
         self._download = self._outgoing = None
         self._download_failed = False
@@ -74,6 +76,7 @@ class NativeClient:
         self.lease_id = ""
         self._ready_edit = self._want_edit = self._release_sent = False
         self._finish_requested = False
+        self._discard_next = False
         self.enabled = payload.get("capabilities", {}).get("native_sync") is True
         if not self.enabled:
             self.connected = False
@@ -158,6 +161,7 @@ class NativeClient:
             "reason": self.watcher.rejection}, indent=2), encoding="utf-8")
 
     def disconnect(self):
+        self._epoch += 1
         self.connected = False
         self._ready_edit = self._want_edit = False
         self._release_sent = self._finish_requested = False
@@ -167,6 +171,7 @@ class NativeClient:
         self._download = self._outgoing = None
         self._get_pending = False
         self._upload_stage = ""
+        self._discard_next = False
         if self.watcher.pending is not None:
             self.watcher.reject(self.watcher.pending.request_id, "unknown_after_disconnect")
             self._retain()
@@ -326,6 +331,8 @@ class NativeClient:
                 return
         self._download = None
         self.applying = True
+        epoch = self._epoch
+        discard_requested = self._discard_next
         path = self.directory / ("incoming-" + complete["request_id"] + ".blend")
         self.status = "Applying original Blender document atomically"
 
@@ -333,7 +340,17 @@ class NativeClient:
             try:
                 self.has_native_document = True
                 local = self.document.capture(self.capture_path)
-                if self._discard_next:
+                if epoch != self._epoch or not self.connected:
+                    # The native transaction must finish safely, but an older
+                    # connection cannot authorize editing or replace a newer
+                    # session's canonical metadata. Its current local bytes are
+                    # still a valid echo baseline, without discarding drafts.
+                    self.watcher.applied_local_baseline(local.sha256)
+                    self.status = ("Previous received data settled; waiting for the current host"
+                                   if self.connected else
+                                   "Disconnected; native document and local drafts are preserved")
+                    return
+                if discard_requested:
                     self.watcher.discard(local.sha256)
                 else:
                     self.watcher.applied_local_baseline(local.sha256)
@@ -343,7 +360,8 @@ class NativeClient:
                 self.status = "Your native Blender edit turn" if self._ready_edit else "Original Blender document is current; take an edit turn to share changes"
                 self.error = ""
             except (OSError, RuntimeError, ValueError):
-                self._download_failed = True
+                if epoch == self._epoch:
+                    self._download_failed = True
                 self._ready_edit = False
                 self.error = "Native data arrived, but its local baseline could not be saved"
                 self.status = "Current document is retained; resolve the local file error before reloading"
@@ -352,8 +370,9 @@ class NativeClient:
 
         def failed(_error):
             self.applying = False
-            self._download = complete
-            self._download_failed = True
+            if epoch == self._epoch:
+                self._download = complete
+                self._download_failed = True
             self._ready_edit = False
             self.error = "Native apply failed; current document and checkpoint files are retained"
             self.status = "Inspect saved copies before reconnecting"

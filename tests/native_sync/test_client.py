@@ -354,3 +354,46 @@ def test_reload_backup_failure_never_replaces_current_local_data(tmp_path, monke
     feed(client, b"host replacement", revision=1)
     assert doc.data == before and not client.applying
     assert "backed up" in client.error
+
+
+def test_old_async_apply_completion_cannot_replace_reconnected_session_head(tmp_path, monkeypatch):
+    client, doc, _, _ = setup(tmp_path)
+    callbacks = []
+    original_apply = doc.apply
+
+    def deferred_apply(path, _manifest, on_done, _on_error, active_scene_uuid=None):
+        doc.data = b"old connection native result:" + Path(path).read_bytes()
+        callbacks.append(on_done)
+
+    monkeypatch.setattr(doc, "apply", deferred_apply)
+    feed(client, b"old connection checkpoint", revision=1)
+    assert client.applying
+    client.disconnect()
+    next_welcome = welcome()
+    next_welcome["host_epoch"] = uuid.uuid4().hex
+    client.welcome(next_welcome)
+    new_head = head(b"new connection graph")
+    new_head["host_epoch"] = next_welcome["host_epoch"]
+    for payload in wire.iter_messages(snapshot(b"new connection graph"), new_head):
+        client.receive("native.snapshot", payload)
+    callbacks.pop()({})
+    assert not client.applying and client.applied_head is None and not client.is_editing
+    monkeypatch.setattr(doc, "apply", original_apply)
+    client.tick()
+    assert client.applied_head == new_head
+    assert doc.data == b"local save:new connection graph"
+
+
+def test_apply_finishing_after_disconnect_keeps_disconnected_status(tmp_path, monkeypatch):
+    client, doc, _, _ = setup(tmp_path)
+    callbacks = []
+
+    def deferred_apply(_path, _manifest, on_done, _on_error, active_scene_uuid=None):
+        callbacks.append(on_done)
+
+    monkeypatch.setattr(doc, "apply", deferred_apply)
+    feed(client, b"received before disconnect", revision=1)
+    client.disconnect()
+    callbacks.pop()({})
+    assert not client.connected and not client.is_editing and not client.applying
+    assert client.status.startswith("Disconnected")
