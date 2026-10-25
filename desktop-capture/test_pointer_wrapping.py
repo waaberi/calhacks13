@@ -5,8 +5,8 @@ import unittest
 from ctypes import wintypes as W
 from types import SimpleNamespace
 
-from input_bridge import InputRejected, NativeInput, WindowsInput
 import test_input_bridge as bridge_fixture
+from input_bridge import InputRejected, NativeInput, WindowsInput
 from test_input_bridge import FakeNative
 
 
