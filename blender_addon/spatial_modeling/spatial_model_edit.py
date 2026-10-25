@@ -195,8 +195,14 @@ def _native_options(context, obj, tool, live=False):
         unsupported.append("Mesh Mirror Editing")
     locks = {"builtin.move": "lock_location", "builtin.rotate": "lock_rotation",
              "builtin.scale": "lock_scale"}.get(tool)
-    if context.mode == "OBJECT" and locks and any(getattr(obj, locks, ())):
-        unsupported.append("Locked transform channels")
+    locked = tuple(getattr(obj, locks, ())) if locks else ()
+    # Live transforms carry the captured native constraint settings and use
+    # Blender's transform operators, which preserve each locked channel. The
+    # older channel-writing path cannot reproduce that behavior, so its guard
+    # remains strict. An entirely locked native transform is still unavailable.
+    if context.mode == "OBJECT" and any(locked) and (not live or all(locked)):
+        name = {"lock_location": "Move", "lock_rotation": "Rotate", "lock_scale": "Scale"}[locks]
+        unsupported.append("Locked " + name + " channels " + ", ".join(axis for axis, value in zip("XYZ", locked) if value))
     if unsupported:
         raise ValueError("Use the Blender panel for these native options, or disable them before direct editing: "
                          + ", ".join(unsupported))
@@ -260,6 +266,16 @@ def _options(context, obj, tool):
               "connected": bool(settings.use_proportional_connected),
               "projected": bool(settings.use_proportional_projected),
               "proportional_radius_m": 0.0}
+    if context.mode == "OBJECT":
+        # Included in both viewer tool context and native live context. A lock
+        # change during a gesture must invalidate its frozen intent, even when
+        # it has not changed streamed geometry or object generations.
+        result["transform_locks"] = {
+            name: list(getattr(obj, name, (False, False, False)))
+            for name in ("lock_location", "lock_rotation", "lock_scale")}
+        result["transform_locks"].update(
+            lock_rotation_w=bool(getattr(obj, "lock_rotation_w", False)),
+            lock_rotations_4d=bool(getattr(obj, "lock_rotations_4d", False)))
     for name in ("use_snap_self", "use_snap_edit", "use_snap_nonedit", "use_snap_selectable",
                  "use_snap_backface_culling", "use_snap_align_rotation", "use_snap_grid_absolute",
                  "use_snap_translate", "use_snap_rotate", "use_snap_scale"):
@@ -425,7 +441,7 @@ def read_state(context, sync=None):
             raise ValueError("Choose Blender mesh Edit Mode for this mesh tool.")
         obj = context.active_object
         if obj is None:
-            raise ValueError("Select an object in the Blender panel first.")
+            raise ValueError("Select a floating object with the controller to begin.")
         _display_transform(obj)
         _native_options(context, obj, tool, live=True)
         from . import modeling_tools

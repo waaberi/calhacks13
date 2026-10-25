@@ -109,7 +109,7 @@ def test_no_active_object_exports_authoritative_empty_selection_without_enabling
     context = NS(mode="OBJECT", active_object=None, selected_objects=[])
     state = native.read_state(context)
     assert not state["available"] and state["live_supported"]
-    assert state["reason"] == "Select an object in the Blender panel first."
+    assert state["reason"] == "Select a floating object with the controller to begin."
     assert state["native_tool"] == tool and state["active_object_id"] == ""
     assert state["generation"] == 0 and state["topology_token"] == "" and state["settings"] == {}
     assert state["selection"] == {"component": "object", "objects": [], "indices": [],
@@ -158,6 +158,28 @@ def test_mesh_mirror_pivot_and_locked_channels_are_explicit():
     context.mode = "OBJECT"
     with pytest.raises(ValueError, match="Locked"):
         native._native_options(context, NS(lock_location=(True, False, False)), "builtin.move")
+
+
+@pytest.mark.parametrize("tool,channel", [("builtin.move", "lock_location"),
+                                         ("builtin.rotate", "lock_rotation"),
+                                         ("builtin.scale", "lock_scale")])
+def test_live_partial_locks_use_native_channels_while_legacy_and_fully_locked_stay_refused(tool, channel):
+    context = NS(mode="OBJECT", tool_settings=NS())
+    obj = NS(**{channel: (True, False, False)})
+    before = copy.deepcopy(vars(obj))
+    native._native_options(context, obj, tool, live=True)
+    assert vars(obj) == before
+    with pytest.raises(ValueError, match="Locked"):
+        native._native_options(context, obj, tool)
+    setattr(obj, channel, (True, True, True))
+    with pytest.raises(ValueError, match="Locked"):
+        native._native_options(context, obj, tool, live=True)
+
+
+@pytest.mark.parametrize("tool", ["builtin.move", "builtin.rotate"])
+def test_scale_locks_do_not_block_unrelated_live_tools(tool):
+    native._native_options(NS(mode="OBJECT", tool_settings=NS()),
+                           NS(lock_scale=(True, True, True)), tool, live=True)
 
 
 @pytest.mark.parametrize("fields,code", [
