@@ -193,11 +193,22 @@ def private_temporary_files(session, environ=None, tempfile_module=None):
     return directory
 
 
+def configure_private_ui(bpy, resources):
+    """No first-run splash or preference autosave in the disposable process."""
+    config = Path(bpy.utils.user_resource("CONFIG", create=True)).resolve()
+    if not config.is_relative_to(Path(resources).resolve()):
+        raise RuntimeError("Blender resolved its configuration outside the private resources")
+    bpy.context.preferences.view.show_splash = False
+    bpy.context.preferences.use_preferences_save = False
+    return {"config": str(config), "show_splash": False, "preference_autosave": False}
+
+
 def run(args, argv=None):
     import bpy  # Blender-only entry point; pure prepare/tests never import this.
 
     require_factory_process(bpy, sys.argv if argv is None else argv)
     record = prepare(args)
+    record["private_ui"] = configure_private_ui(bpy, record["resources"])
     record["temporary_files"] = str(private_temporary_files(args.session_dir))
     package = Path(record["addon_package"])
     sys.path.insert(0, str(package.parent))
