@@ -270,6 +270,19 @@ class NativeSyncState:
             raise Refused("no_pending_transfer")
         return self._finish(self.pending, "unknown", code=code)
 
+    def abort(self, request_id, code="aborted", rollback_verified=False):
+        """Host-internal cleanup after timeout, lost permission or an expired lease.
+
+        Receiving has not changed native state and may safely reject. After
+        prepare, abort stays UNKNOWN unless the host independently proves rollback.
+        It does not need the departed actor's permission or stale lease to clean up.
+        """
+        if self.pending is None or self.pending.request_id != request_id:
+            raise Refused("no_pending_transfer")
+        if self.pending.applying and not rollback_verified:
+            return self.unknown(request_id, code=code)
+        return self._finish(self.pending, "rejected", code=code)
+
     def disconnected(self, actor_id):
         """Never resend a draft or an uncertain applying transfer on reconnect."""
         pending = self.pending

@@ -210,3 +210,26 @@ def test_host_sync_cannot_silently_replace_an_unversioned_native_graph():
     refused("unversioned_change", lambda: state.sync_head(7, AFTER))
     refused("revision_regressed", lambda: state.sync_head(6, BASE))
     refused("invalid_revision", lambda: state.sync_head(True, BASE))
+
+
+def test_host_abort_receiving_does_not_need_expired_permission_or_lease():
+    state, fence = fixture()
+    begin(state, fence)
+    refused("permission_denied", lambda: state.cancel(RID, replace(fence, can_edit=False)))
+    receipt = state.abort(RID, code="transfer_timeout")
+    assert receipt.outcome == "rejected" and receipt.code == "transfer_timeout"
+    assert state.pending is None and begin(state, fence) == receipt
+
+
+def test_abort_applying_is_unknown_unless_rollback_is_verified():
+    state, fence = fixture()
+    prepare(state, fence)
+    receipt = state.abort(RID, code="lease_expired")
+    assert receipt.outcome == "unknown"
+    refused("unknown_outcome", lambda: begin(state, fence, rid=OTHER))
+    state.acknowledge_unknown(RID, fence, revision=7, checkpoint_hash=BASE)
+    begin(state, fence, rid=OTHER)
+    state.chunk(OTHER, fence, 0, PAYLOAD)
+    state.prepare(OTHER, fence)
+    receipt = state.abort(OTHER, code="rolled_back", rollback_verified=True)
+    assert receipt.outcome == "rejected" and state.pending is None

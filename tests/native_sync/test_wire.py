@@ -55,6 +55,14 @@ def test_snapshot_object_and_optional_hash_work_without_blender():
     refused("hash_mismatch", lambda: list(MODULE.iter_messages(snapshot, HEAD)))
 
 
+def test_active_scene_alias_and_public_manifest_validator():
+    snapshot = SimpleNamespace(data=b"native", manifest=MANIFEST, active_scene=SCENE)
+    payloads = list(MODULE.iter_messages(snapshot, HEAD))
+    assert payloads[0]["active_scene_uuid"] == SCENE
+    copied = MODULE.validate_manifest(MANIFEST, SCENE)
+    assert copied == MANIFEST and copied is not MANIFEST
+
+
 @pytest.mark.parametrize("value", ["!!!!", "YQ==\n", "YQ=", "Yf==", "é==="])
 def test_noncanonical_or_malformed_base64_refused(value):
     refused("invalid_base64", lambda: MODULE.decode_chunk(value))

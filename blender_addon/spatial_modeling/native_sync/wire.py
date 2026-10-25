@@ -90,6 +90,11 @@ def _manifest(value, active_scene_uuid):
     return out
 
 
+def validate_manifest(value, active_scene_uuid):
+    """Validate/copy UUID→native group/name labels and its explicit active scene."""
+    return _manifest(value, active_scene_uuid)
+
+
 def encode_chunk(data, *, max_bytes=CHUNK_BYTES):
     if type(data) is not bytes or not 0 < len(data) <= max_bytes:
         raise WireError("chunk_limit")
@@ -111,6 +116,10 @@ def decode_chunk(data, *, max_bytes=CHUNK_BYTES):
 
 
 def _field(snapshot, name):
+    if name == "active_scene_uuid":
+        if isinstance(snapshot, Mapping):
+            return snapshot.get(name, snapshot.get("active_scene"))
+        return getattr(snapshot, name, getattr(snapshot, "active_scene", None))
     return snapshot[name] if isinstance(snapshot, Mapping) else getattr(snapshot, name)
 
 
