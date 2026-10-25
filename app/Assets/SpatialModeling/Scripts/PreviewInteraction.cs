@@ -188,8 +188,8 @@ namespace SpatialModeling
             { nextHeartbeat = Time.unscaledTime + .25f; Enqueue(new JObject { ["type"] = "heartbeat" }); }
             RefreshInputIndicator();
             if (feedback != null)
-                feedback.text = "Blender input: " + InputMode + (questControls ? " Â· Quest controls" : " Â· Mouse mode: " + mouseButton)
-                    + " Â· " + (PrimaryHand == XRNode.RightHand ? "Right" : "Left") + " pointer\n" + Notice
+                feedback.text = "Blender input: " + InputMode + (questControls ? " · Quest controls" : " · Mouse mode: " + mouseButton)
+                    + " · " + (PrimaryHand == XRNode.RightHand ? "Right" : "Left") + " pointer\n" + Notice
                     + "\n" + (Drawing != null ? Drawing.StatusText : "Waiting for spatial bridge");
             if (Notice != lastLoggedNotice)
             { lastLoggedNotice = Notice; Debug.Log("P25_INPUT_NOTICE " + Notice); }
@@ -206,7 +206,7 @@ namespace SpatialModeling
             if (numbersShown) RefreshNumbers();
             if (windowsShown) RefreshWindows();
             RefreshControlFeedback();
-            if (shortcutsShown && shortcutFeedback != null) shortcutFeedback.text = "Page " + (shortcutPage + 1) + " / 2 Â· click the intended Blender editor before using these shortcuts\n" + Notice;
+            if (shortcutsShown && shortcutFeedback != null) shortcutFeedback.text = "Page " + (shortcutPage + 1) + " / 2 · click the intended Blender editor before using these shortcuts\n" + Notice;
         }
 
         public void TrackingLost(XRNode hand)
@@ -359,8 +359,8 @@ namespace SpatialModeling
         void ToggleScreenLock()
         {
             ReleaseNative(); screen?.TogglePositionLock();
-            Notice = screen != null && screen.PositionLocked ? "Screen LOCKED Â· front: click Â· side: right-click Â· stick: scroll/zoom Â· hold stick + tilt: pan"
-                : "Screen UNLOCKED Â· side grip moves the screen";
+            Notice = screen != null && screen.PositionLocked ? "Screen LOCKED · front: click · side: right-click · stick: scroll/zoom · hold stick + tilt: pan"
+                : "Screen UNLOCKED · side grip moves the screen";
         }
 
         void RefreshControlFeedback()
@@ -390,7 +390,7 @@ namespace SpatialModeling
                 if (stateful)
                 {
                     string label = b.name == "Lock screen position" ? (selected ? "Screen LOCKED" : "Lock screen position")
-                        : b.name == "Other hand" ? "Pointer: " + (selected ? "Left" : "Right") : b.name + (selected ? " Â· ON" : "");
+                        : b.name == "Other hand" ? "Pointer: " + (selected ? "Left" : "Right") : b.name + (selected ? " · ON" : "");
                     b.GetComponentInChildren<Text>().text = label;
                 }
                 var c = b.colors;
@@ -399,8 +399,8 @@ namespace SpatialModeling
                 c.highlightedColor = c.selectedColor = c.normalColor; b.colors = c;
             }
             if (actionFeedback != null)
-                actionFeedback.text = lastControlAction + "\n" + (screen != null && screen.PositionLocked ? "Screen LOCKED Â· front: click Â· side: right-click Â· stick: scroll/zoom Â· hold stick + tilt: pan"
-                    : "Screen UNLOCKED Â· side grip moves screen; lock it for right-click") + "\n"
+                actionFeedback.text = lastControlAction + "\n" + (screen != null && screen.PositionLocked ? "Screen LOCKED · front: click · side: right-click · stick: scroll/zoom · hold stick + tilt: pan"
+                    : "Screen UNLOCKED · side grip moves screen; lock it for right-click") + "\n"
                     + (Drawing != null && (Drawing.EnabledForInput || spatialRequested) && (string)Drawing.NativeState["mode"] != "OBJECT"
                         ? "Direct VR drawing needs Blender Object Mode; use its top-left mode dropdown" : Notice);
         }
@@ -424,9 +424,9 @@ namespace SpatialModeling
         {
             if (focusButton == null) return;
             string mode = InputMode;
-            focusButton.GetComponentInChildren<Text>().text = mode == "On" ? "Input ON Â· turn off"
-                : mode == "Off" ? "Input OFF Â· enable" : mode == "Blocked" ? "Input blocked Â· retry"
-                : mode == "Releasing" ? "Releasing inputâ€¦" : "Enablingâ€¦ Â· cancel";
+            focusButton.GetComponentInChildren<Text>().text = mode == "On" ? "Input ON · turn off"
+                : mode == "Off" ? "Input OFF · enable" : mode == "Blocked" ? "Input blocked · retry"
+                : mode == "Releasing" ? "Releasing input…" : "Enabling… · cancel";
             focusButton.interactable = !endAfterRelease;
             var colors = focusButton.colors;
             colors.normalColor = mode == "On" ? new Color(.12f, .65f, .28f)
@@ -517,7 +517,7 @@ namespace SpatialModeling
             if (Drawing.NativeModalActive && id != "cancel" && id != "confirm")
             { Notice = "Confirm or cancel the running Blender operation first"; return; }
             if (!QueueChord(shortcut.BuildEvents(), shortcut.RequiresEditorContext)) return;
-            Notice = shortcut.Label + (shortcut.OpensModal ? " Â· continue in Blender; Enter confirms, Escape cancels" : " Â· sent to the chosen native editor");
+            Notice = shortcut.Label + (shortcut.OpensModal ? " · continue in Blender; Enter confirms, Escape cancels" : " · sent to the chosen native editor");
         }
         bool QueueChord(IReadOnlyList<JObject> chord, bool returnToEditor)
         {
@@ -768,8 +768,8 @@ namespace SpatialModeling
                         if (Ready())
                         {
                             windowResuming = false; inputEnabled = true; awaitedWindow = 0;
-                            Notice = inputResync ? "Blender input ready Â· previous gesture discarded; use a new gesture"
-                                : "Blender dialog/window ready Â· old input released";
+                            Notice = inputResync ? "Blender input ready · previous gesture discarded; use a new gesture"
+                                : "Blender dialog/window ready · old input released";
                             inputResync = false;
                         }
                     }
@@ -778,7 +778,7 @@ namespace SpatialModeling
                         // The helper acknowledged exact-window foreground after
                         // verification. A later event still rechecks it natively.
                         if (state != null) state["focused"] = true;
-                        Notice = "Blender focused Â· trigger: mouse Â· stick: scroll Â· grip: move preview";
+                        Notice = "Blender focused · trigger: mouse · stick: scroll · grip: move preview";
                     }
                 }
                 sendingEvent = false;
@@ -805,7 +805,7 @@ namespace SpatialModeling
             AddButton(panel, "Disable input", 1, 0, Suspend);
             AddButton(panel, "Keyboard", 2, 0, () => { if (keyboardShown) keyboardShown = false; else OpenKeyboard(false); });
             AddButton(panel, "Lock screen position", 3, 0, ToggleScreenLock);
-            AddButton(panel, "Controller controls", 4, 0, () => { ReleaseNative(); questControls = true; mouseOptionsShown = false; Notice = "Front: click Â· side: right-click with screen locked Â· stick: scroll/zoom Â· hold stick + tilt: pan"; });
+            AddButton(panel, "Controller controls", 4, 0, () => { ReleaseNative(); questControls = true; mouseOptionsShown = false; Notice = "Front: click · side: right-click with screen locked · stick: scroll/zoom · hold stick + tilt: pan"; });
             AddButton(panel, "Mouse options", 5, 0, () =>
             {
                 mouseOptionsShown = !mouseOptionsShown;
@@ -950,7 +950,7 @@ namespace SpatialModeling
             var values = Drawing.Numeric;
             bool current = values.IsCurrent;
             for (int i = 0; i < numberFields.Count; i++) numberFields[i].GetComponentInChildren<Text>().text = (values.Axis == i ? "> " : "") + "XYZ"[i] + ": " + values.Value(i);
-            if (numberFeedback != null) numberFeedback.text = values.Mode + " Â· " + values.Unit + "\n" + (current ? "Local values Â· Apply explicitly changes Blender" : "Draft needs reload") + "\n" + values.Notice;
+            if (numberFeedback != null) numberFeedback.text = values.Mode + " · " + values.Unit + "\n" + (current ? "Local values · Apply explicitly changes Blender" : "Draft needs reload") + "\n" + values.Notice;
         }
         void ObjectButton(string label, string action, int col, int row) =>
             AddButton(modelToolsPanel, label, col, row, () => Drawing.ApplyObjectAction(action));
@@ -961,7 +961,7 @@ namespace SpatialModeling
             if (moveStepButton != null) moveStepButton.GetComponentInChildren<Text>().text = "Move: " + (tools.MoveStepMeters * 1000).ToString("0") + " mm";
             if (turnStepButton != null) turnStepButton.GetComponentInChildren<Text>().text = "Turn: " + tools.TurnDegrees + " deg";
             if (primitiveSizeButton != null) primitiveSizeButton.GetComponentInChildren<Text>().text = "Size: " + (tools.PrimitiveSizeMeters * 1000).ToString("0") + " mm";
-            if (objectTargetText != null) objectTargetText.text = "Model target: " + tools.TargetLabel + "\nBlender world XYZ Â· primitives at world origin Â· Undo restores edits";
+            if (objectTargetText != null) objectTargetText.text = "Model target: " + tools.TargetLabel + "\nBlender world XYZ · primitives at world origin · Undo restores edits";
         }
 
         void NextWindow()
@@ -1016,12 +1016,12 @@ namespace SpatialModeling
                 var button = AddButton(windowPanel, "Window " + hwnd, 0, 1 + i % 6, () => ChooseWindow(hwnd), 1780, 1);
                 var label = button.GetComponentInChildren<Text>(); label.supportRichText = false;
                 string title = (string)item["title"] ?? "Untitled Blender window";
-                if (title.Length > 110) title = title.Substring(0, 110) + "â€¦";
-                label.text = ((string)item["kind"] ?? "blender") + " Â· " + title;
+                if (title.Length > 110) title = title.Substring(0, 110) + "…";
+                label.text = ((string)item["kind"] ?? "blender") + " · " + title;
                 windowButtons.Add(button);
             }
             windowFeedback.text = count == 0 ? "Waiting for a verified Blender window list. Focus Blender or refresh the helper selection."
-                : "Page " + (windowPage + 1) + " / " + pages + " Â· owned dialogs follow automatically; choose a window to recover or switch";
+                : "Page " + (windowPage + 1) + " / " + pages + " · owned dialogs follow automatically; choose a window to recover or switch";
         }
         void ReturnToBlender()
         {
