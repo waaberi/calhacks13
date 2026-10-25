@@ -28,7 +28,8 @@ public static class DirectAxisConstraintChecks
     static void Constraint(DirectLiveController live,int axis,string why)
     {
         var actual=(bool[])Get(live,"gizmoConstraint");
-        Check(actual!=null&&actual.Length==3&&Enumerable.Range(0,3).All(i=>actual[i]==(i==axis)),why);
+        Check(actual!=null&&actual.Length==3&&Enumerable.Range(0,3).All(i=>actual[i]==(i==axis)),
+            why+" expected_axis="+axis+" captured="+(actual==null?"body":string.Concat(actual.Select(value=>value?"1":"0"))));
     }
     static void Locked(JObject update,Vector3 expected,string why)
     {
@@ -50,15 +51,22 @@ public static class DirectAxisConstraintChecks
         var transverse=Vector3.Cross(direction,side).normalized;
         var origin=push?frame.Start(axis)-direction*.35f+side*.0005f+transverse*.00023f:frame.Tip(axis)+direction*.8f+side*.001f+transverse*.00037f;
         var first=new Ray(origin,push?direction:-direction);
+        string context="end-on axis="+axis+" push="+push;
         bool hitPresent=DirectTranslationHandles.TryPick(frame,first,4,out var hit);
-        Check(Mathf.Abs(Vector3.Dot(first.direction,direction))>.999f&&hitPresent&&hit.Axis==axis,"strict real cone/shaft is pickable near parallel for native XYZ from either direction");
-        Check(!DirectTranslationHandles.TryPick(frame,first,hit.Distance-.001f,out _),"a nearer foreign UI fence still blocks end-on geometry");
+        Check(Mathf.Abs(Vector3.Dot(first.direction,direction))>.999f&&hitPresent&&hit.Axis==axis,context+": strict real cone/shaft is pickable near parallel from either direction");
+        Check(!DirectTranslationHandles.TryPick(frame,first,hit.Distance-.001f,out _),context+": a nearer foreign UI fence still blocks actual geometry");
         var miss=new Ray(frame.Tip(axis)+direction*.8f+(side+transverse)*.06f,-direction);
-        Check(!DirectTranslationHandles.TryPick(frame,miss,4,out _),"nearparallel body area outside actual rendered cone/shaft is not a broad axis catchall");
-        Check(Route(f,first,true)&&f.Direct.Gesturing,"actual end-on controller press captures arrow");Constraint(live,axis,"end-on XYZ constraint is frozen on the real hit");
-        Route(f,first,false);
-        Check(f.Sent.Count==0&&!f.Direct.Gesturing,"tap on an end-on tool handle sends no geometry or lease and cannot toggle object selection");
-        Check(Route(f,first,true),"deliberate new press reacquires same end-on axis");
+        Check(!DirectTranslationHandles.TryPick(frame,miss,4,out _),context+": nearparallel body outside actual cone/shaft is not a broad catchall");
+        // Workspace supplies the nearest actual collider, not just its range
+        // limit. The own-mesh exception deliberately requires that proof so a
+        // nearer independent surface cannot be mistaken for the selected mesh.
+        var mesh=f.Host.PickObject(first,out float meshDepth);
+        float nearest=mesh!=null?Mathf.Min(4,meshDepth):4;
+        Debug.Log("DIRECT_AXIS_CASE "+context+" picker_axis="+hit.Axis+" picker_depth="+hit.Distance+" mesh="+(mesh==null?"none":mesh.ObjectId)+" mesh_depth="+meshDepth+" input_fence="+nearest);
+        Check(Route(f,first,true,nearest)&&f.Direct.Gesturing,context+": actual controller press captures arrow");Constraint(live,axis,context+": constraint is frozen on the real hit");
+        Route(f,first,false,nearest);
+        Check(f.Sent.Count==0&&!f.Direct.Gesturing,context+": handle tap sends no geometry/lease and cannot toggle selection");
+        Check(Route(f,first,true,nearest),context+": deliberate new press reacquires same axis");
         var moved=new Ray(origin+direction*.12f+side*.8f+transverse*.55f,first.direction);
         Route(f,moved,true);Grant(f);
         var begin=f.Sent.Last(message=>(string)message["type"]=="live.edit.begin");var flags=(JArray)begin["payload"]["operation"]["settings"]["constraint_axis"];
