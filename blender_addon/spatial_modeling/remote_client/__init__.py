@@ -17,6 +17,20 @@ requests = RequestTracker()
 _link = _mirror = None
 _draw_handle = None
 _can_edit = False
+_version = ""  # this add-on's version, as sent in hello
+_refused = ""  # why the host refused this connection; shown until the next connect
+
+# The host refuses a hello with these codes and closes the connection (transport.py
+# stops reconnecting). Text is built here from the code: host text isn't shown.
+REFUSED = {
+    "unsupported_version": "Connection refused: the host runs a different Spatial Modeling "
+                           "version than this add-on ({version}). Install the same version on "
+                           "both computers, then connect again",
+    "wrong_document": "Connection refused: the host has another document open. "
+                      "Connect again to get it",
+    "permission_denied": "Connection refused: the host doesn't admit this Client here. "
+                         "Check the host address, port and token",
+}
 
 
 def controlled_edit_enabled():
@@ -35,6 +49,8 @@ def edit_blocked():
     """None when a Client edit may be sent now, otherwise the reason to show."""
     if _link is None:
         return "Not connected to the host"
+    if _refused:
+        return _refused
     return requests.blocked(state.current, _can_edit, _link.healthy)
 
 
@@ -72,10 +88,11 @@ def participants():
 
 
 def connect(address, token, version, name="Blender viewer", port=8767, tls=True):
-    global _link, _mirror, state, requests
+    global _link, _mirror, state, requests, _version
     from .mirror import Mirror
     from .transport import ReadOnlyLink
     disconnect()
+    _version = version
     _mirror = Mirror()
     state = SceneState()
     requests = RequestTracker()
@@ -91,7 +108,7 @@ def connect(address, token, version, name="Blender viewer", port=8767, tls=True)
 
 
 def poll():
-    global _can_edit
+    global _can_edit, _refused
     import bpy
     if _link is None:
         return None
@@ -99,7 +116,8 @@ def poll():
         requests.disconnected()
         _can_edit = False
         presence.clear()
-        state.stale("Connection stopped — reconnect explicitly; last scene is stale")
+        # Keep the host's refusal visible: it says what to fix.
+        state.stale(_refused or "Connection stopped — reconnect explicitly; last scene is stale")
     try:
         for _ in range(32):
             try:
@@ -135,9 +153,13 @@ def poll():
                 requests.disconnected()
                 _can_edit = False
                 presence.clear()
-                state.stale("Host scene unavailable — last scene is stale; awaiting a fresh snapshot"
-                            if payload == "failed" else
-                            f"Connection refused ({payload}) — reconnect explicitly")
+                if payload in REFUSED:
+                    _refused = REFUSED[payload].format(version=_version)
+                    state.stale(_refused)
+                else:
+                    state.stale("Host scene unavailable — last scene is stale; awaiting a fresh "
+                                "snapshot" if payload == "failed" else
+                                f"Connection refused ({payload}) — reconnect explicitly")
             else:
                 if kind == "disconnected":
                     requests.disconnected()
@@ -162,13 +184,14 @@ def poll():
 
 
 def disconnect():
-    global _link, _mirror, _can_edit
+    global _link, _mirror, _can_edit, _refused
     from .. import remote_test_ui
     remote_test_ui.cancel_before_send()
     import bpy
     if _link is not None:
         _link.stop()
     _link = None
+    _refused = ""
     requests.disconnected()
     _can_edit = False
     presence.clear()
