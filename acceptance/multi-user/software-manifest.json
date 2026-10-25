@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "at": "2026-10-25T12:23:26.109823+00:00",
-  "state": "FULL_NATIVE_REQUIREMENT_NOT_MET",
-  "source": "78c4ab19ebba7eb7926be56641fcb7f63ab1aceb",
+  "at": "2026-10-25T13:37:28.479559+00:00",
+  "state": "SIMPLE_BLENDER_CLIENT_SOFTWARE_VERIFIED_READY_FOR_HUMAN_REVIEW",
+  "source": "66d818bb530f4298638220035c9539a6b98a6fd8",
   "published_feature_merge": "4119970b806dfd625038fb3af98bdc8f46a93938",
   "published_features": [
     "165/167 asynchronous SpacetimeDB decision mirror",
@@ -22,7 +22,7 @@
   "complete_package": null,
   "checks": {
     "python": {
-      "passed": 1553,
+      "passed": 1567,
       "skipped": 40
     },
     "real_windows_store": {
@@ -66,9 +66,57 @@
       "scope": "native Edit Mode vertices/modifier/nodes via file exchange; not automatic synchronization"
     },
     "linux_vm_gui": {
-      "native_window_and_edit_mode_initialized": true,
-      "visual_usability_verified": false,
-      "reason": "Both screenshots all black, including explicit redraw; no fully usable GUI claim"
+      "full_blender_ui_visually_verified": true,
+      "native_window_transform_initialized": true,
+      "capture": "actual X11 root screenshot; earlier Blender screenshot black artifacts retained",
+      "physical_mouse_keyboard_tested": false
+    },
+    "simple_native_memory_direct": {
+      "passed": true,
+      "scope": "12 real GUI Blender groups"
+    },
+    "simple_native_private_store_direct": {
+      "passed": true,
+      "scope": "12 real GUI Blender groups"
+    },
+    "simple_native_private_store_bridge_relay": {
+      "passed": true,
+      "scope": "12 real GUI Blender groups"
+    },
+    "simple_native_simulated_history_keys": {
+      "passed": true,
+      "scope": "12 groups with actual own-window CtrlZ/ShiftZ dispatch after private preference seed"
+    },
+    "packaged_extension_install": {
+      "passed": true,
+      "scope": "actual bl_ext.user_default.spatial_modeling install; 45 installed file hashes; registered native/history hooks"
+    },
+    "simple_cross_os_native": {
+      "passed": true,
+      "routes": {
+        "direct": {
+          "passed": true,
+          "groups": 12,
+          "native_keyboard_g_r_s": true,
+          "ctrl_z_shift_z": true,
+          "source_hashes_recorded": true
+        },
+        "relay": {
+          "passed": true,
+          "groups": 12,
+          "native_keyboard_g_r_s": true,
+          "ctrl_z_shift_z": true,
+          "source_hashes_recorded": true
+        }
+      },
+      "source_equivalence": "all45guestproductionfiles equal pinnedZIPafterCRLFnormalization"
+    },
+    "existing_v6_host_compatibility": {
+      "passed": true,
+      "groups": 12,
+      "host_source": "2e1f699275c868300b48b9afdc791569e986c49f",
+      "native_g_r_s_and_history_keymaps": true,
+      "all44_host_package_hashes_unchanged": true
     }
   },
   "evidence_sha256": {
@@ -81,21 +129,41 @@
     "vm-test/RESULT.json": "0c66333f4f1d933a6af02476283d05bcc8909fdcfe97271db829cfcf7584b931",
     "full-native-spike-i/RESULT.json": "dc380e36e2d3ebbbab704ba24166aa67881015f77c752200282c61f66e1321c9",
     "full-native-vm-roundtrip/LINUX_RESULT.json": "0a3de30ca6563dc1578ffcbb970d663c58f65dece9ecddf78edc8132e9162132",
-    "full-native-vm-roundtrip/WINDOWS_RESULT.json": "c1178023d96f7ade9bd9633f9207f753c01156138416552aea350109655cfc71"
+    "full-native-vm-roundtrip/WINDOWS_RESULT.json": "c1178023d96f7ade9bd9633f9207f753c01156138416552aea350109655cfc71",
+    "simple-native-store-keys/direct/client-result.json": "642e762ed88ce1625b10cbd3eb037a980816977f70da6a8fc5572f016abe1e8f",
+    "simple-native-store-keys/relay/client-result.json": "642e762ed88ce1625b10cbd3eb037a980816977f70da6a8fc5572f016abe1e8f",
+    "simple-native-v6-host-b/client-result.json": "642e762ed88ce1625b10cbd3eb037a980816977f70da6a8fc5572f016abe1e8f",
+    "simple-native-v6-host-b/host-source.json": "ecce03f7be88652489a5dbe92e68025258473d24f72ec0985902cdc997182388",
+    "vm-simple-native-b/direct-client-result.json": "a93c5616626eec44e75963b90acfccd86bb1e07e8b33795c03a7984474cad5eb",
+    "vm-simple-native-b/relay-client-result.json": "a93c5616626eec44e75963b90acfccd86bb1e07e8b33795c03a7984474cad5eb",
+    "vm-simple-gui/RESULT.json": "765c94a4034aa7fd87f36949cf4bd182922131fcefc846e53cc49699dc38d989"
   },
   "remaining": [
-    "Full native shared editing required but NOT implemented by published Client; Host/Client contract/ownership coordination and implementation remain",
-    "Automatic original-data synchronization, asset fidelity, conflicting edits, stale/disconnect recovery and native history remain unverified",
-    "Root-owned current-integration Unity/HTTP/render gates including MultiUserIntegrationChecks remain pending",
-    "Complete matching package validation remains pending",
-    "Two physical PCs/headset/separate home network acceptance remain pending"
+    "Human connects second physical PC using existing Host LAN/edit preferences and installed Client ZIP; settings restart connection and remain coordinated with sole runtime owner",
+    "Physical two-PC, mouse/keyboard, different-home-network and headset acceptance remain unclaimed",
+    "Optional new VR collaboration UI/package integration deferred and unnecessary for current simple addon scope",
+    "Arbitrary full native data sharing remains outside current human-narrowed scope; existing-addon research recorded"
   ],
   "limits": [
-    "Client role retains published controlled remote tool/Apply/Cancel scope; not arbitrary free native co-editing",
-    "Maincloud not contacted or claimed by these integration tests; bridge transport verified against private local Windows server",
-    "Published store receipt-copy limitations remain; native Commands receipts and unknown-outcome semantics preserved",
-    "Existing current-room fit and direct-tool/Gemini microphone usability are separately unaccepted; no old accepted-menu retests or FPS work"
+    "Client shares object transforms/deletion and Host history, using evaluated triangle/basic-colour mirror; arbitrary native data editing does not synchronize",
+    "Maincloud not contacted; relay tests use private Windows SpacetimeDB",
+    "Standalone addon package does not replace running Host/helper/Player; current runtime owner controls later coordinated upgrade",
+    "Current room fit and physical Guide/tool/voice acceptance belong to their existing owners; no FPS work"
   ],
   "stable_root_source_composed": "48053457372632ebc1946d66a0ffc526a5a9197e",
-  "full_native_shared_editing_implemented": false
+  "full_native_shared_editing_implemented": false,
+  "production_source": "b74225dc8754fd7d19f853b366ead70c007bb07d",
+  "active_human_scope": "native object move/rotate/scale/delete and host UndoRedo",
+  "full_native_general_sharing": "DEFERRED_BY_HUMAN_SIMPLE_SCOPE",
+  "simple_package": {
+    "path": "C:/Users/talia/Documents/Codex/calhacks13-p0/artifacts/simple-collaboration-v1-20261025T131333Z",
+    "zip": "spatial_modeling-simple-collaboration.zip",
+    "sha256": "0239251393a1a94142313deb79828db7adfa25b8da90811cc28b160f6187ec00",
+    "installed_extension_verified": true,
+    "full_blender_gui_verified": true,
+    "client_only_with_existing_v6_host": true
+  },
+  "new_host_upgrade_required": false,
+  "new_vr_player_required": false,
+  "optional_vr_ui_gate": "DEFERRED_NOT_REQUIRED_FOR_BASIC_BLENDER_SHARING"
 }
