@@ -9,6 +9,7 @@ public static class GlassBuild
         GlassEventRaycastChecks.Run();
         HandheldMenuChecks.Run();
         BlenderViewAppearanceChecks.Run();
+        GuideInteractionChecks.Run();
         LiveModelEditSessionChecks.Run();
         P25Build.Windows();
         CombinedGlassChecks.Run();
