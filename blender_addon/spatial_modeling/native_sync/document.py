@@ -15,6 +15,8 @@ from pathlib import Path
 
 import bpy
 
+from .fingerprint import FingerprintError, document_fingerprint
+
 UUID_PROPERTY = "spatial_native_uuid"
 _KEEPALIVE = "spatial_native_checkpoint_fake_user"
 MANIFEST_GROUPS = frozenset({
@@ -48,6 +50,11 @@ class Snapshot:
     sha256: str
     manifest: dict
     active_scene_uuid: str
+    document_hash: str = ""
+
+    def __post_init__(self):
+        if not self.document_hash:
+            object.__setattr__(self, "document_hash", self.sha256)
 
 
 def _ids():
@@ -220,7 +227,14 @@ class NativeDocument:
                 raise NativeDocumentError("Native checkpoint copy did not preserve the current file")
             data = path.read_bytes()
             _validate_file(path)
-            return Snapshot(data, hashlib.sha256(data).hexdigest(), manifest, active_scene_uuid)
+            model_path = path.with_name(path.stem + ".document.blend")
+            bpy.data.libraries.write(str(model_path), set(_pointer_map().values()),
+                                     path_remap="NONE", fake_user=False, compress=False)
+            try:
+                model_hash = document_fingerprint(model_path.read_bytes())
+            except FingerprintError as error:
+                raise NativeDocumentError("Native model fingerprint could not be verified: " + str(error)) from error
+            return Snapshot(data, hashlib.sha256(data).hexdigest(), manifest, active_scene_uuid, model_hash)
         finally:
             for item in keepalive:
                 if _alive(item):
