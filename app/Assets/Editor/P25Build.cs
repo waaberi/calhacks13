@@ -50,7 +50,8 @@ public static class P25Build
     static Dictionary<string, bool> PreserveFrozenP2XrFeatures()
     {
         string path = Environment.GetEnvironmentVariable("CALHACKS_P225_XR_BASELINE");
-        if (string.IsNullOrEmpty(path)) return null;
+        if (string.IsNullOrEmpty(path))
+            throw new Exception("P225: set CALHACKS_P225_XR_BASELINE to the frozen accepted P2 feature inventory before building this integration");
         if (!Path.IsPathRooted(path) || !File.Exists(path))
             throw new Exception("P225: frozen P2 XR baseline must be an existing absolute JSON file");
         var expected = JObject.Parse(File.ReadAllText(path)).ToObject<Dictionary<string, bool>>();

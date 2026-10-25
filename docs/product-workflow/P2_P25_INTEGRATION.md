@@ -48,6 +48,11 @@ isolation remains last. Actual dialog HTTP, release HTTP and existing HTTP check
 run in separate Unity Editor processes. Supply final P2's exact private recorded
 room and independent native-AppSpace fixtures using `CALHACKS_ROOM_REPLAY` and
 `CALHACKS_ROOM_SPACE_REPLAY`.
+The integration build also requires `CALHACKS_P225_XR_BASELINE`, an external JSON
+inventory extracted from final P2's 34 Standalone OpenXR feature flags. It restores
+SDK-generated proximity/foveation enablement and verifies exact flags again after
+building; a missing inventory refuses the build. The accepted settings remain
+unchanged in Git.
 
 The first integration run used a different room capture and failed the wall-normal
 assertion. That failure is retained. Final-P2's exact paired recorded fixtures
