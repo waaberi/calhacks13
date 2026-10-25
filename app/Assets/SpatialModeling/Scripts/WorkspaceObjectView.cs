@@ -6,6 +6,8 @@ namespace SpatialModeling
     public sealed class WorkspaceObjectView : MonoBehaviour
     {
         public string ObjectId { get; set; }
+        public string NativeParentId { get; set; }
+        public long Generation { get; set; }
         public Vector3 NativePosition { get; private set; }
         public Quaternion NativeRotation { get; private set; } = Quaternion.identity;
         public Vector3 PositionOffset { get; private set; }

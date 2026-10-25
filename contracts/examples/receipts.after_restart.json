@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "type": "receipts",
+  "id": "c3a8e5f1b2d04976a1e0f4b3c2d1e0f9",
+  "re": "5d0c1f0ad2a44f3c9a4e2b7c1e9f8a61",
+  "payload": {
+    "receipts": [],
+    "missing": [],
+    "unknown": ["7e1b9c04a3f54d2e8b6a0c5d4f3e2a19"]
+  }
+}

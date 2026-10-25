@@ -14,7 +14,26 @@ namespace SpatialModeling.VoiceCore
     /// and <see cref="VoiceCommand.Factor"/> for wire values.</summary>
     public enum SpokenUnit { Millimeters, Centimeters, Meters, Degrees, Percent, Times }
 
-    /// <summary>An object the user can refer to: visible in VR and eligible for editing.</summary>
+    /// <summary>
+    /// The amounts voice accepts. Tighter than the contract's bounds (<see cref="HostCommand"/>), so a misheard
+    /// "nine hundred" can't send a huge edit; anything outside them is <see cref="Prompt.OutOfRange"/>.
+    /// </summary>
+    public static class VoiceLimits
+    {
+        /// <summary>Moves are nonzero and up to this distance.</summary>
+        public const double MaxMoveMeters = 10;
+
+        /// <summary>Turns are nonzero and up to one full turn.</summary>
+        public const double MaxTurnDegrees = 360;
+
+        public const double MinScaleFactor = 0.01;
+        public const double MaxScaleFactor = 100;
+    }
+
+    /// <summary>
+    /// An object the user can refer to: one the VR app shows (in the scene with <c>visible</c> true and a
+    /// <c>mesh</c>). <see cref="Id"/> is the contract's object <c>id</c>.
+    /// </summary>
     public sealed class SceneObject
     {
         public SceneObject(string id, string name)

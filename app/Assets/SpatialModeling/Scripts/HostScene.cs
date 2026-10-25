@@ -20,26 +20,39 @@ namespace SpatialModeling
 
         [Header("Display only. Never changes the native model.")]
         [SerializeField] Vector3 rootPosition = new Vector3(0f, 1f, 1.5f);
-        [SerializeField] float displayScale = 5f;
         [Tooltip("Initial placement is relative to the tracked headset, never Blender coordinates.")]
         [SerializeField] float viewingDistance = 1f;
         [SerializeField] float belowEyeHeight = 0.35f;
         [Tooltip("URP Lit material shared by every object; each object's color is set per renderer.")]
         [SerializeField] Material objectMaterial;
 
-        enum Status { Connecting, Connected, NotResponding, Disconnected, VersionMismatch }
+        enum Status { Connecting, Connected, NotResponding, Disconnected, VersionMismatch, ConfigurationError }
 
         const long NotRespondingMs = 6000;
         static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
 
         readonly Dictionary<string, GameObject> objects = new Dictionary<string, GameObject>();
-        readonly Dictionary<string, Pose> arrangements = new Dictionary<string, Pose>();
-        string arrangementDocument = "";
-        bool preserveArrangementOnSnapshot;
         public Transform Placement => root;
+        public int ObjectCount => objects.Count;
+        public bool IsCurrent => status == Status.Connected;
+        public string ConnectionText => IsCurrent
+            ? $"Connected to {documentName} — revision {revision}"
+            : $"{status} — last scene is stale; native edits disabled";
+        public string DocumentId => documentId;
+        public string OpenEpoch => openEpoch;
+        public long Revision => revision;
+        public TablePlacement Table => table;
+        public IEnumerable<WorkspaceObjectView> ObjectViews
+        {
+            get { foreach (var go in objects.Values) if (go != null) yield return go.GetComponent<WorkspaceObjectView>(); }
+        }
         public bool DisplayPlacementReady => placed && !recenterRequested;
         public Pose PlacementHeadPose { get; private set; }
         readonly StartupFacingGate startupFacing = new StartupFacingGate();
+        string documentId = "", openEpoch = "";
+        TablePlacement table;
+        internal HostLink Link => link;
+        internal event System.Action<HostEvent> HostEventReceived;
         HostLink link;
         Transform root;
         MaterialPropertyBlock block;
@@ -47,6 +60,7 @@ namespace SpatialModeling
         GUIStyle style;
         InputAction recenterAction;
         bool placed, recenterRequested;
+        string placementReadiness = "";
         GameObject statusPanel;
         Text headsetStatus;
 
@@ -61,13 +75,39 @@ namespace SpatialModeling
         {
             root = new GameObject("HostSceneRoot").transform;
             root.position = rootPosition;
-            root.localScale = Vector3.one * displayScale;
+            // The host has already converted Blender lengths to metres. A
+            // Unity world unit is one metre; no serialized demo enlargement.
+            root.localScale = Vector3.one;
             root.gameObject.SetActive(false); // Wait for an actual tracked pose, not the startup origin.
             block = new MaterialPropertyBlock();
+            table = GetComponent<TablePlacement>() ?? gameObject.AddComponent<TablePlacement>();
+            table.Initialize(root, ObjectMaterial);
+        }
+
+        internal static bool TryResolvePort(string configured, int fallback, out int resolved)
+        {
+            resolved = fallback;
+            if (configured != null && configured.Length > 0 &&
+                !int.TryParse(configured, System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture, out resolved)) return false;
+            return resolved >= 1 && resolved <= 65535;
         }
 
         void OnEnable()
         {
+            OVRManager.HMDUnmounted += InvalidateUnconfirmedPlacement;
+            OVRManager.VrFocusLost += InvalidateUnconfirmedPlacement;
+            // Explicit isolated-test/deployment configuration must never fall
+            // back to a different native session after a typo. No LAN endpoint.
+            if (!TryResolvePort(System.Environment.GetEnvironmentVariable("CALHACKS_HOST_PORT"), port, out int connectionPort)
+                || !System.Net.IPAddress.TryParse(host, out var address) || !System.Net.IPAddress.IsLoopback(address))
+            {
+                hostError = "Invalid local host configuration: CALHACKS_HOST_PORT must be 1–65535 and host must be loopback";
+                status = Status.ConfigurationError;
+                Debug.LogError(hostError);
+                return;
+            }
+            Debug.Log($"HostScene loopback endpoint {host}:{connectionPort}");
             recenterAction = new InputAction("Recenter view", InputActionType.Button);
             recenterAction.AddBinding("<XRController>{RightHand}/secondaryButton"); // B on Quest
             recenterAction.AddBinding("<XRController>{LeftHand}/secondaryButton");  // Y on Quest
@@ -75,7 +115,7 @@ namespace SpatialModeling
             recenterAction.performed += _ => RequestRecenter();
             recenterAction.Enable();
             var name = string.IsNullOrWhiteSpace(userName) ? "VR user" : userName.Trim();
-            link = new HostLink(host, port, new JObject
+            link = new HostLink(host, connectionPort, new JObject
             {
                 ["role"] = "vr",
                 ["name"] = name,
@@ -85,6 +125,8 @@ namespace SpatialModeling
 
         void OnDisable()
         {
+            OVRManager.HMDUnmounted -= InvalidateUnconfirmedPlacement;
+            OVRManager.VrFocusLost -= InvalidateUnconfirmedPlacement;
             recenterAction?.Dispose();
             recenterAction = null;
             link?.Stop();   // its thread exits and posts nothing more, so a re-enable can't run two
@@ -92,12 +134,19 @@ namespace SpatialModeling
             connected = false;
         }
 
+        static void ReleaseObject(UnityEngine.Object value)
+        {
+            if (value == null) return;
+            if (Application.isPlaying) Destroy(value);
+            else DestroyImmediate(value);
+        }
+
         void OnDestroy()
         {
             ClearScene();
-            if (root != null) Destroy(root.gameObject);
-            if (statusPanel != null) Destroy(statusPanel);
-            if (fallbackMaterial != null) Destroy(fallbackMaterial);
+            if (root != null) ReleaseObject(root.gameObject);
+            if (statusPanel != null) ReleaseObject(statusPanel);
+            if (fallbackMaterial != null) ReleaseObject(fallbackMaterial);
         }
 
         void Update()
@@ -111,11 +160,47 @@ namespace SpatialModeling
             else status = opened || haveScene ? Status.Disconnected : Status.Connecting;
         }
 
-        public void RequestRecenter()
+        public void RequestRecenter() => RequestPlacement(true);
+
+        public void RequestTrackedPlacement() => RequestPlacement(false);
+
+        void RequestPlacement(bool explicitUserRequest)
         {
             FindFirstObjectByType<WorkspaceInteraction>()?.CancelGrabs();
-            recenterRequested = true;
+            placed = false;
+            // XR-origin callbacks are automatic, including at initial session
+            // startup. Only an actual user B/Y/button request may skip settling.
+            recenterRequested = explicitUserRequest;
+            startupFacing.Ready(Vector3.forward, false, Time.realtimeSinceStartupAsDouble);
+            table?.ConfirmTrackingReset();
             FindFirstObjectByType<BlenderScreen>()?.RequestRecenter();
+        }
+
+        static readonly bool DesktopPlayer = System.Array.IndexOf(System.Environment.GetCommandLineArgs(), "--desktop") >= 0;
+
+        // Tracked does not mean worn: Link can retain a valid pose on a desk.
+        // Missing userPresence must not silently certify that the user is ready.
+        public static bool HeadsetAllowsPlacement(bool xrActive, bool tracked,
+            bool presenceKnown, bool worn, bool vrFocused)
+            => xrActive && tracked && presenceKnown && worn && vrFocused;
+
+        public void InvalidateUnconfirmedPlacement()
+        {
+            startupFacing.Ready(Vector3.forward, false, Time.realtimeSinceStartupAsDouble);
+            // A confirmed table is world-anchored. Ordinary removal/focus loss
+            // must not silently recenter an arrangement the user already placed.
+            if (table == null || table.IsPlaced) return;
+            placed = false;
+            recenterRequested = false;
+            table.InvalidateSeed();
+            FindFirstObjectByType<BlenderScreen>()?.RequestRecenter();
+        }
+
+        void PlacementReadiness(string state)
+        {
+            if (placementReadiness == state) return;
+            placementReadiness = state;
+            Debug.Log("WORKSPACE_PLACEMENT_READINESS " + state);
         }
 
         void LateUpdate()
@@ -125,33 +210,51 @@ namespace SpatialModeling
             UpdateHeadsetStatus(camera);
             // Place once after head tracking starts. Looking/walking and scene reconnects
             // must not move an already placed model. B/Y explicitly requests a new placement.
-            if (placed && !recenterRequested) return;
             var headPose = new Pose(camera.transform.position, camera.transform.rotation);
             bool xr = XRSettings.enabled || XRSettings.isDeviceActive;
             if (xr)
             {
                 var head = InputDevices.GetDeviceAtXRNode(XRNode.Head);
-                bool ready = head.TryGetFeatureValue(UnityEngine.XR.CommonUsages.isTracked, out var tracked) && tracked;
-                if (head.TryGetFeatureValue(UnityEngine.XR.CommonUsages.userPresence, out var present) && !present) ready = false;
-                if (!ready) { startupFacing.Ready(Vector3.forward, false, Time.realtimeSinceStartupAsDouble); return; }
+                bool tracked = head.TryGetFeatureValue(UnityEngine.XR.CommonUsages.isTracked, out var tracking) && tracking;
+                bool inputPresenceKnown = head.TryGetFeatureValue(UnityEngine.XR.CommonUsages.userPresence, out var inputPresent);
+                bool metaReady = OVRPlugin.initialized;
+                bool metaPresent = metaReady && OVRPlugin.userPresent;
+                bool focused = metaReady && OVRPlugin.hasVrFocus;
+                bool worn = (inputPresenceKnown || metaReady) && (!inputPresenceKnown || inputPresent)
+                    && (!metaReady || metaPresent);
+                bool ready = HeadsetAllowsPlacement(true, tracked, inputPresenceKnown || metaReady, worn, focused);
+                PlacementReadiness($"xr=True tracked={tracked} presence_known={inputPresenceKnown || metaReady} worn={worn} vr_focused={focused}");
+                if (!ready) { InvalidateUnconfirmedPlacement(); return; }
                 // Read the tracked head directly: the camera can still contain its
                 // startup transform in the first frame that tracking becomes valid.
                 if (!head.TryGetFeatureValue(UnityEngine.XR.CommonUsages.devicePosition, out Vector3 headPosition)
-                    || !head.TryGetFeatureValue(UnityEngine.XR.CommonUsages.deviceRotation, out Quaternion headRotation)) return;
+                    || !head.TryGetFeatureValue(UnityEngine.XR.CommonUsages.deviceRotation, out Quaternion headRotation))
+                { InvalidateUnconfirmedPlacement(); return; }
                 headPose = WorkspaceInteraction.ToWorldPose(camera.transform.parent, new Pose(headPosition, headRotation));
-                if (!recenterRequested && !startupFacing.Ready(headPose.rotation * Vector3.forward, true,
-                        Time.realtimeSinceStartupAsDouble)) return;
             }
-            else if (!Application.isFocused) return;
+            // A desktop Player (no headset: headless checks, laptop demos) opts in with --desktop and
+            // places once its window has focus, like the editor. VR Players keep waiting for the headset.
+            else if (!(Application.isEditor || DesktopPlayer) || !Application.isFocused)
+            {
+                // A Windows VR Player must never commit the desktop/default
+                // camera while its XR loader or Link session is still starting.
+                PlacementReadiness("xr=False waiting_for_headset=True");
+                InvalidateUnconfirmedPlacement();
+                return;
+            }
+            if (placed && !recenterRequested && (table == null || !table.NeedsSeed)) return;
+            if (xr && !recenterRequested && !startupFacing.Ready(headPose.rotation * Vector3.forward, true,
+                    Time.realtimeSinceStartupAsDouble)) return;
 
             if (!TryGetDisplayPose(headPose.position, headPose.rotation * Vector3.forward,
                     viewingDistance, belowEyeHeight, out var position, out var rotation)) return;
-            root.SetPositionAndRotation(position, rotation);
-            root.gameObject.SetActive(true);
+            // Share the accepted settled head pose with the live screen. Table
+            // preview is visible first; model visibility requires explicit Place.
+            table.SeedFromHead(headPose.position, headPose.rotation * Vector3.forward);
             placed = true;
             recenterRequested = false;
             PlacementHeadPose = headPose;
-            Debug.Log($"HostScene placement: head={headPose.position:F3} forward={headPose.rotation * Vector3.forward:F3} root={position:F3}; display only shared_tracked_head=True");
+            Debug.Log($"HostScene placement: head={headPose.position:F3} forward={headPose.rotation * Vector3.forward:F3} table={root.position:F3} yaw={root.eulerAngles.y:F2}; shared_tracked_head=True readiness=[{placementReadiness}]");
         }
 
         // Wait until the wearer is looking ahead steadily, rather than capturing
@@ -218,6 +321,9 @@ namespace SpatialModeling
                 case Status.NotResponding:
                     headsetStatus.text = "Blender is not responding\nScene is stale — edits disabled";
                     break;
+                case Status.ConfigurationError:
+                    headsetStatus.text = hostError + "\nConnection not attempted; edits disabled";
+                    break;
                 case Status.VersionMismatch:
                     headsetStatus.text = "App and Blender add-on versions do not match\nEdits disabled";
                     break;
@@ -259,6 +365,7 @@ namespace SpatialModeling
             {
                 case Status.Connected: text = $"Connected to {documentName} - revision {revision}"; break;
                 case Status.NotResponding: text = "Blender is not responding. Edits are disabled."; break;
+                case Status.ConfigurationError: text = hostError + "\nConnection not attempted."; break;
                 case Status.VersionMismatch: text = $"This app and the Blender add-on don't match.\n{hostError}"; break;
                 case Status.Disconnected: text = $"Disconnected. Reconnecting...{stale}\n{reason}"; break;
                 default: text = $"Connecting to Blender at {host}:{port} ...{stale}\n{(link != null && link.SocketOpen ? "" : reason)}"; break;
@@ -269,18 +376,18 @@ namespace SpatialModeling
             if (GUI.Button(new Rect(20, 230, 300, 48), "Recenter view (B / Y / R)")) RequestRecenter();
         }
 
-        void Handle(HostEvent e)
+        internal void Handle(HostEvent e)
         {
             switch (e.Kind)
             {
                 case HostEventKind.Opened: opened = true; socketError = ""; break;
-                case HostEventKind.Closed: connected = false; socketError = e.Text; break;
+                case HostEventKind.Closed:
+                    connected = false; socketError = e.Text;
+                    Debug.Log("P2_SCENE_STALE connection_closed; last scene is not current");
+                    break;
                 case HostEventKind.Welcome:
                     hostError = hostErrorCode = "";
                     documentName = e.Text;
-                    preserveArrangementOnSnapshot = e.DocumentId.Length > 0 && e.DocumentId == arrangementDocument;
-                    if (!preserveArrangementOnSnapshot) arrangements.Clear();
-                    arrangementDocument = e.DocumentId;
                     break;
                 case HostEventKind.Error:
                     hostErrorCode = e.Code;
@@ -288,30 +395,70 @@ namespace SpatialModeling
                     Debug.LogWarning("Host error: " + hostError);
                     break;
                 case HostEventKind.Warning: Debug.LogWarning("HostScene: " + e.Text); break;
+                case HostEventKind.InvalidScene:
+                    connected = false;
+                    status = Status.NotResponding;
+                    link?.Reconnect();
+                    break;
                 case HostEventKind.Scene:
-                    Debug.Log($"HostScene received {(e.Snapshot ? "snapshot" : "update")} revision={e.Revision} objects={e.Objects.Count} removed={e.Removed.Count}");
+                    if (!e.Snapshot && (!connected || e.DocumentId != documentId || e.OpenEpoch != openEpoch ||
+                        !e.Revision.HasValue || e.Revision < revision || e.Revision > revision + 1))
+                    {
+                        Debug.LogWarning("HostScene: ignored an update without a matching fresh snapshot");
+                        connected = false;
+                        status = Status.NotResponding;
+                        link?.Reconnect();
+                        break;
+                    }
+                    bool missingMesh = false;
+                    foreach (var record in e.Objects)
+                        if (!record.HasMesh && (e.Snapshot || !objects.ContainsKey(record.Id))) missingMesh = true;
+                    if (missingMesh)
+                    {
+                        Debug.LogWarning("HostScene: incomplete object mesh; requesting a fresh snapshot");
+                        connected = false;
+                        status = Status.NotResponding;
+                        link?.Reconnect();
+                        break;
+                    }
                     if (e.Snapshot)
                     {
-                        if (preserveArrangementOnSnapshot) foreach (var pair in objects)
+                        // Reuse objects/arrangements on reconnect to the same native
+                        // document. Never reuse offsets in a new document epoch.
+                        if (documentId != e.DocumentId || openEpoch != e.OpenEpoch)
                         {
-                            if (pair.Value == null) continue;
-                            var view = pair.Value.GetComponent<WorkspaceObjectView>();
-                            if (view != null && view.ObjectId != null && arrangementDocument.Length > 0)
-                                arrangements[pair.Key] = new Pose(view.PositionOffset, view.RotationOffset);
+                            FindFirstObjectByType<WorkspaceInteraction>()?.CancelGrabs();
+                            ClearScene();
+                            table.RequirePlacement();
+                            table.RestoreActualSize();
+                            InvalidateUnconfirmedPlacement();
                         }
-                        ClearScene();
-                        preserveArrangementOnSnapshot = true;
+                        documentId = e.DocumentId;
+                        openEpoch = e.OpenEpoch;
+                        var incoming = new HashSet<string>();
+                        foreach (var record in e.Objects) incoming.Add(record.Id);
+                        foreach (var id in new List<string>(objects.Keys))
+                            if (!incoming.Contains(id)) Remove(id);
                     }
                     if (e.Revision.HasValue) revision = e.Revision.Value;
-                    foreach (var id in e.Removed) { arrangements.Remove(id); Remove(id); }
+                    foreach (var id in e.Removed) Remove(id);
+                    bool applied = true;
                     foreach (var r in e.Objects)
                     {
                         try { ApplyObject(r); }
-                        catch (System.Exception ex) { Debug.LogWarning($"HostScene: couldn't draw {r.Id}: {ex.Message}"); }
+                        catch (System.Exception ex) { applied = false; Debug.LogWarning($"HostScene: couldn't draw {r.Id}: {ex.Message}"); }
                     }
-                    if (e.Snapshot) connected = haveScene = true;
+                    if (!applied)
+                    {
+                        connected = false;
+                        status = Status.NotResponding;
+                        link?.Reconnect();
+                    }
+                    else if (e.Snapshot) { connected = haveScene = true; status = Status.Connected; }
+                    Debug.Log($"P2_SCENE_APPLIED snapshot={e.Snapshot} revision={revision} objects={objects.Count} removed={e.Removed.Count} current={connected}");
                     break;
             }
+            HostEventReceived?.Invoke(e);
         }
 
         // ---------- drawing ----------
@@ -339,18 +486,18 @@ namespace SpatialModeling
                 go.transform.SetParent(root, false);
                 go.GetComponent<MeshRenderer>().sharedMaterial = ObjectMaterial;
                 objects[r.Id] = go;
-                var view = go.GetComponent<WorkspaceObjectView>();
-                view.ObjectId = r.Id;
-                if (arrangements.TryGetValue(r.Id, out var placement))
-                    view.RestoreArrangement(placement.position, placement.rotation);
             }
             go.name = r.Name;
+            var view = go.GetComponent<WorkspaceObjectView>();
+            view.ObjectId = r.Id;
+            view.NativeParentId = r.ParentId;
+            view.Generation = r.Generation;
             go.SetActive(r.Visible);
 
             // Wire transforms are world space, so objects stay flat under the display root.
             if (r.HasTransform)
             {
-                go.GetComponent<WorkspaceObjectView>().SetNativePose(r.Position, r.Rotation, r.Scale);
+                view.SetNativePose(r.Position, r.Rotation, r.Scale);
                 Debug.Log($"HostScene object {r.Name}: local={r.Position:F4} world={go.transform.position:F4} root={root.position:F3}");
             }
 
@@ -359,7 +506,7 @@ namespace SpatialModeling
             if (r.HasMesh)
             {
                 go.GetComponent<MeshCollider>().sharedMesh = null;
-                if (mf.sharedMesh != null) Destroy(mf.sharedMesh);
+                if (mf.sharedMesh != null) ReleaseObject(mf.sharedMesh);
                 mf.sharedMesh = r.Mesh != null ? BuildMesh(r.Mesh, r.Name) : null;
                 go.GetComponent<MeshCollider>().sharedMesh = mf.sharedMesh;
                 mr.enabled = r.Mesh != null;
@@ -396,8 +543,8 @@ namespace SpatialModeling
 
         public void ResetObjectArrangement()
         {
-            arrangements.Clear();
             foreach (var go in objects.Values) if (go != null) go.GetComponent<WorkspaceObjectView>()?.ResetArrangement();
+            table.ResetView();
             RequestRecenter();
         }
 
@@ -419,8 +566,10 @@ namespace SpatialModeling
             objects.Remove(id);
             if (go == null) return; // Unity may destroy child objects before OnDestroy during exit.
             var mf = go.GetComponent<MeshFilter>();
-            if (mf != null && mf.sharedMesh != null) Destroy(mf.sharedMesh);
-            Destroy(go);
+            var collider = go.GetComponent<MeshCollider>();
+            if (collider != null) collider.sharedMesh = null;
+            if (mf != null && mf.sharedMesh != null) ReleaseObject(mf.sharedMesh);
+            ReleaseObject(go);
         }
 
         void ClearScene()

@@ -73,7 +73,17 @@ public static class WorkspaceChecks
             Check(!startup.Ready(Vector3.forward, true, 2.6), "A changing startup pose must not pass early");
             Check(startup.Ready(Vector3.forward, true, 2.8), "Steady forward facing must allow initial placement");
             Check(!startup.Ready(Vector3.forward, false, 3), "Tracking loss must reset initial-facing readiness");
+            Check(!HostScene.HeadsetAllowsPlacement(false,true,true,true,true), "XR loader startup must not use a desktop/default pose");
+            Check(!HostScene.HeadsetAllowsPlacement(true,true,false,true,true), "Missing presence is unknown, not permission to place");
+            Check(!HostScene.HeadsetAllowsPlacement(true,true,true,false,true), "Tracked headset on a desk must not place the workspace");
+            Check(!HostScene.HeadsetAllowsPlacement(true,true,true,true,false), "VR focus loss must not place while a runtime overlay is active");
+            Check(!HostScene.HeadsetAllowsPlacement(true,false,true,true,true), "Worn/focused without tracking must not place");
+            Check(HostScene.HeadsetAllowsPlacement(true,true,true,true,true), "Worn focused tracked headset with known presence can settle");
+            Check(!startup.Ready(Vector3.right,true,3.1), "Remount in another heading starts a new facing interval");
+            Check(!startup.Ready(Vector3.right,true,3.4), "Old pre-removal settling time cannot accept a new heading early");
+            Check(startup.Ready(Vector3.right,true,3.7), "Fresh remounted heading settles independently");
             Debug.Log("STARTUP_FACING_CHECK PASS downward/turning/untracked rejected; settled tracked facing accepted");
+            Debug.Log("HEADSET_PLACEMENT_READINESS_CHECK PASS cold-XR/missing-presence/unworn/unfocused/untracked rejected; remount resets settling");
             CheckControllerPoseFormats();
             var trackedSample = new PoseState(true, InputTrackingState.Position | InputTrackingState.Rotation,
                 local.position, local.rotation, Vector3.zero, Vector3.zero);

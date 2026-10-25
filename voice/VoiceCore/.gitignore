@@ -1,0 +1,3 @@
+# Vosk's native libraries and their import settings, from voice/fetch-vosk.sh
+/Plugins/
+/Plugins.meta

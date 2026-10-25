@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "lease.granted.schema.json",
   "title": "lease.granted",
-  "description": "Host to client, answers lease.acquire. targets may include more than was asked for, for example other objects that share the mesh.",
+  "description": "Host to client, answers lease.acquire, after the session.update that lists the new lease. targets lists the targets asked for, then their linked data: other objects that share their data, their children, and objects whose modifiers or constraints use them.",
   "$ref": "envelope.schema.json",
   "required": ["re"],
   "properties": {

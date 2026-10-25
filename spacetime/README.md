@@ -112,6 +112,12 @@ PowerShell, as Talia (not as administrator). Pin version **2.13.0** of everythin
 - Call `renew(actor_id)` whenever a client is heard from, `leave(actor_id)` when its connection closes, and `expire()` now and then. For a command sent without a lease, check `conflict(...)`. Record a receipt as `pending` before applying and as final afterwards, so a crash between the two leaves a record.
 - Every call blocks Blender's main thread for its round trip. If a server stalls, a call waits up to the 1 s timeout and then raises `StoreUnavailable`. Treat that like `internal_error`: the outcome is unknown.
 
+**Where the host is now (#75).** Leases and presence go through `SessionStore`: `session.Session(store=...)` takes one, and `host.start()` passes none, so the host uses `MemoryStore(lease_ttl_ms=None)`. There, leases end only on release or when the owner's connection closes; the server closes a connection it hasn't heard from for 6 s, timed on its reader thread. SpacetimeDB isn't wired in yet, on purpose, until criterion 1 passes on Windows (#16). Before switching, settle these:
+
+- **Renewal while Blender is busy.** `renew()` would run on the main thread, which stops during a render. A render over 6 s would let every lease lapse in SpacetimeDB although the clients kept pinging, and `renew()` doesn't revive a lapsed lease. Renew from the reader thread's last-heard times when the main thread resumes, before anything else, or give the rows a longer TTL and let the host end them on leave.
+- **Cost per command.** Step 6 of every command reads the leases: two SQL queries, about 2.5 ms each time, on the main thread.
+- **Receipts** still live in `commands.py`, not in the store.
+
 ## Security notes
 
 - Only the identity that called `claim_host` first can write. That is the first caller, so the host must claim right after the first publish. Check this before a demo (step 5). Anonymous HTTP callers get a fresh identity each time and are rejected.
