@@ -40,6 +40,14 @@ try:
     report["checks"].append(f"all {len(manifest['files'])} installed production files match pinned SHA256 manifest")
     for name in ("client_move", "client_rotate", "client_scale", "client_delete", "client_undo", "client_redo"):
         assert getattr(bpy.ops.spatial_modeling, name).get_rna_type().identifier
+    if "native_sync/document.py" in manifest["files"]:
+        for name in ("native_take_turn", "native_finish_turn", "native_save_copy", "native_reload"):
+            assert getattr(bpy.ops.spatial_modeling, name).get_rna_type().identifier
+        native = importlib.import_module(MODULE + ".native_sync.document")
+        assert native.NativeDocument().can_capture()
+        assert callable(native.document_fingerprint)
+        assert importlib.import_module(MODULE + ".session").APP["version"] == "0.2.0"
+        report["checks"].append("native 0.2.0 operators, document engine and fingerprint resolve in extension namespace")
     rc = addon.remote_client
     assert callable(rc._live_tick) and callable(rc.live.begin_drag) and callable(rc.live.finish_drag)
     report["checks"].append("registered native Client edit/history operators and modal lifecycle hooks resolve")
