@@ -1,5 +1,10 @@
-"""Opt-in controlled remote move; the ordinary P2 mirror stays read-only."""
+"""Opt-in controlled remote move; the ordinary P2 mirror stays read-only.
 
+A test tool: its panel and operators are registered only when Blender starts with
+SPATIAL_MODELING_TEST_TOOLS=1 in the environment (run_p3_client.py sets it).
+"""
+
+import os
 import queue
 import threading
 
@@ -14,6 +19,8 @@ _blocked_request = None
 _enum_cache = []
 _last_outcome = None
 _job_context = None
+_registered = False
+TEST_TOOLS_ENV = "SPATIAL_MODELING_TEST_TOOLS"
 
 
 def cancel_before_send():
@@ -207,15 +214,22 @@ CLASSES = (SPATIAL_OT_remote_move_test, SPATIAL_OT_remote_cancel_test,
 
 
 def register():
+    global _registered
+    if os.environ.get(TEST_TOOLS_ENV) != "1":
+        return  # never in normal use: the fixed +10 mm move is only for the P3 checks
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     wm = bpy.types.WindowManager
     wm.spatial_remote_test_enabled = bpy.props.BoolProperty(default=False, options={"SKIP_SAVE"})
     wm.spatial_remote_test_target = bpy.props.EnumProperty(items=_targets, options={"SKIP_SAVE"})
     wm.spatial_remote_test_status = bpy.props.StringProperty(options={"SKIP_SAVE"})
+    _registered = True
 
 
 def unregister():
+    global _registered
+    if not _registered:
+        return
     # An already sent command must finish and keep its unknown-state latch. Refuse
     # unloading while it runs instead of discarding its result and allowing replay.
     if _job is not None:
@@ -228,3 +242,4 @@ def unregister():
             delattr(bpy.types.WindowManager, name)
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)
+    _registered = False

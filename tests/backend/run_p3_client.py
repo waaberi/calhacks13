@@ -40,6 +40,7 @@ def main():
                     time.sleep(.1)
                 env["BLENDER_USER_RESOURCES"] = str(folder / "client-resources")
                 env["TEMP"] = env["TMP"] = str(folder / "client-temp")
+                env["SPATIAL_MODELING_TEST_TOOLS"] = "1"  # registers remote_test_ui's test move
                 client = subprocess.run([args.blender, "--background", "--factory-startup",
                     "--python-exit-code", "1", "--python", str(scripts / "p3_client_operator_check.py"),
                     "--", str(folder)], env=env, capture_output=True, text=True, timeout=120,
