@@ -9,7 +9,7 @@ mirror keeps them until the host answers (a refusal puts the host's version back
 import copy
 import queue
 
-from .live_edit import LiveEdits
+from .live_edit import LiveEdits, differing
 from .presence import Presence
 from .requests import EditBlocked, RequestTracker
 from .state import SceneState
@@ -194,31 +194,42 @@ def _live_tick():
     if editable != _mirror.editable:
         _mirror.set_editable(editable)
     live.settle(requests.requests, (state.document or {}).get("revision"))
-    reapply = bool(live.revert)
-    for oid in live.revert:
-        _mirror.revert(oid)
+    undo = set(live.revert)
     live.revert.clear()
     if not editable:
         # Can't send now (disconnected, host refused edits, stale scene): local
         # changes can't reach the host, so show the host's version again.
-        for oid in live.held | _mirror.deleted():
-            _mirror.revert(oid)
-            reapply = True
+        undo |= live.held | _mirror.deleted()
+        if state.document is not None and not _transforming():
+            undo |= differing(state.objects, _mirror.local_transforms())
         live.held.clear()
-    elif not _transforming():
-        chosen = live.next_request(state.objects, _mirror.local_transforms(), _mirror.deleted())
-        _mirror.held = set(live.held)
-        if chosen is not None and edit_blocked() is None:
-            oid, op, label, args = chosen
-            try:
-                live.sent[send_edit(op, label, args, oid)] = oid
-                live.error = ""
-            except EditBlocked as e:
-                live.error = str(e)
-                live.held.discard(oid)
-                _mirror.revert(oid)
-                reapply = True
-    if reapply and state.document is not None:
+    _put_back(undo)
+    if not editable or _transforming():
+        return
+    chosen = live.next_request(state.objects, _mirror.local_transforms(), _mirror.deleted())
+    _put_back(set(live.revert))  # local values the host can't accept
+    live.revert.clear()
+    _mirror.held = set(live.held)
+    if chosen is None or edit_blocked() is not None or chosen[0] not in live.held:
+        return
+    oid, op, label, args = chosen
+    try:
+        live.sent[send_edit(op, label, args, oid)] = oid
+        live.error = ""
+    except EditBlocked as e:
+        live.error = str(e)
+        live.held.discard(oid)
+        _put_back({oid})
+
+
+def _put_back(object_ids):
+    """Show the host's version of these objects again, now."""
+    if not object_ids:
+        return
+    for oid in object_ids:
+        live.held.discard(oid)
+        _mirror.revert(oid)
+    if state.document is not None:
         _mirror.held = set(live.held)
         _mirror.apply(state)
 

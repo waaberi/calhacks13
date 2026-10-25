@@ -66,6 +66,21 @@ def changes(record, local, name):
     return out
 
 
+def differing(records, locals_):
+    """Object IDs whose local transform isn't the host's (any change, valid or not)."""
+    out = set()
+    for oid, transform in locals_.items():
+        record = records.get(oid)
+        if record is None:
+            continue
+        try:
+            if changes(record["transform"], transform, ""):
+                out.add(oid)
+        except ValueError:
+            out.add(oid)
+    return out
+
+
 class LiveEdits:
     """Which mirror objects hold a local change, and the request sent for each."""
 
