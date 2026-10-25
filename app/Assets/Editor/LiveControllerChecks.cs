@@ -225,11 +225,17 @@ public static class LiveControllerChecks
             return;
         }
         Check(f.Direct.Gesturing&&f.Sent.Count(m=>(string)m["type"]=="lease.acquire")==2,"still-held original gesture proceeds only after the new selected target's native state arrives");
+        var feedback=(LiveScaleFeedback)Get(live,"scaleFeedback");
+        if(nativeTool=="builtin.scale")Check(feedback.Visible&&!feedback.Acknowledged,"first selection-first Scale gesture shows its pending multiplier after fresh admission");
         GrantAndBegin(f);begin=f.Sent.Last(m=>(string)m["type"]=="live.edit.begin");
         Check((string)begin["payload"]["operation"]["tool"]==tool&&(bool?)begin["payload"]["operation"]["selection_only"]!=true,"fresh selected target starts the requested actual native tool");
         var update=f.Sent.Last(m=>(string)m["type"]=="live.edit.update");
         Check(((JObject)update["payload"]["parameters"]).Properties().Any()&&blocked==0,"new target tool parameters pass native selection-first admission without a false old-target lock refusal");
-        State(f,"updated",1,(string)update["id"]);f.Route(false,.005f);commit=f.Sent.Last(m=>(string)m["type"]=="live.edit.commit");State(f,"committed",1,(string)commit["id"]);
+        State(f,"updated",1,(string)update["id"]);
+        if(nativeTool=="builtin.scale")Check(feedback.Visible&&feedback.Acknowledged
+            &&Vector3.Distance(feedback.Factors,DirectModelEditMath.ToUnity((JArray)update["payload"]["parameters"]["scale"]))<.00001f,
+            "first selection-first Scale multiplier changes from pending to exact Blender-acknowledged factors");
+        f.Route(false,.005f);commit=f.Sent.Last(m=>(string)m["type"]=="live.edit.commit");State(f,"committed",1,(string)commit["id"]);
         Check(f.Sent.Count(m=>(string)m["type"]=="live.edit.begin"&&(bool?)m["payload"]["operation"]["selection_only"]!=true)==1&&!f.Direct.LiveBusy,"one held gesture produces exactly one actual geometry transaction after selection");
     }
     static void ToolGestures()

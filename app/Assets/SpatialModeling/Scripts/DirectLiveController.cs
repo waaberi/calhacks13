@@ -136,6 +136,8 @@ namespace SpatialModeling
                     Selection.ObserveNative(Model,drawing.Session.Objects,true);
                     frozenModel=(JObject)Model.DeepClone();context=ToolContext(frozenModel);operation=null;terminalObserved=false;
                     views.Clear();maps.Clear();targets=null;
+                    if((bool?)frozenModel["available"]==true&&ToolOf(frozenModel).EndsWith(".scale",StringComparison.Ordinal)
+                        &&SupportedOperation(ToolOf(frozenModel)))scaleFeedback.Begin();
                     StartMovement();
                 }
                 else if(Time.unscaledTime>objectStateDeadline)
