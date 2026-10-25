@@ -524,3 +524,28 @@ def test_own_capture_guard_is_released_after_local_file_error(tmp_path, monkeypa
     assert not client.watcher.dirty
     client.mark_dirty(1)
     assert client.watcher.dirty  # actual later native events are still observed
+
+
+def test_repeated_native_notifications_cannot_starve_a_settled_export(tmp_path):
+    client, doc, sent, now = setup(tmp_path)
+    edit_turn(client)
+    doc.data = b"actual latest native material value"
+    now[0] = 1
+    client.mark_dirty()
+    for value in (1.1, 1.2, 1.3, 1.4):
+        now[0] = value
+        client.mark_dirty()  # recurring draw/depsgraph notification, not a new modal
+    client.tick()
+    assert client.watcher.pending is not None and sent[-1]["type"] == "native.begin"
+    first = client.watcher.pending
+    doc.data = b"new native edit while the checkpoint is in flight"
+    client.mark_dirty()
+    now[0] = 1.5
+    client.mark_dirty()
+    client.receive("native.receipt", {"request_id": first.request_id, "outcome": "applied",
+                                      "revision": 1, "checkpoint_hash": digest(b"host accepted first")})
+    now[0] = 2
+    client.tick()
+    assert client.watcher.pending is not None
+    assert client.watcher.pending.payload.data == doc.data
+    assert client.watcher.pending.request_id != first.request_id

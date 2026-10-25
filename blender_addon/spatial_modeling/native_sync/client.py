@@ -139,6 +139,13 @@ class NativeClient:
     def mark_dirty(self, now=None):
         if ((self.has_native_document or self.initial_local_work)
                 and not self.applying and not self._capturing):
+            # Blender may issue repeated depsgraph/draw notifications for one
+            # settled edit. A dirty generation already guarantees a fresh full
+            # export; resetting its quiet clock indefinitely would starve it.
+            # The first signal AFTER an export still creates a newer generation
+            # even while its request is pending, so later work survives the ACK.
+            if self.watcher.dirty:
+                return
             self.watcher.mark_dirty(self.clock() if now is None else now)
 
     def take_edit_turn(self):
