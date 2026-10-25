@@ -103,13 +103,27 @@ public static class DirectAxisConstraintChecks
         f.View.SetNativePose(baseline+DirectModelEditMath.ToUnity((JArray)update["payload"]["parameters"]["translation_m"]),f.View.NativeRotation,f.View.NativeScale);
         f.View.Generation=4;f.Drawing.Session.Objects[f.View.ObjectId]["generation"]=4;
         State(f,"updated",1,(string)update["id"]);
-        f.Drawing.NativeState["model_edit"]["settings"]["pivot_m"]=new JArray(7,8,9);Call(f.Direct,"Update");
+        // A real controller tick also refreshes the live lease. A keepalive
+        // repeats the acknowledged sequence; it is not the next user preview.
+        // Exercise that in-flight request rather than accidentally ACKing it as
+        // the subsequent controller movement and skipping the actual update.
+        f.Drawing.NativeState["model_edit"]["settings"]["pivot_m"]=new JArray(7,8,9);
+        Set(live,"nextKeepAlive",float.NegativeInfinity);Call(f.Direct,"Update");
+        var keepalive=f.Sent.Last(m=>(string)m["type"]=="live.edit.update");
+        Check((string)keepalive["id"]!=(string)update["id"]&&(long)keepalive["payload"]["sequence"]==1
+            &&JToken.DeepEquals(keepalive["payload"]["parameters"],update["payload"]["parameters"]),
+            "native keepalive repeats the acknowledged preview without advancing its sequence");
         live.TryVisualAim(another,out _);Constraint(live,axis,"own ACK/pivot telemetry preserves captured axis");
         Check(ReferenceEquals(captured,Get(live,"translationGestureFrame"))&&(int)Get(live,"translationAxis")==capturedAxis,"ACK and hover cannot rebase held arrow");
         var second=new Ray(origin,first.GetPoint(depth)+axisDirection*.45f-side*.8f+transverse*1.1f-origin);
         Set(live,"nextUpdate",float.NegativeInfinity);Route(f,second,true);
+        Check((string)f.Sent.Last(m=>(string)m["type"]=="live.edit.update")["id"]==(string)keepalive["id"],
+            "controller preview waits behind the in-flight native keepalive");
+        State(f,"updated",1,(string)keepalive["id"]);
         var next=f.Sent.Last(m=>(string)m["type"]=="live.edit.update");Locked(next,nativeAxis,"later controller movement remains locked after native ACK");
-        Check((string)next["id"]!=(string)update["id"],"second held input sends a distinct cumulative native preview");
+        Check((string)next["id"]!=(string)keepalive["id"]&&(long)next["payload"]["sequence"]==2
+            &&!JToken.DeepEquals(next["payload"]["parameters"],update["payload"]["parameters"]),
+            "keepalive ACK releases the distinct cumulative controller preview at the next sequence");
         Check(f.View.AcceptLiveEcho(new JObject { ["id"]=live.Session.EditSessionId,["actor_id"]="actor",["sequence"]=2,["phase"]="updated" },"actor"),"second own preview echo is admitted");
         f.View.SetNativePose(baseline+DirectModelEditMath.ToUnity((JArray)next["payload"]["parameters"]["translation_m"]),f.View.NativeRotation,f.View.NativeScale);
         f.View.Generation=5;f.Drawing.Session.Objects[f.View.ObjectId]["generation"]=5;State(f,"updated",2,(string)next["id"]);
