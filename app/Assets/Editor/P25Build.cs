@@ -44,6 +44,7 @@ public static class P25Build
         // not initialize buffers before the existing controller-pose gates.
         // An artifact without this success and the final P25 marker is rejected.
         P25Checks.RunKeyboardIsolation();
+        VoiceSelectionChecks.Run();
         Debug.Log("P25_BUILD_RESULT Succeeded errors=0 cumulative_P1_P2=True runtime_acceptance=False");
     }
 

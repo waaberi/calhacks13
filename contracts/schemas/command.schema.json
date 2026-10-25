@@ -22,7 +22,11 @@
         {
           "if": { "properties": { "op": { "enum": ["object.add", "history.undo", "history.redo", "document.save", "sketch.create"] } } },
           "then": { "not": { "required": ["target"] } },
-          "else": { "required": ["target"] }
+          "else": {
+            "if": { "properties": { "op": { "const": "voice.run" } } },
+            "then": true,
+            "else": { "required": ["target"] }
+          }
         },
         {
           "if": { "properties": { "op": { "enum": ["object.delete", "history.undo", "history.redo", "document.save"] } } },
@@ -37,7 +41,8 @@
         { "if": { "properties": { "op": { "const": "sketch.add_rectangle" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/sketch_rectangle" } } } },
         { "if": { "properties": { "op": { "const": "sketch.add_circle" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/sketch_circle" } } } },
         { "if": { "properties": { "op": { "const": "sketch.constrain" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/sketch_constrain" } } } },
-        { "if": { "properties": { "op": { "const": "sketch.set_dimension" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/sketch_set_dimension" } } } }
+        { "if": { "properties": { "op": { "const": "sketch.set_dimension" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/sketch_set_dimension" } } } },
+        { "if": { "properties": { "op": { "const": "voice.run" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/voice_run" } } } }
       ],
       "unevaluatedProperties": false
     }
@@ -58,8 +63,19 @@
         "sketch.add_rectangle",
         "sketch.add_circle",
         "sketch.constrain",
-        "sketch.set_dimension"
+        "sketch.set_dimension",
+        "voice.run"
       ]
+    },
+    "voice_run": {
+      "description": "Run a candidate of voice.candidates: the resolution and the choice (1 to 3). Name the target exactly when the candidate needs_target.",
+      "type": "object",
+      "required": ["resolution", "choice"],
+      "properties": {
+        "resolution": { "$ref": "envelope.schema.json#/$defs/uuid" },
+        "choice": { "type": "integer", "minimum": 1, "maximum": 3 }
+      },
+      "additionalProperties": false
     },
     "target": {
       "description": "The object or sketch to change, with the generation the client last saw.",

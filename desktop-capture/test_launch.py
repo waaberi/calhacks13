@@ -39,6 +39,30 @@ class LauncherTests(unittest.TestCase):
                     main()
                 spawn.assert_not_called()
 
+    @unittest.skipUnless(os.name == "nt", "Windows launcher")
+    def test_diagnose_runs_without_a_player(self):
+        import io
+        import json
+        from contextlib import redirect_stdout
+
+        output = io.StringIO()
+        with patch("sys.argv", ["launch.py", "--diagnose"]), \
+             patch("launch.ping_host", return_value=False), \
+             patch("launch.capture_status", return_value=None), \
+             patch("capture_helper.Windows") as windows, redirect_stdout(output):
+            windows.return_value.windows.return_value = []
+            main()
+        report = json.loads(output.getvalue())
+        self.assertIs(report["player_exists"], False)
+        self.assertEqual(report["blender_windows"], [])
+
+    @unittest.skipUnless(os.name == "nt", "Windows launcher")
+    def test_launch_without_diagnose_still_needs_a_player(self):
+        with patch("sys.argv", ["launch.py"]), patch("launch.subprocess.Popen") as spawn:
+            with self.assertRaises(SystemExit):
+                main()
+            spawn.assert_not_called()
+
     @unittest.skipUnless(os.name == "nt", "Windows process snapshot")
     def test_process_snapshot_includes_this_windowless_interpreter(self):
         import sys

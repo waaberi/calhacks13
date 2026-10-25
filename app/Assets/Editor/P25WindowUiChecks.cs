@@ -86,21 +86,21 @@ public static class P25WindowUiChecks
         string Label() => button.GetComponentInChildren<Text>().text;
         void Refresh() => Invoke(f.Preview, "RefreshInputIndicator");
         Refresh();
-        Check(Label() == "Input ON Â· turn off" && button.colors.normalColor.g > button.colors.normalColor.r,
+        Check(Label() == "Input ON · turn off" && button.colors.normalColor.g > button.colors.normalColor.r,
             "actual toggle is green and ON only after complete admission");
         f.State["focused"] = false; Refresh();
-        Check(Label() == "Enablingâ€¦ Â· cancel", "requested input cannot look ON without desktop focus");
+        Check(Label() == "Enabling… · cancel", "requested input cannot look ON without desktop focus");
         f.State["focused"] = true; Property(f.Screen, "DisplayedCaptureGeometry", "stale-geometry"); Refresh();
-        Check(Label() == "Enablingâ€¦ Â· cancel", "focused input cannot look ON with a mismatched displayed frame");
+        Check(Label() == "Enabling… · cancel", "focused input cannot look ON with a mismatched displayed frame");
         f.Frame(f.State); Set(f.Preview, "inputEnabled", false); Set(f.Preview, "focusRequested", true); Refresh();
-        Check(Label() == "Enablingâ€¦ Â· cancel", "permission request is visibly pending");
+        Check(Label() == "Enabling… · cancel", "permission request is visibly pending");
         Set(f.Preview, "focusRequested", false); Set(f.Preview, "lastInputFailure", "test denied"); Refresh();
-        Check(Label() == "Input blocked Â· retry" && button.colors.normalColor.r > button.colors.normalColor.g,
+        Check(Label() == "Input blocked · retry" && button.colors.normalColor.r > button.colors.normalColor.g,
             "blocked activation remains visibly distinct from OFF and ON");
         Set(f.Preview, "lastInputFailure", ""); Refresh();
-        Check(Label() == "Input OFF Â· enable", "idle mode shows OFF");
+        Check(Label() == "Input OFF · enable", "idle mode shows OFF");
         Set(f.Preview, "inputEnabled", true); f.Click("Focus Blender");
-        Check(Label() == "Releasing inputâ€¦" && !button.interactable && (bool)Get(f.Preview, "endAfterRelease")
+        Check(Label() == "Releasing input…" && !button.interactable && (bool)Get(f.Preview, "endAfterRelease")
             && f.Sent.Count == 0, "clicking ON toggles off while retaining the native lease through release acknowledgement");
     }
 

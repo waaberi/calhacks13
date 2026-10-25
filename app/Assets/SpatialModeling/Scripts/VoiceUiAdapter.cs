@@ -1,0 +1,605 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.IO;
+using Newtonsoft.Json.Linq;
+using UnityEngine;
+using UnityEngine.InputSystem;
+using SpatialModeling.VoiceCore;
+using SpatialModeling.VoiceCore.Vosk;
+using SpatialModeling.VoiceCore.Whisper;
+
+namespace SpatialModeling
+{
+    // Connects VoiceCore to HostScene: mic -> recognizer -> VoiceSession -> command -> host, plus prompts and feedback.
+    // Voice off (no model/mic) never blocks controller or menu editing.
+    [DefaultExecutionOrder(200)]
+    public partial class VoiceUiAdapter : MonoBehaviour
+    {
+        public HostScene host;
+        [Tooltip("Microphone to use, matched by name (case-insensitive, part of the name is enough). Empty: the default " +
+                 "device. The command line -voiceMic NAME overrides it. A name that matches nothing turns voice off.")]
+        public string microphoneName = "";
+        [Tooltip("Whisper (the approved default, #159): whisper-server for every utterance, Vosk if it can't start. " +
+                 "FastPath: Vosk first, Whisper when Vosk isn't sure. Vosk: Vosk only.")]
+        public RecognizerKind recognizer = RecognizerKind.Whisper;
+        // Voice text (status line, feedback, the question panel) is drawn on top of the scene over a dark backing, so it
+        // stays readable over white or complex geometry and inside a big object. Call FitBacking after changing the text.
+        public static void SetupText(TextMesh tm, GameObject go)
+        {
+            Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            if (font == null) font = Font.CreateDynamicFontFromOSFont("Arial", 32);
+            tm.font = font;
+            var mr = go.GetComponent<MeshRenderer>();
+            if (mr == null) mr = go.AddComponent<MeshRenderer>();
+            mr.sharedMaterial = OverlayTextMaterial(font);
+
+            var back = new GameObject(BackingName);
+            back.transform.SetParent(go.transform, false);
+            back.AddComponent<MeshFilter>().sharedMesh = BackingMesh();
+            var br = back.AddComponent<MeshRenderer>();
+            br.sharedMaterial = overlayBacking;
+            br.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            back.SetActive(false);
+        }
+
+        const string BackingName = "VoiceTextBacking";
+        static Material overlayText, overlayBacking;
+        static Mesh backingMesh;
+
+        // A copy of the font's material (GUI/Text Shader) that ignores depth and draws after the scene's transparents,
+        // and a dark translucent backing drawn just before it. The font's own material stays as it was.
+        static Material OverlayTextMaterial(Font font)
+        {
+            if (overlayText != null) return overlayText;
+            Material source = font != null ? font.material : null;
+            overlayText = source != null ? new Material(source) : new Material(Shader.Find("GUI/Text Shader"));
+            overlayText.SetInt("unity_GUIZTestMode", (int)UnityEngine.Rendering.CompareFunction.Always);
+            overlayText.renderQueue = 4001;
+            if (font != null)
+                Font.textureRebuilt += f => { if (f == font && overlayText != null) overlayText.mainTexture = f.material.mainTexture; };
+            overlayBacking = new Material(overlayText) { mainTexture = Texture2D.whiteTexture, color = new Color(0.04f, 0.05f, 0.08f, 0.82f) };
+            overlayBacking.renderQueue = 4000;
+            return overlayText;
+        }
+
+        static Mesh BackingMesh()
+        {
+            if (backingMesh != null) return backingMesh;
+            backingMesh = new Mesh { name = BackingName };
+            backingMesh.SetVertices(new[] { new Vector3(-0.5f, -0.5f, 0), new Vector3(0.5f, -0.5f, 0), new Vector3(0.5f, 0.5f, 0), new Vector3(-0.5f, 0.5f, 0) });
+            backingMesh.SetColors(new[] { Color.white, Color.white, Color.white, Color.white });
+            backingMesh.SetUVs(0, new[] { Vector2.zero, Vector2.right, Vector2.one, Vector2.up });
+            backingMesh.SetTriangles(new[] { 0, 2, 1, 0, 3, 2 }, 0);
+            return backingMesh;
+        }
+
+        // Sizes the backing to the text (with a margin); hides it when there is no text.
+        public static void FitBacking(TextMesh tm)
+        {
+            Transform back = tm.transform.Find(BackingName);
+            if (back == null) return;
+            Bounds b = tm.GetComponent<MeshRenderer>().localBounds;
+            bool show = tm.gameObject.activeInHierarchy && !string.IsNullOrEmpty(tm.text) && b.size.x > 0f && b.size.y > 0f;
+            if (back.gameObject.activeSelf != show) back.gameObject.SetActive(show);
+            if (!show) return;
+            float margin = tm.characterSize * tm.fontSize * 0.02f;
+            back.localPosition = new Vector3(b.center.x, b.center.y, 0f);
+            back.localRotation = Quaternion.identity;
+            back.localScale = new Vector3(b.size.x + 2 * margin, b.size.y + 2 * margin, 1f);
+        }
+
+        // The microphone to record from (null: the system default). A configured name wins (part of it, any case) and
+        // never falls back. Without one, the first device whose name contains "Oculus" or "Headset" (the Quest's mic over
+        // Link is "Headset Microphone (Oculus Virtual Audio Device)" on Windows), else the system default.
+        // False: a name was configured and no device matches it.
+        public static bool TryChooseMicrophone(string[] devices, string wanted, out string device)
+        {
+            device = null;
+            if (!string.IsNullOrEmpty(wanted))
+            {
+                device = devices == null ? null : Array.Find(devices, d => d != null && d.IndexOf(wanted, StringComparison.OrdinalIgnoreCase) >= 0);
+                return device != null;
+            }
+            if (devices == null) return true;
+            device = Array.Find(devices, d => d != null && (d.IndexOf("Oculus", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                                            d.IndexOf("Headset", StringComparison.OrdinalIgnoreCase) >= 0));
+            return true;
+        }
+        // AskHost (#146): words VoiceCore can't parse go to the host's resolver (voice.resolve -> voice.candidates).
+        VoiceSession session = new VoiceSession(new VoiceSessionOptions { AskHost = true }, () => DateTime.UtcNow);
+        string grammarQuery;              // the voice.grammar_query request, so its unknown_type means "old host"
+        ISpeechRecognizer activeRecognizer;
+        TextMesh status;                  // what was heard and what came of it, head-locked
+        string heardLine = "", resultLine = "";
+        string micLine = "Mic: none (voice off)";   // the microphone in use, first line of the status
+        double releasedAt = -1;           // realtimeSinceStartup at the last push-to-talk release, for the logged latency
+        bool awaitingResult;              // released, no recognition result yet (logged if none comes)
+        VoiceInput input;
+        AudioClip mic;
+        float[] chunk;
+        int read;
+        string micDevice;
+
+        PendingCommandPanel panel;
+        TextMesh feedback;
+        AudioSource speaker;
+        readonly Queue<Prompt> prompts = new Queue<Prompt>();
+        readonly Queue<string> details = new Queue<string>();
+        readonly HashSet<string> voiceRequests = new HashSet<string>();
+        float noteUntil;
+
+        VoiceCommand deleteWaiting;      // a complete Delete, until the controller confirms it
+        DateTime deleteExpiresAt;
+        string pointerId;
+        string typed = "";
+        string shownError;                // the VoiceInput error already shown, so it isn't repeated every 4 s
+        string grammarNames;              // the names the recognizer grammar was last built from
+        bool talking, waitingResult, playing;   // feedback: holding talk, waiting for a result, a prompt is playing
+        float resultDeadline;
+        InputAction talk, confirm, cancel, leftGrip;
+
+        void Awake()
+        {
+            if (host == null) host = FindAnyObjectByType<HostScene>();
+
+            var p = new GameObject("PendingCommandPanel");
+            panel = p.AddComponent<PendingCommandPanel>();
+            var f = new GameObject("VoiceFeedback");
+            feedback = f.AddComponent<TextMesh>();
+            feedback.fontSize = 48; feedback.characterSize = 0.012f; feedback.anchor = TextAnchor.UpperLeft;
+            feedback.color = Color.white;
+            SetupText(feedback, f);
+            f.SetActive(false);
+            var st = new GameObject("VoiceStatus");
+            status = st.AddComponent<TextMesh>();
+            status.fontSize = 48; status.characterSize = 0.009f; status.anchor = TextAnchor.UpperLeft;
+            status.color = new Color(0.6f, 1f, 0.7f);
+            SetupText(status, st);
+
+            speaker = gameObject.AddComponent<AudioSource>();
+            speaker.spatialBlend = 0f;
+
+            talk = new InputAction("Talk", InputActionType.Button);
+            // Push-to-talk on the left menu button: the right grip grabs (P2), both triggers click and draw.
+            talk.AddBinding("<XRController>{LeftHand}/menuButton");
+            talk.AddBinding("<Keyboard>/rightShift");
+            // Confirm delete on the left stick click: both triggers click and draw (P2), so neither can confirm or cancel.
+            // Cancel by voice ("cancel") or Esc.
+            confirm = new InputAction("ConfirmDelete", InputActionType.Button);
+            confirm.AddBinding("<XRController>{LeftHand}/thumbstickClicked");
+            confirm.AddBinding("<Keyboard>/backquote");
+            // Not while the left grip is held: P2 (#158) toggles free placement with a stick click during a grab.
+            leftGrip = new InputAction("LeftGripHeld", InputActionType.Button);
+            leftGrip.AddBinding("<XRController>{LeftHand}/gripPressed");
+            cancel = new InputAction("CancelPending", InputActionType.Button);
+            cancel.AddBinding("<Keyboard>/escape");
+            talk.started += _ =>
+            {
+                Debug.Log("TALK down. ready=" + input?.Ready + " error=" + input?.Error);
+                talking = input != null; waitingResult = false;
+                if (input != null) Note("Listening...");
+                input?.StartUtterance();
+            };
+            talk.canceled += _ =>
+            {
+                releasedAt = Time.realtimeSinceStartupAsDouble;
+                awaitingResult = true;
+                Debug.Log("TALK up");
+                talking = false;
+                input?.StopUtterance();
+                if (input != null) { waitingResult = true; resultDeadline = Time.time + 3f; Note("Processing..."); }
+            };
+            confirm.started += _ => { if (!leftGrip.IsPressed()) ConfirmDelete(); };
+            cancel.started += _ => CancelPressed();
+            talk.Enable(); confirm.Enable(); cancel.Enable(); leftGrip.Enable();
+        }
+
+        void Start()
+        {
+            BindHost();
+            StartCoroutine(PlayLoop());
+            StartVoice();
+            OnScene();
+            OVRManager.VrFocusLost += SuspendObjectTargeting;
+            OVRManager.HMDUnmounted += SuspendObjectTargeting;
+        }
+
+        void BindHost()
+        {
+            host.SceneChanged += OnScene;
+            host.ConnectionLost += () => { ResetObjectTargeting(); DropDelete(Prompt.ConnectionLost); Handle(session.ConnectionLost()); };
+            host.DocumentChanged += () =>
+            {
+                // contracts/README.md, Wrong document: drop everything held for the old document. Object IDs survive
+                // a reopen, so a waiting delete would otherwise hit the same object in the reopened file.
+                DropDelete(Prompt.DocumentChanged);
+                ResetObjectTargeting();
+                Handle(session.DocumentChanged());
+            };
+            host.CommandAnswered += OnAnswered;
+            host.Welcomed += () => grammarQuery = host.SendVoice(VoiceGrammar.QueryType, new JObject());
+            host.VoiceGrammarReceived += (re, json) =>
+            {
+                session.SetHostGrammar(VoiceGrammar.FromJson(json));
+                input?.SetGrammar(session.GrammarPhrases());
+                Debug.Log("VOICE grammar: " + session.GrammarPhrases().Count + " phrases with the host's");
+            };
+            host.VoiceCandidatesReceived += (re, json) =>
+            {
+                VoiceCandidates answer = VoiceCandidates.FromJson(json);
+                Debug.Log($"VOICE candidates {answer.Decision} after {Since()} ms: {string.Join(" | ", answer.Candidates)}" +
+                          (answer.Reason != null ? " (" + answer.Reason + ")" : ""));
+                Handle(session.HostAnswered(re, answer));
+            };
+            host.RequestFailed += (re, code) =>
+            {
+                if (re == grammarQuery) { if (code == "unknown_type") session.HostHasNoVoice(); }
+                else Handle(session.HostError(re, code));
+            };
+        }
+
+        void StartVoice()
+        {
+            try
+            {
+                var settings = VoiceRecognizerSettings.ForStreamingAssets(Application.streamingAssetsPath, m => Debug.Log("[Voice] " + m));
+                settings.Kind = recognizer;
+                // Pre-roll 300 ms / post-roll 150 ms: needs Write every frame, also with the button up (PumpMic does).
+                input = new VoiceInput(() => activeRecognizer = VoiceRecognizers.Create(settings), 16000,
+                    VoiceInput.RecommendedPrerollMs, VoiceInput.RecommendedPostrollMs);
+                input.SetGrammar(session.GrammarPhrases());
+                string[] devices = Microphone.devices;
+                if (devices.Length == 0) { micLine = "Mic: none (voice off)"; Note("No microphone. Use the text box (voice off)."); return; }
+                string wanted = CommandLine("-voiceMic") ?? microphoneName;
+                if (!TryChooseMicrophone(devices, wanted, out micDevice))
+                {
+                    micLine = "Mic: no \"" + wanted + "\" (voice off)";
+                    Debug.Log("VoiceUiAdapter mic: no \"" + wanted + "\" (voice off)  all: " + string.Join(" | ", devices));
+                    Note("Voice off: no microphone named \"" + wanted + "\"");
+                    return;
+                }
+                micLine = "Mic: " + (micDevice ?? "system default");
+                Debug.Log("VoiceUiAdapter mic: " + (micDevice ?? "(OS default)") +
+                          (string.IsNullOrEmpty(wanted) ? "" : " (by name \"" + wanted + "\")") + "  all: " + string.Join(" | ", devices));
+                Microphone.GetDeviceCaps(micDevice, out int min, out int max);
+                int rate = min == 0 && max == 0 ? 16000 : Mathf.Clamp(16000, min, max);
+                mic = Microphone.Start(micDevice, true, 1, rate);
+                chunk = new float[mic.frequency / 50 * mic.channels];
+            }
+            catch (Exception e) { micLine = "Mic: none (voice off)"; Note("Voice off: " + e.Message); input = null; }
+        }
+
+        void OnDestroy()
+        {
+            DisposeObjectTargeting();
+            talk?.Dispose(); confirm?.Dispose(); cancel?.Dispose(); leftGrip?.Dispose();
+            if (mic != null) Microphone.End(micDevice);
+            input?.Dispose();
+        }
+
+        // ---------- per frame ----------
+
+        void Update()
+        {
+            PumpMic();
+            if (input != null)
+            {
+                if (input.Error != null && input.Error != shownError)
+                {
+                    shownError = input.Error;
+                    if (!micLine.EndsWith("(voice off)")) micLine += " (voice off)";
+                    Debug.LogWarning("VoiceUiAdapter: voice off: " + input.Error);
+                    Note("Voice off: " + input.Error);
+                }
+                while (input.TryGetResult(out RecognitionResult result))
+                {
+                    awaitingResult = false;
+                    waitingResult = false;
+                    string how = activeRecognizer is FastPathRecognizer fp
+                        ? " " + fp.LastOutcome + (fp.Slow is WhisperServerRecognizer w && fp.LastOutcome.ToString().StartsWith("Slow") ? " whisper '" + w.LastTranscript + "'" : "")
+                        : "";
+                    Debug.Log($"HEARD: {result} after {Since()} ms{how}");
+                    resultLine = "";
+                    if (string.IsNullOrWhiteSpace(result.Text))
+                    {
+                        // An empty result is a silent press (VoiceSession.Hear: NoResult Silence, nothing spoken).
+                        Note(DidntHear);
+                        Handle(session.Hear(result));
+                        continue;
+                    }
+                    heardLine = $"Heard: \"{result.Text}\" ({result.Confidence:0.00})";
+                    if (prompts.Count == 0 && !playing) Note("Heard: " + result.Text);   // don't cover a prompt that is playing
+                    Handle(session.Hear(result));
+                }
+                // A press that gave no result at all (#146): silence, or speech that matched no phrase.
+                while (input.TryGetNoResult(out NoResultReason why))
+                {
+                    awaitingResult = false;
+                    waitingResult = false;
+                    Debug.Log($"VOICE no result {why} after {Since()} ms" + (activeRecognizer is FastPathRecognizer nr
+                        ? ": " + nr.LastOutcome + (nr.Slow is WhisperServerRecognizer nw ? " whisper '" + nw.LastTranscript + "'" : "") : ""));
+                    // Silence says nothing (VoiceSession), so show why; speech that matched nothing says "Sorry, I
+                    // didn't catch that" (Prompt.LowConfidence), which the prompt loop shows.
+                    if (why == NoResultReason.Silence) Note(DidntHear);
+                    Handle(session.NothingRecognized(why));
+                }
+            }
+            if (talking) noteUntil = Time.time + 1f;   // keep "Listening..." up while the button is held
+            if (waitingResult && Time.time > resultDeadline)
+            {
+                waitingResult = false;
+                Note(DidntHear);
+            }
+            if (awaitingResult && Since() > 2500)
+            {
+                // VoiceInput reports every press without a result (TryGetNoResult); this only logs one that never ended.
+                awaitingResult = false;
+                Debug.Log("VOICE no result 2.5 s after release" + (activeRecognizer is FastPathRecognizer f
+                    ? ": " + f.LastOutcome + (f.Slow is WhisperServerRecognizer ws ? " whisper '" + ws.LastTranscript + "'" : "") : ""));
+            }
+            Handle(session.Tick());
+
+            if (deleteWaiting != null && DateTime.UtcNow >= deleteExpiresAt) DropDelete(Prompt.TimedOut);
+            PendingCommand pending = session.Pending;
+            PendingChoice choice = session.Choice;
+            if (choice != null) panel.ShowChoice(choice);
+            else if (pending != null) panel.Show(pending);
+            else if (deleteWaiting != null) panel.ShowDelete(deleteWaiting.ToString(), deleteExpiresAt);
+            else if (panel.Visible) panel.Hide();
+
+            if (feedback.gameObject.activeSelf && Time.time > noteUntil && prompts.Count == 0)
+                feedback.gameObject.SetActive(false);
+            PlaceFeedback();
+            PlaceStatus();
+        }
+
+        void PlaceStatus()
+        {
+            var cam = Camera.main;
+            string text = micLine + "\n" + ObjectTargetLabel + (heardLine.Length > 0 ? "\n" + heardLine : "") +
+                          (session.WaitingForHost ? "\nthinking..." : resultLine.Length > 0 ? "\n" + resultLine : "");
+            status.gameObject.SetActive(cam != null);
+            if (!status.gameObject.activeSelf) return;
+            status.text = text;
+            var t = status.transform;
+            t.position = cam.transform.TransformPoint(new Vector3(-0.35f, -0.1f, 1.1f));
+            t.rotation = cam.transform.rotation;   // parallel to the view, so the lines don't slant
+            FitBacking(status);
+        }
+
+        public const string DidntCatch = "Didn't catch that.";
+        const string DidntHear = "Didn't hear anything. Speak closer and louder.";
+
+        // The status line for a press that gave nothing to act on (silence, or speech that matched no phrase); while the
+        // host's question is still open, how to answer it.
+        string NothingLine() => DidntCatch + (session.Choice != null ? " " + AnswerHint(session.Choice.Candidates.Count) : "");
+        // "Say one, two or cancel.": how to answer a question with n options.
+        public static string AnswerHint(int n)
+        {
+            string[] words = { "one", "two", "three" };
+            int k = Math.Max(1, Math.Min(3, n));
+            return "Say " + string.Join(", ", words, 0, k) + " or cancel.";
+        }
+
+        long Since() => releasedAt < 0 ? -1 : (long)((Time.realtimeSinceStartupAsDouble - releasedAt) * 1000);
+
+        static string CommandLine(string name)
+        {
+            string[] args = Environment.GetCommandLineArgs();
+            for (int i = 0; i + 1 < args.Length; i++) if (args[i] == name) return args[i + 1];
+            return null;
+        }
+
+        void PumpMic()
+        {
+            if (input == null || mic == null || input.Error != null) return;
+            if (!Microphone.IsRecording(micDevice)) return;
+
+            int channels = Mathf.Max(1, mic.channels);
+            int ring = mic.samples * channels;
+            if (ring <= 0 || mic.frequency <= 0) return;                 // the mic isn't ready yet
+
+            if (chunk == null || chunk.Length == 0)
+                chunk = new float[Mathf.Max(1, mic.frequency / 50) * channels];
+
+            int position = Microphone.GetPosition(micDevice) * channels;
+            while ((position - read + ring) % ring >= chunk.Length)
+            {
+                mic.GetData(chunk, read / channels);
+                input.Write(chunk, chunk.Length, mic.frequency, channels);
+                read = (read + chunk.Length) % ring;
+            }
+        }
+
+        // Mac testing without a mic: type a phrase (e.g. "rotate this ninety degrees around z") and press Enter.
+        void OnGUI()
+        {
+            Event e = Event.current;
+            bool enter = e.type == EventType.KeyDown &&
+                        (e.keyCode == KeyCode.Return || e.keyCode == KeyCode.KeypadEnter) &&
+                        GUI.GetNameOfFocusedControl() == "voicebox";
+            if (enter && typed.Length > 0)
+            {
+                string phrase = typed;
+                typed = "";
+                e.Use();
+                Handle(session.Hear(new RecognitionResult(phrase, 1f)));
+                return;
+            }
+            GUI.SetNextControlName("voicebox");
+            typed = GUI.TextField(new Rect(Screen.width - 430, Screen.height - 36, 420, 26), typed);
+        }
+
+        // ---------- scene ----------
+
+        // The one place that builds a VoiceCore SceneObject. If this line doesn't compile, only it needs fixing.
+        static SceneObject MakeObject(string id, string name) => new SceneObject(id, name);
+
+        void OnScene()
+        {
+            if (!host.HasCurrentScene)
+            {
+                ResetObjectTargeting();
+                Handle(session.SetObjects(Array.Empty<SceneObject>()));
+                return;
+            }
+            var shown = new List<KeyValuePair<string, string>>();
+            host.GetShownObjects(shown);
+            var list = new List<SceneObject>();
+            var names = new List<string>();
+            bool deleteTargetShown = false;
+            foreach (var o in shown)
+            {
+                list.Add(MakeObject(o.Key, o.Value));
+                names.Add(o.Value);
+                if (deleteWaiting != null && o.Key == deleteWaiting.TargetId) deleteTargetShown = true;
+            }
+            if (deleteWaiting != null && !deleteTargetShown) DropDelete(Prompt.TargetDeleted);
+            Handle(session.SetObjects(list));
+            if (SelectedObjectId != null && !list.Exists(o => o.Id == SelectedObjectId)) ClearObjectSelection();
+            if (pointerId != null && !list.Exists(o => o.Id == pointerId)) SetControllerPointer(null);
+            // Only when the names change (voice/README.md): a host drag sends up to 20 updates a second, and every
+            // new grammar makes Vosk build a new recognizer.
+            string key = string.Join("\n", names);
+            if (key != grammarNames) { grammarNames = key; input?.SetGrammar(session.GrammarPhrases()); }
+        }
+
+        // ---------- turns, sending ----------
+
+        void Handle(VoiceTurn turn)
+        {
+            VoiceCommand vc = turn.Command;
+            // A new command or a new question (VoiceCore decides: turn.CancelsDelete, #146) replaces a delete that waits
+            // for its confirmation, so the trigger can't confirm a delete the panel no longer shows. Cancel cancels it
+            // instead (CancelPressed).
+            if (deleteWaiting != null && turn.CancelsDelete)
+                DropDelete(Prompt.ReplacedPending);
+            if (turn.NoResult != null) { heardLine = NothingLine(); resultLine = ""; }
+            // Words that weren't an answer closed the host's question (Update hides the panel); a command in them
+            // follows in this turn and its result replaces this line.
+            if (turn.ChoiceDismissed) resultLine = "Question closed.";
+            foreach (Prompt p in turn.Prompts) Enqueue(p, turn.HostReason);
+            if (turn.HostReason != null) resultLine = turn.HostReason;
+            // #146: grammar changes (a question narrows it to its answers) and requests for the host's resolver.
+            if (turn.GrammarChanged) input?.SetGrammar(session.GrammarPhrases());
+            if (turn.Resolve != null)
+            {
+                long? g = turn.Resolve.TargetId != null && host.TryGetGeneration(turn.Resolve.TargetId, out long gen) ? gen : (long?)null;
+                string id = host.SendVoice(VoiceResolve.Type, JObject.FromObject(turn.Resolve.Payload(g)));
+                Debug.Log($"VOICE resolve '{turn.Resolve.Text}' target {turn.Resolve.TargetId ?? "-"} sent {id ?? "(not sent)"}");
+                Handle(session.ResolveSent(turn.Resolve, id));
+            }
+            if (vc == null) return;
+
+            HostCommand command = HostCommand.From(vc);
+            if (command == null)
+            {
+                if (vc.Kind == CommandKind.Select && vc.TargetId != null)
+                    SelectObject(vc.TargetId);
+                else if (vc.Kind == CommandKind.Cancel)
+                    CancelPressed();
+                else if (vc.Kind != CommandKind.Select)
+                    Enqueue(Prompt.Unsupported, null);   // e.g. "apply": say so instead of staying silent
+                return;
+            }
+            if (vc.RequiresConfirmation)
+            {
+                deleteWaiting = vc;
+                deleteExpiresAt = DateTime.UtcNow.AddSeconds(15);
+                Enqueue(Prompt.ConfirmDelete, null);
+                return;
+            }
+            Send(command);
+        }
+
+        // Esc or "cancel": drops the delete waiting for its confirmation and the pending command.
+        void CancelPressed()
+        {
+            DropDelete(Prompt.Cancelled);
+            Handle(session.Cancel());
+        }
+
+        void DropDelete(Prompt why)
+        {
+            if (deleteWaiting == null) return;
+            deleteWaiting = null;
+            Enqueue(why, null);
+        }
+
+        void ConfirmDelete()
+        {
+            if (deleteWaiting == null) return;
+            HostCommand command = HostCommand.From(deleteWaiting);
+            deleteWaiting = null;
+            if (command != null) Send(command);
+        }
+
+        void Send(HostCommand c)
+        {
+            if (!host.CanSend) { Enqueue(Prompt.NotConnected, null); return; }
+            string id = host.SendCommand(c.Op, c.TargetId, JObject.FromObject(c.Args), HostCommand.Source);
+            if (id == null)
+            {
+                // Connected but not sent: the target is no longer in the scene, or the socket just failed.
+                Enqueue(c.TargetId != null && !host.HasObject(c.TargetId) ? Prompt.TargetDeleted : Prompt.NotConnected, null);
+                return;
+            }
+            voiceRequests.Add(id);
+            Debug.Log($"VOICE command {c.Op} target {c.TargetId ?? "-"} args {JObject.FromObject(c.Args).ToString(Newtonsoft.Json.Formatting.None)} sent {id} after {Since()} ms");
+            // Explicit selection stays latched until cleared, replaced, deleted or the document/session changes.
+        }
+
+        void OnAnswered(CommandAnswer a)
+        {
+            if (!voiceRequests.Remove(a.RequestId)) return;   // controller/menu commands speak for themselves
+            Debug.Log($"VOICE result {a.Op} {a.Outcome} \"{a.Message}\" {a.ErrorCode} release_to_applied_ms={Since()}");
+            resultLine = a.Outcome + ": " + (string.IsNullOrEmpty(a.Message) ? a.Op : a.Message);
+            Enqueue(HostCommand.PromptFor(a.Op, a.Outcome, a.ErrorCode), a.Message);
+        }
+
+        // ---------- prompts ----------
+
+        void Enqueue(Prompt p, string detail) { prompts.Enqueue(p); details.Enqueue(detail); }
+
+        void Note(string text)
+        {
+            feedback.text = text;
+            feedback.gameObject.SetActive(true);
+            noteUntil = Time.time + 4f;
+        }
+
+        IEnumerator PlayLoop()
+        {
+            while (true)
+            {
+                if (prompts.Count == 0) { yield return null; continue; }
+                Prompt p = prompts.Dequeue();
+                string detail = details.Dequeue();
+                playing = true;
+                Note(string.IsNullOrEmpty(detail) ? p.Text : p.Text + "\n" + detail);
+                AudioClip clip = Resources.Load<AudioClip>(p.ClipResource);
+                if (input != null) input.Paused = true;
+                if (clip != null)
+                {
+                    speaker.PlayOneShot(clip);
+                    yield return new WaitForSeconds(clip.length + 0.3f);   // Air Link plays audio late
+                }
+                else yield return new WaitForSeconds(1.5f);
+                playing = false;
+                if (prompts.Count == 0 && input != null) input.Paused = false;
+            }
+        }
+
+        void PlaceFeedback()
+        {
+            var cam = Camera.main;
+            if (cam == null || !feedback.gameObject.activeSelf) return;
+            var t = feedback.transform;
+            // Below the status line (up to 3 lines from y = -0.1), so the two backings don't overlap.
+            t.position = cam.transform.TransformPoint(new Vector3(-0.35f, -0.3f, 1.1f));
+            t.rotation = cam.transform.rotation;
+            FitBacking(feedback);
+        }
+    }
+}

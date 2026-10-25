@@ -250,8 +250,27 @@ def _describe_lan(listener):
     return f"Listening on {where}, {how}"
 
 
+def _voice():
+    """voice_ops.Voice for voice.resolve, voice.grammar_query and voice.run, or None.
+
+    Voice never keeps the host from starting: without it, clients get unknown_type
+    for voice.resolve and fall back to their own commands (contracts/README.md, Voice).
+    """
+    try:
+        from . import voice_ops
+
+        return voice_ops.Voice(scene_sync)
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception("Spatial Modeling: voice is off; voice_ops failed")
+        return None
+
+
 def _start_server(extra, sess, cmds, lses):
     srv = server.Server(extra_listeners=[extra] if extra else [])
+    if cmds.editor.voice is not None:
+        cmds.editor.voice.attach(srv)  # voice.resolve and voice.grammar_query
     srv = lses.attach(cmds.attach(sess.attach(srv)))
     srv = preview_spatial.attach(srv, sess, lses)
     srv.start()
@@ -273,7 +292,7 @@ def start():
         client_can_edit=bool(prefs and prefs.client_edits),
         capabilities=lambda: {"sketch": sketch.dependency_status()["available"], "preview_spatial": True},
     )
-    editor = edits.Editor(scene_sync, undoable, doc)
+    editor = edits.Editor(scene_sync, undoable, doc, voice=_voice())
     lses = leases.Leases(sess, editor)
     cmds = commands.Commands(sess, editor, leases=lses)
     try:

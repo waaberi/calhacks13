@@ -70,8 +70,10 @@ OBJECT_OPS = ("object.add", "object.move", "object.rotate", "object.scale", "obj
 HISTORY_OPS = ("history.undo", "history.redo")
 SKETCH_OPS = ("sketch.create", "sketch.add_line", "sketch.add_rectangle", "sketch.add_circle",
               "sketch.constrain", "sketch.set_dimension")
-OPS = (*OBJECT_OPS, *HISTORY_OPS, "document.save", *SKETCH_OPS)
+VOICE_OPS = ("voice.run",)  # a candidate from voice.candidates (voice_ops.py)
+OPS = (*OBJECT_OPS, *HISTORY_OPS, "document.save", *SKETCH_OPS, *VOICE_OPS)
 UNTARGETED_OPS = frozenset({"object.add", *HISTORY_OPS, "document.save", "sketch.create"})
+OPTIONAL_TARGET_OPS = frozenset(VOICE_OPS)  # a target only for candidates that need one
 NO_ARGS_OPS = frozenset({"object.delete", *HISTORY_OPS, "document.save"})
 
 # Bounds from envelope.schema.json and command.schema.json: meters, radians, factors.
@@ -267,6 +269,15 @@ def _sketch_constrain_args(args):
         _number(args["value"], "args.value", LENGTH, unit=" (meters)")
 
 
+def _voice_run_args(args):
+    _keys(args, "args", ("resolution", "choice"))
+    _uuid(args["resolution"], "args.resolution")
+    choice = args["choice"]
+    whole = isinstance(choice, int) or (isinstance(choice, float) and choice.is_integer())
+    if isinstance(choice, bool) or not whole or not 1 <= choice <= 3:
+        raise Invalid("args.choice must be 1, 2 or 3")
+
+
 def _sketch_set_dimension_args(args):
     _keys(args, "args", ("constraint", "value"))
     _local_id(args["constraint"], "args.constraint")
@@ -284,6 +295,7 @@ ARGS_CHECKS = {
     "sketch.add_circle": _sketch_circle_args,
     "sketch.constrain": _sketch_constrain_args,
     "sketch.set_dimension": _sketch_set_dimension_args,
+    "voice.run": _voice_run_args,
     **dict.fromkeys(NO_ARGS_OPS, _no_args),
 }
 
@@ -312,7 +324,8 @@ def _check_command(msg):
         if "target" in p:
             raise Invalid(f"{op} takes no target")
     elif "target" not in p:
-        raise Invalid(f"{op} needs a target {{id, generation}}")
+        if op not in OPTIONAL_TARGET_OPS:
+            raise Invalid(f"{op} needs a target {{id, generation}}")
     else:
         target = _keys(p["target"], "target", ("id", "generation"))
         _uuid(target["id"], "target.id")
