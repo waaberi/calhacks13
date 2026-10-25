@@ -166,6 +166,14 @@ def run():
                       lambda o: (tuple(o.pose.bones['Root'].location), tuple(o.pose.bones['Root'].rotation_quaternion), tuple(o.pose.bones['Root'].scale)))
         active(rig, 'POSE')
         apply(rig, 'rig.pose_reset', {'bone': 'Root'})
+        locked_location = tuple(rig.pose.bones['Root'].location)
+        rig.pose.bones['Root'].lock_location = (True, False, False)
+        try:
+            apply(rig, 'rig.pose_transform', {'bone': 'Root', 'location_m': [.03, 0, 0]})
+            raise AssertionError('locked pose channel admitted')
+        except ValueError:
+            check('locked native pose channel refused', tuple(rig.pose.bones['Root'].location) == locked_location)
+        rig.pose.bones['Root'].lock_location = (False, False, False)
         check('FK reset native channels', tuple(rig.pose.bones['Root'].location) == (0, 0, 0)
               and tuple(rig.pose.bones['Root'].scale) == (1, 1, 1))
         digest = tools.context_fingerprint()
@@ -297,16 +305,21 @@ def run():
         check('face set native attribute', bm.faces[0][bm.faces.layers.int['.sculpt_face_set']] == 4)
         check('sculpt native freshness is serializable', len(tools.context_fingerprint()) == 64)
 
-    check('all extended tools executed', set(REPORT['tools']) == catalog.OPERATIONS - catalog.BASE_OPERATIONS)
+    check('all extended rig and scene tools executed', set(REPORT['tools']) == catalog.RIG_SCENE_OPERATIONS)
     REPORT['passed'] = True
 
 
-try:
-    run()
-except Exception:
-    REPORT['error'] = traceback.format_exc()
-    raise
-finally:
-    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT.write_text(json.dumps(REPORT, indent=2), encoding='utf-8')
-print(json.dumps({'passed': REPORT['passed'], 'checks': len(REPORT['checks']), 'tools': len(set(REPORT['tools']))}), flush=True)
+def main():
+    try:
+        run()
+    except Exception:
+        REPORT['error'] = traceback.format_exc()
+        raise
+    finally:
+        OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+        OUTPUT.write_text(json.dumps(REPORT, indent=2), encoding='utf-8')
+    print(json.dumps({'passed': REPORT['passed'], 'checks': len(REPORT['checks']), 'tools': len(set(REPORT['tools']))}), flush=True)
+
+
+if __name__ == '__main__':
+    main()

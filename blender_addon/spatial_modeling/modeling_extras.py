@@ -84,6 +84,8 @@ def _bone(rig, name):
     bone = rig.pose.bones.get(name)
     if bone is None or bone.bone.hide or getattr(bone, 'hide', False):
         raise ValueError('Choose an exact visible native bone')
+    if bone.bone.hide_select or (bone.bone.collections and not any(c.is_visible_effectively for c in bone.bone.collections)):
+        raise ValueError('The native bone is hidden or locked against selection')
     if rig.animation_data and rig.animation_data.drivers:
         raise ValueError('Driven rigs require their native driver workflow')
     return bone
@@ -212,7 +214,17 @@ def preflight(editor, target, tool, params, selection=None, outputs=None):
             raise ValueError('Those light properties do not apply to the requested light type')
     if tool.startswith('modifier.'):
         _local(target, 'MESH')
-        if tool == 'modifier.configure':
+        if tool == 'modifier.boolean':
+            operand = editor.sync.find_object(params['operand_id'])
+            if operand is None or operand == target or operand.type != 'MESH' or operand.hide_get():
+                raise ValueError('Choose a different visible native mesh operand')
+            if (target in _ancestors(operand)
+                    or any(getattr(m, 'object', None) == target for m in operand.modifiers)
+                    or any(getattr(c, 'target', None) == target for c in operand.constraints)):
+                raise ValueError('The Boolean operand depends on its target')
+            if len(target.modifiers) >= 64:
+                raise ValueError('This object already has 64 native modifiers')
+        elif tool == 'modifier.configure':
             modifier = target.modifiers.get(params['name'])
             if modifier is None or modifier.type not in _MOD_FIELDS:
                 raise ValueError('Choose an existing supported native modifier')
@@ -246,6 +258,12 @@ def preflight(editor, target, tool, params, selection=None, outputs=None):
                 raise ValueError('Use the existing active single native Pose rig')
             if tool.startswith('rig.pose_') and bone.constraints:
                 raise ValueError('Pose this constrained bone through its native constraint workflow')
+            if tool.startswith('rig.pose_'):
+                reset = tool == 'rig.pose_reset'
+                if ((reset or 'location_m' in params) and any(bone.lock_location)
+                        or (reset or 'rotation' in params) and (any(bone.lock_rotation) or bone.lock_rotation_w and bone.lock_rotations_4d)
+                        or (reset or 'scale' in params) and any(bone.lock_scale)):
+                    raise ValueError('The requested pose channels are locked in Blender')
             if 'rotation' in params and abs(sum(v * v for v in params['rotation']) - 1) > .002:
                 raise ValueError('The pose quaternion must be normalized [w,x,y,z]')
             if 'scale' in params and any(abs(v) < .001 for v in params['scale']):
@@ -334,6 +352,15 @@ def preflight(editor, target, tool, params, selection=None, outputs=None):
             raise ValueError("Surface projection requires nonsingular native transforms")
     if tool.startswith("mesh."):
         _selection_vertices(target, selection)
+        if tool == 'mesh.flatten' and sum(v * v for v in params['normal']) < 1e-12:
+            raise ValueError('Flatten needs a nonzero world plane normal')
+        if tool == 'mesh.solidify' and abs(params['thickness_m']) < 1e-8:
+            raise ValueError('Solidify needs a nonzero metric thickness')
+        if tool == 'mesh.symmetrize':
+            import bmesh
+            bm = bmesh.from_edit_mesh(target.data)
+            if len(selection['indices']) != len(bm.verts) or any(v.hide for v in bm.verts):
+                raise ValueError('Symmetrize requires deliberately selecting all vertices of the visible native mesh')
     return params
 
 
@@ -421,7 +448,7 @@ def _uv(obj, tool, params, selection):
 def _weight_maps(obj, bm):
     if bm is not None:
         layer = bm.verts.layers.deform.active
-        return {v.index: dict(v[layer]) if layer else {} for v in bm.verts}
+        return {index: dict(v[layer]) if layer else {} for index, v in enumerate(bm.verts)}
     return {v.index: {g.group: g.weight for g in v.groups} for v in obj.data.vertices}
 
 
@@ -682,6 +709,8 @@ def _settings(obj, tool, params):
 
 
 def _modifier(obj, tool, params):
+    if tool == 'modifier.boolean':
+        raise ValueError('Boolean operands require the shared editor identity resolver')
     if tool == 'modifier.add_deform':
         modifier = obj.modifiers.new(params['kind'].replace('_', ' ').title(), params['kind'])
         values = {k: v for k, v in params.items() if k != 'kind'}
@@ -698,6 +727,7 @@ def _modifier(obj, tool, params):
 def _mesh(editor, obj, tool, params, selection):
     import bmesh
     import bpy
+    from mathutils import Vector
     from mathutils.bvhtree import BVHTree
 
     from . import modeling_mesh
@@ -733,6 +763,23 @@ def _mesh(editor, obj, tool, params, selection):
                     vert.co = destination
             finally:
                 evaluated.to_mesh_clear()
+        elif tool == 'mesh.flatten':
+            normal = Vector(params['normal']).normalized()
+            world, unit = obj.matrix_world, _unit()
+            pivot = (Vector(params['plane_point_m']) if 'plane_point_m' in params
+                     else sum(((world @ v.co) * unit for v in verts), Vector()) / len(verts))
+            inverse = world.inverted()
+            for vert in verts:
+                point = (world @ vert.co) * unit
+                vert.co = inverse @ ((point - normal * (point - pivot).dot(normal) * params['factor']) / unit)
+        elif tool == 'mesh.solidify':
+            result = bmesh.ops.solidify(stage, geom=picked, thickness=params['thickness_m'] / _unit())
+            result_domain = 'face'
+            result_items = [e for e in result['geom'] if isinstance(e, bmesh.types.BMFace)]
+        elif tool == 'mesh.symmetrize':
+            bmesh.ops.symmetrize(stage, input=[*stage.verts, *stage.edges, *stage.faces],
+                                 direction=params['direction'], dist=params['distance_m'] / _unit(), use_shapekey=False)
+            result_domain, result_items = 'vertex', list(stage.verts)
         elif tool == "mesh.smooth_vertices":
             chosen = [v for v in verts if not params.get("preserve_boundary", True) or not v.is_boundary]
             for _ in range(int(params["iterations"])):
@@ -840,7 +887,12 @@ def apply_step(editor, target, tool, params, selection=None, outputs=None):
     elif tool.startswith(('camera.', 'light.', 'text.')):
         _settings(target, tool, params)
     elif tool.startswith('modifier.'):
-        _modifier(target, tool, params)
+        if tool == 'modifier.boolean':
+            modifier = target.modifiers.new('Boolean', 'BOOLEAN')
+            modifier.object = editor.sync.find_object(params['operand_id'])
+            modifier.operation, modifier.solver = params['operation'], params['solver']
+        else:
+            _modifier(target, tool, params)
     else:
         raise ValueError("No native finishing executor for " + tool)
     bpy.context.view_layer.update()
@@ -989,7 +1041,13 @@ class ExtraBackup:
                     obj.animation_data_clear()
                 else:
                     _bind_action(obj, record['action'], record['action_slot'])
-        # Restore links first, then remove only collections created by this recipe.
+        # New collections can reuse a name vacated by a renamed old collection.
+        # Remove those exact new IDs before assigning the saved original names.
+        if self.capture_collections:
+            for collection in list(bpy.data.collections):
+                if collection.session_uid not in self.collection_ids:
+                    bpy.data.collections.remove(collection)
+        # Restore exact original links and collection properties.
         for collection, name, viewport, render, children in self.collections:
             if collection.name != name:
                 collection.name = name
@@ -1037,6 +1095,8 @@ def _pose_state(obj, constraints=False):
                        'location': tuple(bone.location), 'quaternion': tuple(bone.rotation_quaternion),
                        'euler': tuple(bone.rotation_euler), 'axis_angle': tuple(bone.rotation_axis_angle),
                        'scale': tuple(bone.scale), 'selected': bone.select,
+                       'locks': [tuple(bone.lock_location), tuple(bone.lock_rotation), tuple(bone.lock_scale),
+                                 bone.lock_rotation_w, bone.lock_rotations_4d],
                        'constraints': [(c.name, c.type, _constraint_values(c)) for c in bone.constraints]
                                       if constraints else None}
                       for bone in obj.pose.bones]}
@@ -1099,7 +1159,8 @@ def context_fingerprint(objects=None):
         row = {'uid': obj.session_uid, 'data': obj.data.session_uid if obj.data else None,
                'active_material': obj.active_material_index}
         if obj.type == 'ARMATURE':
-            row['rest'] = [(b.name, b.parent.name if b.parent else None, list(b.head_local), list(b.tail_local), b.hide)
+            row['rest'] = [(b.name, b.parent.name if b.parent else None, list(b.head_local), list(b.tail_local), b.hide,
+                            b.hide_select, [(c.name, c.is_visible_effectively) for c in b.collections])
                            for b in obj.data.bones]
             pose = _pose_state(obj, True)
             for bone in pose['bones']:

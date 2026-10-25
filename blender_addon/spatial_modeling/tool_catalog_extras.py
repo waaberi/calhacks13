@@ -153,6 +153,17 @@ add("modifier.configure", ["object"], {"name": TEXT,
     "angle": number(-2 * math.pi, 2 * math.pi), "amount_m": number(-100, 100),
     "split_angle": number(0, math.pi)}, ["name"])
 
+RIG_SCENE_OPERATIONS = frozenset(row["id"] for row in _ROWS) - BASE_OPERATIONS
+
+add("modifier.boolean", ["object"], {"operand_id": TEXT,
+    "operation": enum("UNION", "DIFFERENCE", "INTERSECT", default="DIFFERENCE"),
+    "solver": enum("EXACT", "FLOAT", "MANIFOLD", default="EXACT")}, ["operand_id"])
+add("mesh.flatten", ["vertex", "edge", "face"], {"normal": vector(3, -1, 1),
+    "plane_point_m": vector(), "factor": number(0, 1, 1)}, ["normal"], ["EDIT_MESH"])
+add("mesh.solidify", ["face"], {"thickness_m": number(-100, 100)}, ["thickness_m"], ["EDIT_MESH"])
+add("mesh.symmetrize", ["vertex"], {"direction": enum("-X", "X", "-Y", "Y", "-Z", "Z", default="-X"),
+    "distance_m": number(.0000001, .1, .000001)}, modes=["EDIT_MESH"])
+
 _INDEX = {row["id"]: row for row in _ROWS}
 OPERATIONS = frozenset(_INDEX)
 

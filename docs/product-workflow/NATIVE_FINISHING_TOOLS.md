@@ -18,6 +18,7 @@ menu. No additional VR tool menu or automatic mode change is introduced.
 | Animation | Insert/delete native bone pose keyframes, set object-channel interpolation/handles, and set frame range/FPS. Existing NLA and driver workflows remain in Blender's native editors. |
 | Camera/light/text | Set bounded lens/projection/clipping, type-specific light values, and native text contents/alignment/metric size/extrusion/bevel. Text continues through evaluated scene geometry. |
 | Modifier editing | Add Simple Deform, Cast, Displace or Edge Split; configure fixed reviewed fields on those and existing Bevel, Subdivision, Solidify, Array, Decimate, Mirror, Weld and Smooth modifiers. |
+| Solid/plane tools | Boolean Union/Difference/Intersection with Exact/Float/Manifold solvers and an existing mesh operand; flatten selected components to a world plane; solidify selected faces; symmetrize an explicitly selected whole mesh. |
 
 UV and mesh-finishing tools require the existing active single native mesh in
 Edit Mode. Curves, collections, material slots and vertex-group definitions use
