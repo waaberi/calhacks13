@@ -13,6 +13,7 @@ namespace SpatialModeling
         public bool Active { get; private set; }
         public bool Gesturing => held || (live != null && live.Gesturing);
         public bool LiveBusy => live != null && live.Busy;
+        public ToolAvailabilityPopup AvailabilityPopup { get; private set; }
         public JObject SelectionSnapshot => live != null ? live.Selection.Snapshot() : new JObject();
         public long ContextEpoch => live != null ? live.Selection.Epoch : 0;
         public bool AdditiveSelection => live != null && live.Selection.Additive;
@@ -48,7 +49,7 @@ namespace SpatialModeling
         Vector3 startPoint, currentPoint, pivot;
         Ray initialRay;
         float depth, pendingAt;
-        bool held, moved, waiting, released, submitted;
+        bool held, moved, waiting, released, submitted, unavailableAttemptReported;
         int gesture;
         XRNode hand;
         JObject delta;
@@ -58,10 +59,25 @@ namespace SpatialModeling
 
         public void Initialize(HostScene host, PreviewInteraction owner, PreviewSpatialDrawing native)
         {
+            bool changed=scene!=host||preview!=owner||drawing!=native;
             if (drawing != null) drawing.BeforeNativeSessionMessage -= BeforeMessage;
+            if(live!=null)
+            {
+                live.UnavailableAttempt-=UnavailableAttempt;live.BlockedAttempt-=BlockedAttempt;
+                if(changed){live.Dispose();live=null;AvailabilityPopup?.Hide();}
+            }
             scene = host; preview = owner; drawing = native;
             if(live==null&&native!=null)live=new DirectLiveController(host,owner,native,PublishLiveSelection);
+            if(live!=null){live.UnavailableAttempt+=UnavailableAttempt;live.BlockedAttempt+=BlockedAttempt;live.SetEnabled(Active);}
             if (drawing != null) drawing.BeforeNativeSessionMessage += BeforeMessage;
+        }
+        string CurrentNativeTool => (string)drawing?.NativeState["model_edit"]?["native_tool"]??"";
+        void UnavailableAttempt(string reason)=>ShowAvailability(true,CurrentNativeTool,reason);
+        void BlockedAttempt(string reason)=>ShowAvailability(false,CurrentNativeTool,reason);
+        void ShowAvailability(bool unsupported,string nativeTool,string reason)
+        {
+            AvailabilityPopup??=new ToolAvailabilityPopup(transform);
+            AvailabilityPopup.Show(unsupported,nativeTool,reason,Camera.main,Time.unscaledTime);
         }
         public void SetActive(bool enabled)
         {
@@ -74,13 +90,16 @@ namespace SpatialModeling
         void OnDisable() => Cancel("Direct edit cancelled because input is unavailable");
         void OnDestroy()
         {
+            if(live!=null){live.UnavailableAttempt-=UnavailableAttempt;live.BlockedAttempt-=BlockedAttempt;}
             live?.Dispose();
+            AvailabilityPopup?.Dispose();
             if (drawing != null) drawing.BeforeNativeSessionMessage -= BeforeMessage;
             ClearGhost();
             if (ghostMaterial != null) ReleaseObject(ghostMaterial);
         }
         void Update()
         {
+            AvailabilityPopup?.Tick(Time.unscaledTime);
             live?.Tick();
             if(live!=null&&live.Available)Notice=live.Notice;
             if ((held && moved) || submitted)
@@ -158,7 +177,7 @@ namespace SpatialModeling
             Vector2 axis, float nearest, out float distance)
         {
             distance = 0;
-            if(live!=null&&(live.Available||live.Busy))
+            if(live!=null&&(live.HasLiveProtocol||live.Busy))
             {
                 bool routed=live.Route(inputHand,ray,trigger,pressed,grip,axis,nearest,out distance);
                 Notice=live.Notice;return routed;
@@ -181,6 +200,7 @@ namespace SpatialModeling
                 released = true;
                 if (!moved)
                 {
+                    if(unavailableAttemptReported){held=waiting=false;target=null;delta=null;return true;}
                     string selected = objectId; Cancel("Trigger selected the native object without moving it");
                     FindFirstObjectByType<VoiceUiAdapter>()?.SelectControllerObject(selected);
                     return true;
@@ -221,7 +241,7 @@ namespace SpatialModeling
             displayRotation = picked.transform.parent.rotation * picked.RotationOffset;
             initialRay = ray; depth = pickedDistance; startPoint = currentPoint = ray.GetPoint(depth);
             indices = Array.Empty<int>(); vertices.Clear(); nativePoints.Clear(); delta = null;
-            held = true; moved = waiting = released = false; gesture++;
+            held = true; moved = waiting = released = unavailableAttemptReported = false; gesture++;
             if ((string)frozenModel["mode"] == "EDIT_MESH")
             {
                 if ((string)frozenModel["active_object_id"] != objectId
@@ -249,10 +269,30 @@ namespace SpatialModeling
         }
         void BeginMovement()
         {
-            if ((bool?)frozenModel["available"] != true || !ContextCurrent())
-            { Notice = (string)frozenModel["reason"] ?? "Direct tool unavailable; choose a supported tool in Blender"; return; }
-            if (!DirectModelEditMath.SupportedTool((string)frozenModel["native_tool"]))
-            { Notice = "This tool remains available in the 2D preview. Direct editing supports Move, Rotate, Scale and face Extrude Region"; return; }
+            if(unavailableAttemptReported)return;
+            string nativeTool=(string)frozenModel["native_tool"];
+            string mode=(string)frozenModel["mode"];
+            string reason=(string)frozenModel["reason"];
+            if(!ContextCurrent())
+            {
+                unavailableAttemptReported=true;Notice="Wait for the current Blender document, tool, selection and placement before trying again.";
+                ShowAvailability(false,nativeTool,Notice);return;
+            }
+            if(string.IsNullOrEmpty(mode)||string.IsNullOrEmpty(nativeTool))
+            {
+                unavailableAttemptReported=true;Notice="Wait for Blender to report the current mode and selected tool, then try again.";
+                ShowAvailability(false,nativeTool,Notice);return;
+            }
+            if((mode!="OBJECT"&&mode!="EDIT_MESH")||!DirectModelEditMath.SupportedTool(nativeTool))
+            {
+                unavailableAttemptReported=true;Notice=string.IsNullOrEmpty(reason)?"This native Blender tool does not have a direct 3D controller gesture in the connected build.":reason;
+                ShowAvailability(true,nativeTool,Notice);return;
+            }
+            if ((bool?)frozenModel["available"] != true)
+            {
+                unavailableAttemptReported=true;Notice=string.IsNullOrEmpty(reason)?"Choose the required native Blender selection and tool settings before trying again.":reason;
+                ShowAvailability(false,nativeTool,Notice);return;
+            }
             moved = true;
             if (drawing.NativeCommandReady) return;
             waiting = true; int requestGesture = gesture;
@@ -324,6 +364,7 @@ namespace SpatialModeling
         }
         public void Cancel(string reason = "Local direct edit cancelled; native geometry unchanged")
         {
+            AvailabilityPopup?.Hide();
             live?.Cancel(reason);
             gesture++; held = waiting = moved = released = false;
             bool executing = submitted && drawing != null && drawing.Session.NativeCommandExecuting;
