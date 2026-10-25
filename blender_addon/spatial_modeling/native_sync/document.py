@@ -80,6 +80,26 @@ def _validate_manifest(manifest):
             raise NativeDocumentError("Checkpoint has an invalid native datablock record")
 
 
+def _validate_portable_assets(items):
+    for item in items:
+        if isinstance(item, bpy.types.Image):
+            if item.type in {"RENDER_RESULT", "COMPOSITING"}:
+                continue
+            packed = bool(item.packed_file)
+            if item.source == "TILED":
+                packed = len(item.packed_files) >= len(item.tiles) > 0
+            if not packed:
+                raise NativeDocumentError("Pack image resources before sharing this native document")
+        elif isinstance(item, bpy.types.Sound) and not item.packed_file:
+            raise NativeDocumentError("Pack sound resources before sharing this native document")
+        elif isinstance(item, bpy.types.VectorFont):
+            if item.filepath not in {"", "<builtin>"} and not item.packed_file:
+                raise NativeDocumentError("Pack font resources before sharing this native document")
+        elif isinstance(item, (bpy.types.MovieClip, bpy.types.CacheFile, bpy.types.Volume)):
+            if getattr(item, "filepath", ""):
+                raise NativeDocumentError("External movie, cache and volume assets need a separate resource transfer")
+
+
 def _validate_script_drivers(items):
     # Simple mathematical/property drivers are native data. A general Python
     # expression depends on the receiving user's script trust and must never
@@ -134,6 +154,7 @@ class NativeDocument:
             raise NativeDocumentBusy("Finish the active native operation before sharing a checkpoint")
         if bpy.data.libraries:
             raise NativeDocumentError("Make externally linked libraries local before sharing this document")
+        _validate_portable_assets(_pointer_map().values())
         path = Path(path).resolve()
         if path.suffix.lower() != ".blend":
             raise NativeDocumentError("A checkpoint output must use the .blend extension")
@@ -203,6 +224,7 @@ class NativeDocument:
                     if hasattr(source, group):
                         setattr(target, group, list(getattr(source, group)))
             transaction["new"] = {ptr: item for ptr, item in _pointer_map().items() if ptr not in old}
+            _validate_portable_assets(transaction["new"].values())
             _validate_script_drivers(transaction["new"].values())
             actual_groups = {item.as_pointer(): group for group, items in _ids().items() for item in items}
             found = {item.get(UUID_PROPERTY): item for item in transaction["new"].values()}
