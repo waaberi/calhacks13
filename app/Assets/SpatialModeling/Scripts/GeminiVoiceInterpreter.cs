@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using Newtonsoft.Json;
@@ -32,12 +33,19 @@ namespace SpatialModeling
         public void Cancel() { active?.Abort(); }
         static string FindKey()
         {
+            string configuredFile = Environment.GetEnvironmentVariable("GEMINI_API_KEY_FILE");
+            if (!string.IsNullOrWhiteSpace(configuredFile)) return ReadKey(configuredFile);
             string key = KeyFrom(Environment.GetEnvironmentVariable("GEMINI_API_KEY"));
             if (key != null) return key;
-            foreach (string path in new[] { Path.Combine(Application.dataPath,"..","gemini_key.txt"),
+            foreach (string path in new[] { Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"CalhacksVR","secrets","gemini.key"), Path.Combine(Application.dataPath,"..","gemini_key.txt"),
                 Path.Combine(Application.persistentDataPath,"gemini_key.txt"), Path.Combine(Directory.GetCurrentDirectory(),"gemini_key.txt") })
-                try { if (File.Exists(path) && (key = KeyFrom(File.ReadAllText(path))) != null) return key; } catch (IOException) { } catch (UnauthorizedAccessException) { }
+                if ((key = ReadKey(path)) != null) return key;
             return null;
+        }
+        static string ReadKey(string path)
+        {
+            try { return File.Exists(path) ? KeyFrom(File.ReadAllText(path)) : null; }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is ArgumentException || e is NotSupportedException) { return null; }
         }
         static string KeyFrom(string text)
         {
@@ -50,12 +58,10 @@ namespace SpatialModeling
         {
             var answer = new Answer(); var clock = System.Diagnostics.Stopwatch.StartNew();
             if (!Available) { answer.Error = "AI voice has no configured API key"; done(answer); yield break; }
-            for (int attempt = 0; attempt < 2; attempt++)
+            if (!current()) yield break;
+            var body = BuildBody(utterance, context, catalog, true);
+            using (var web = new UnityWebRequest(Endpoint + model + ":generateContent", "POST"))
             {
-                if (!current()) yield break;
-                var body = BuildBody(utterance, context, catalog, attempt == 0);
-                using (var web = new UnityWebRequest(Endpoint + model + ":generateContent", "POST"))
-                {
                     active = web; web.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(body.ToString(Formatting.None)));
                     web.downloadHandler = new DownloadHandlerBuffer(); web.SetRequestHeader("Content-Type", "application/json");
                     web.SetRequestHeader("x-goog-api-key", apiKey); web.timeout = 15;
@@ -64,24 +70,28 @@ namespace SpatialModeling
                     if (!current()) yield break;
                     if (web.result == UnityWebRequest.Result.Success)
                     {
-                        try { answer.Draft = Read(web.downloadHandler.text); }
+                        try { answer.Draft = Read(web.downloadHandler.text); ValidateDraft(answer.Draft,catalog); }
                         catch (Exception e) when (e is FormatException || e is JsonException || e is InvalidOperationException)
-                        { answer.Error = "AI response did not contain a complete typed plan"; }
-                        break;
+                        { answer.Draft = null; answer.Error = "AI response did not contain a complete typed plan"; }
                     }
-                    // The interpretation call changes no model. Retry only an
-                    // unsupported thinking option once, never a native edit.
-                    if (attempt == 0 && web.responseCode == 400) continue;
-                    answer.Error = "AI request failed (HTTP " + web.responseCode + ")";
-                    break;
-                }
+                    else answer.Error = "AI request failed (HTTP " + web.responseCode + ")";
             }
             answer.Ms = clock.ElapsedMilliseconds; if (current()) done(answer);
         }
 
+        public static string ComposeRequest(string original, string question, string answer)
+        {
+            string request = string.IsNullOrEmpty(question) ? answer : original + "\nClarification question: " + question + "\nUser answer: " + answer;
+            if (string.IsNullOrWhiteSpace(request) || request.Length > 500) throw new FormatException("Repeat a shorter complete edit");
+            return request;
+        }
+
         public static JObject BuildBody(string utterance, JObject context, JArray catalog, bool thinking)
         {
-            var config = new JObject { ["responseMimeType"] = "application/json", ["responseJsonSchema"] = ResponseSchema(catalog),
+            // The real service rejects this catalog's large branching schema.
+            // JSON mode plus the full catalog keeps every operation reachable;
+            // the exact schema is enforced locally before native preparation.
+            var config = new JObject { ["responseMimeType"] = "application/json",
                 ["candidateCount"] = 1, ["temperature"] = 0.1, ["maxOutputTokens"] = 8192 };
             if (thinking) config["thinkingConfig"] = new JObject { ["thinkingLevel"] = "minimal" };
             return new JObject {
@@ -91,7 +101,8 @@ namespace SpatialModeling
                 ["generationConfig"] = config };
         }
         const string Instructions = @"Interpret the ENTIRE user request as one ordered Blender modeling recipe using only this host's capability catalog.
-Return JSON decision propose, clarify or reject; steps contains EVERY requested operation in order. Never return only the first clause or discard an unsupported tail.
+Return ONLY this exact JSON envelope with all five fields: {""decision"":""propose|clarify|reject"",""steps"":[],""missing"":[],""reason"":"""",""unhandled_intent"":[]}. No other root fields. steps contains EVERY requested operation in order. Never return only the first clause or discard an unsupported tail.
+Each step id MUST be a unique string such as s1, NEVER an integer. References use that exact string id and only an output actually declared by that tool. For example mesh.inset declares inner_faces and boundary_edges, not selection. For clarify or reject return steps:[]; never include an executable prefix.
 Each step has id, tool, target, selection and params. Use exact catalog tool IDs and typed parameters; lengths are meters, rotations wxyz quaternions. Preserve the user's units by converting exactly. Never invent a missing amount, axis, target, selection or Knife endpoint.
 Target is an exact object UUID or object_N alias from context.objects, selected when exactly one object is selected, null only for creation, or {step,output:object} from an earlier creation.
 Selection is captured, {component:object|vertex|edge|face,indices:[...]}, or {step,output} referring to a declared earlier geometry output. Do not guess indices; use captured selections or catalog outputs. For multiple objects emit explicit steps for every intended object. Never select the whole mesh in place of the selected components.
@@ -126,16 +137,71 @@ Undo, Redo, Cancel and Save remain separate controls; never include them in a re
                 ["component"] = new JObject { ["type"] = "string", ["enum"] = new JArray("object","vertex","edge","face") },
                 ["indices"] = new JObject { ["type"] = "array", ["maxItems"] = 256, ["items"] = new JObject { ["type"] = "integer", ["minimum"] = 0 } } }, ["additionalProperties"] = false }) };
 
+        public static void ValidateDraft(JObject draft, JArray catalog)
+        {
+            if (!Matches(draft,ResponseSchema(catalog))) throw new FormatException("Invalid typed recipe schema");
+            var ids = new HashSet<string>(StringComparer.Ordinal);
+            foreach (JObject step in (JArray)draft["steps"])
+                if (!System.Text.RegularExpressions.Regex.IsMatch((string)step["id"],@"^[A-Za-z][A-Za-z0-9_-]{0,47}$") || !ids.Add((string)step["id"]))
+                    throw new FormatException("Invalid or repeated recipe step ID");
+            if ((string)draft["decision"] != "propose" && ((JArray)draft["steps"]).Count != 0)
+                throw new FormatException("Clarification or refusal cannot contain executable steps");
+        }
+        static bool Matches(JToken value, JObject schema)
+        {
+            if (schema["anyOf"] is JArray alternatives)
+            {
+                foreach (JObject option in alternatives) if (Matches(value,option)) return true;
+                return false;
+            }
+            string type = (string)schema["type"];
+            bool valid = type == "object" ? value is JObject : type == "array" ? value is JArray
+                : type == "string" ? value?.Type == JTokenType.String : type == "null" ? value?.Type == JTokenType.Null
+                : type == "boolean" ? value?.Type == JTokenType.Boolean : type == "integer" ? value?.Type == JTokenType.Integer
+                : type == "number" ? value?.Type == JTokenType.Integer || value?.Type == JTokenType.Float : false;
+            if (!valid) return false;
+            if (schema["enum"] is JArray choices)
+            {
+                bool found = false; foreach (var choice in choices) if (JToken.DeepEquals(value,choice)) { found = true; break; }
+                if (!found) return false;
+            }
+            if (value is JObject obj)
+            {
+                foreach (var required in schema["required"] as JArray ?? new JArray()) if (obj.Property((string)required) == null) return false;
+                var properties = schema["properties"] as JObject ?? new JObject();
+                foreach (var property in obj.Properties())
+                    if (properties[property.Name] is JObject child) { if (!Matches(property.Value,child)) return false; }
+                    else if ((bool?)schema["additionalProperties"] == false) return false;
+            }
+            else if (value is JArray array)
+            {
+                if (array.Count < ((int?)schema["minItems"] ?? 0) || array.Count > ((int?)schema["maxItems"] ?? int.MaxValue)) return false;
+                if (schema["items"] is JObject item) foreach (var element in array) if (!Matches(element,item)) return false;
+            }
+            else if (type == "string")
+            {
+                int length = ((string)value).Length;
+                if (length < ((int?)schema["minLength"] ?? 0) || length > ((int?)schema["maxLength"] ?? int.MaxValue)) return false;
+            }
+            else if (type == "number" || type == "integer")
+            {
+                double number = (double)value;
+                if (double.IsNaN(number) || double.IsInfinity(number) || number < ((double?)schema["minimum"] ?? double.NegativeInfinity) || number > ((double?)schema["maximum"] ?? double.PositiveInfinity)) return false;
+            }
+            return true;
+        }
+
         public static JObject Read(string body)
         {
             if (string.IsNullOrEmpty(body) || body.Length > 262144) throw new FormatException("Invalid AI response size");
-            var root = JObject.Parse(body); var candidates = root["candidates"] as JArray;
+            var settings = new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error };
+            var root = JObject.Parse(body,settings); var candidates = root["candidates"] as JArray;
             if (candidates == null || candidates.Count != 1 || (string)candidates[0]["finishReason"] != "STOP")
                 throw new FormatException("AI answer was missing, blocked or truncated");
             var text = new StringBuilder();
             foreach (JObject part in candidates[0]["content"]?["parts"] as JArray ?? new JArray())
                 if ((bool?)part["thought"] != true) text.Append((string)part["text"]);
-            var result = JObject.Parse(text.ToString());
+            var result = JObject.Parse(text.ToString(),settings);
             foreach (var property in result.Properties())
                 if (Array.IndexOf(new[] { "decision","steps","missing","reason","unhandled_intent" }, property.Name) < 0)
                     throw new FormatException("Unexpected AI response field");

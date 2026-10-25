@@ -155,8 +155,10 @@ namespace SpatialModeling
             if (!aiMode || !AiAvailable || (aiQuestion == null && !mesh && !newTool && KnownBasic(text)))
             { Handle(session.Hear(result)); return; }
             if (result.Confidence < .5f) { Enqueue(Prompt.LowConfidence,null); return; }
-            string request = aiQuestion == null ? text : aiOriginal + "\nClarification question: " + aiQuestion + "\nUser answer: " + text;
-            aiOriginal = aiQuestion == null ? text : aiOriginal; aiQuestion = null;
+            string request;
+            try { request = GeminiVoiceInterpreter.ComposeRequest(aiOriginal,aiQuestion,text); }
+            catch (FormatException) { aiQuestion = null; Note("That request is too long. Repeat a shorter complete edit."); return; }
+            aiOriginal = request; aiQuestion = null;
             StartAiRecipe(request);
         }
         string RawAiTranscript()

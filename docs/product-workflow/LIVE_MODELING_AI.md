@@ -11,6 +11,24 @@ Unity software results belong in their run manifests; they do not establish
 headset usability, real microphone recognition or a working Gemini API key/model.
 Physical room alignment and controller visual confirmation remain pending.
 
+Gemini service compatibility was verified separately with disposable factory
+Blender scenes. The service rejects the catalog's large branching response
+schema, so requests use JSON mode with the full catalog and an exact response
+contract. The client validates the complete response against that same typed
+schema locally before native preparation. Native validation, review, rollback,
+expiry and one Undo/Redo remain mandatory. Invalid responses never execute a
+valid prefix. HTTP errors are surfaced without an automatic model/thinking retry.
+
+For local testing, the app can read a private key from
+`%LOCALAPPDATA%/CalhacksVR/secrets/gemini.key`, outside the project/package.
+`GEMINI_API_KEY_FILE` explicitly selects a private file and fails closed if it
+cannot be read; otherwise `GEMINI_API_KEY` takes precedence over the default
+private path. Never include keys in assets, packages, logs or version control.
+The interpreter reads configuration at initialization, so saving a key alone
+does not configure an already-running Player. Gemini receives the transcript,
+native context and tool catalog; use disposable nonconfidential scenes on the
+Free tier. Basic deterministic commands keep their existing local route.
+
 ## Two ways to request an edit
 
 | Route | What chooses the operation | What executes it |

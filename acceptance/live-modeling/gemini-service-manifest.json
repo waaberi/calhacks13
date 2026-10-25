@@ -1,0 +1,124 @@
+{
+  "date": "2026-10-25",
+  "state": "SERVICE_AND_DISPOSABLE_NATIVE_VERIFIED_PLAYER_BUILD_PENDING",
+  "provider": "Gemini Developer API",
+  "model": "gemini-3.5-flash-lite",
+  "billing_tier": "Free; UI verified; no billing enabled",
+  "catalog_operations": 106,
+  "transport": "JSON mode; full typed schema enforced locally before native preparation",
+  "original_failure": "HTTP400 INVALID_ARGUMENT with production responseJsonSchema, also without thinking config",
+  "managed_checks": {
+    "passed": 29,
+    "failed": 0
+  },
+  "real_provider_native_checks": {
+    "passed": true,
+    "checks": [
+      "object_creation_output_refs_final_actual_selection_one_Undo_Redo_prior_work_preserved",
+      "review_requires_confirmation_and_stored_plan_is_single_use",
+      "late_creation_chain_failure_exact_rollback_no_valid_prefix",
+      "foreign_connection_and_expired_review_cannot_execute",
+      "missing_value_clarification_and_unsupported_tail_do_not_execute_prefix",
+      "Edit_Mode_inset_extrude_bevel_real_output_refs_actual_final_target_one_Undo_Redo",
+      "native_final_component_selection_is_actual_nonempty_kernel_result",
+      "native_selection_change_invalidates_prepared_recipe_without_geometry_change",
+      "Edit_Mode_UV_geometry_and_native_selection_exact_late_failure_rollback",
+      "mixed_material_vertex_groups_collection_recipe_ExtraBackup_exact_rollback",
+      "object_rename_animation_frame_and_new_action_exact_rollback",
+      "operand_generation_and_visible_native_handle_fences",
+      "native_Light_change_without_geometry_revision_invalidates_AI_plan",
+      "625_selected_vertices_translate_one_Undo_Redo_and_exact_late_failure_rollback",
+      "late_failure_preserves_ordered_vertex_selection_active_face_and_native_FIRST_merge",
+      "late_failure_preserves_ordered_vertex_selection_active_face_and_native_LAST_merge",
+      "final_object_delete_clears_stale_target_selection_one_Undo_Redo"
+    ],
+    "real_object_chain": true,
+    "real_mesh_chain": true,
+    "factory_scene_only": true,
+    "personal_documents_used": false,
+    "prior_history_and_one_undo_redo": true
+  },
+  "real_service_semantics": [
+    {
+      "case": "missing-amount",
+      "passed": true,
+      "decision": "clarify",
+      "steps": 0,
+      "usage": {
+        "promptTokenCount": 13956,
+        "candidatesTokenCount": 60,
+        "totalTokenCount": 14016,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 13956
+          }
+        ],
+        "serviceTier": "standard"
+      }
+    },
+    {
+      "case": "unsupported-tail",
+      "passed": true,
+      "decision": "reject",
+      "steps": 0,
+      "usage": {
+        "promptTokenCount": 13909,
+        "candidatesTokenCount": 66,
+        "totalTokenCount": 13975,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 13909
+          }
+        ],
+        "serviceTier": "standard"
+      }
+    },
+    {
+      "case": "clarification",
+      "passed": true,
+      "decision": "propose",
+      "steps": 1,
+      "usage": {
+        "promptTokenCount": 13971,
+        "candidatesTokenCount": 156,
+        "totalTokenCount": 14127,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 13971
+          }
+        ],
+        "serviceTier": "standard"
+      }
+    }
+  ],
+  "measured_small_scene_input_tokens": [
+    13946,
+    13997
+  ],
+  "measured_object_mesh_output_tokens": [
+    366,
+    413,
+    407
+  ],
+  "measured_request_seconds": [
+    1.625,
+    1.5,
+    1.875
+  ],
+  "key_in_source_or_package": false,
+  "physical_acceptance": false,
+  "running_player_changed": false,
+  "source_sha256": {
+    "app/Assets/SpatialModeling/Scripts/GeminiVoiceInterpreter.cs": "113fc0b5c3744f9b6a974c84b4bf71fd872a088e3da0ae0ad5e18c2eb17c6e1f",
+    "app/Assets/SpatialModeling/Scripts/VoiceUiAdapter.Ai.cs": "cbc4aa5bff5c1fdfbd182757c5ba29593865b9eb7298702c9854376093c5f462",
+    "tests/ai/GeminiRecipeTests.cs": "1913081779ebd86715297b1aab1cdbf9c804b71d980659a304f8de91f13947bd"
+  },
+  "remaining": [
+    "Compile/package verified Gemini client into current integration candidate",
+    "Coordinated private-key-loaded Player launch with existing runtime owner",
+    "Real microphone/headset usability and human acceptance"
+  ]
+}
