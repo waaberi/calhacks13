@@ -48,7 +48,7 @@ flowchart LR
     host["Blender + add-on<br/>(Host role)"]
     app["Unity VR app<br/>+ VoiceCore"]
     capture["Capture helper"]
-    stdb[("SpacetimeDB<br/>(if spike passes)")]
+    stdb[("SpacetimeDB<br/>(localhost)")]
   end
   subgraph lee["Lee Jae-yeon's Windows PC"]
     client["Blender + add-on<br/>(Client role)"]
@@ -83,7 +83,7 @@ The wire format for all three connections is in [contracts/README.md](contracts/
 6. **Stable object IDs are UUIDs stored in a custom property on each object.** They survive renames, Undo and save/reopen. Duplicating an object copies the property, so the host checks for repeated IDs and gives the copy a new one.
 7. **The Blender screen is fetched on request, not pushed.** The capture helper keeps only the newest frame and serves it on localhost. Unity requests it at a modest rate, so old frames can't pile up.
 8. **VoiceCore is a plain C# library outside the Unity project.** Unity loads it as a local package, and its assembly definition forbids Unity references. Waaberi builds and tests it on Linux. Jihyeon's VoiceUiAdapter feeds it microphone audio, selection and pointer targets. Recognition uses Vosk with a restricted command grammar first, because Vosk also runs on Linux and Mac for development. Unity's Windows speech recognition is the fallback.
-9. **SpacetimeDB (sponsor) holds shared session state if its spike passes; it is never in the geometry path.** Unity has an official C# SDK with live subscriptions. Blender has no maintained Python SDK (it has been on hiatus since May 2024), and the PostgreSQL wire protocol has no live subscriptions. So Blender uses SpacetimeDB only through its HTTP API with the standard library: it calls reducers and polls small tables. That makes SpacetimeDB a good fit for participants and presence, object leases, and the activity and receipt log (P3B, P5). It is a poor fit for scene data and native commands, which stay on the direct host connection. See [Sponsor choices](#sponsor-choices-and-optional-services) for the spike and its pass criteria. If the spike fails, the host keeps the same state in memory behind the same interface.
+9. **SpacetimeDB (sponsor) holds shared session state (the spike passed, #16); it is never in the geometry path.** Unity has an official C# SDK with live subscriptions. Blender has no maintained Python SDK (it has been on hiatus since May 2024), and the PostgreSQL wire protocol has no live subscriptions. So Blender uses SpacetimeDB only through its HTTP API with the standard library, from a background thread: it calls reducers and reads small tables. That makes SpacetimeDB a good fit for participants and presence, object leases, and the activity and receipt log (P3B, P5). It is a poor fit for scene data and native commands, which stay on the direct host connection. See [Sponsor choices](#sponsor-choices-and-optional-services) for the spike and its pass criteria. Blender decides leases in memory and copies them to SpacetimeDB, so it keeps working if no server is running.
 10. **CAD sketches use CAD Sketcher inside the host Blender**, wrapped by Lee Jae-yeon's adapter, and only if the P0 compatibility check passes.
 
 | Port | Listens on | Used by |
@@ -978,7 +978,7 @@ Core voice and real collaboration are required regardless of sponsor choice. Use
 | Candidate | Decision | Reason and dependency |
 | --- | --- | --- |
 | Cartesia | Deferred | Hosted speech recognition/output could improve the voice experience. Requires approved calls, credentials/free credits, network and a real headset trial. Local voice remains core. |
-| SpacetimeDB | Selected for session state, if the spike passes | Holds participants, presence, object leases and the activity and receipt log. Unity subscribes live through the official C# SDK; Blender calls reducers and polls over HTTP. Geometry and native commands stay on the direct host connection. A 90-minute spike decides (below). |
+| SpacetimeDB | Selected for session state; the spike passed (#16) | Holds participants, presence and object leases (the receipt log later). Unity can subscribe live through the official C# SDK; Blender calls reducers over HTTP from a background thread (#165). Geometry and native commands stay on the direct host connection. |
 | Anthropic | Deferred | A bounded assistant would need a validated user problem, approved hosted access and typed native actions. It must not displace core editing. |
 | Moss | Not selected | Semantic tool retrieval needs a demonstrated advantage over a deterministic registry and verified current SDK/package guidance. |
 | Factory | Not selected | A runtime agent/repair role adds subprocess, permission, credit and integration work. Development coding assistance alone is not a product integration. |
@@ -989,6 +989,8 @@ Core voice and real collaboration are required regardless of sponsor choice. Use
 Waaberi owns the module and the host's SpacetimeDB adapter. Jihyeon owns the Unity subscription. Lee Jae-yeon owns how the Client role shows presence and ownership. Talia owns the two-person native trial. Pin one compatible CLI, server and client SDK version. [Installation documentation](https://spacetimedb.com/install).
 
 **What it holds:** participants and presence, object leases, and the activity and receipt log. **What it doesn't hold:** geometry, scene snapshots and native commands. Those stay on the direct host connection, because Blender can only reach SpacetimeDB over HTTP polling.
+
+**How the host uses it (#165):** Blender decides every lease in memory and answers at once; a background thread copies participants and leases to the server, so Blender never waits for SpacetimeDB and works the same without it. See [spacetime/README.md › For the host](spacetime/README.md#for-the-host-p3b-165).
 
 **Where it runs:** the self-hosted server runs on Talia's PC and listens on localhost only, because self-hosted SpacetimeDB has no TLS. The Unity app and the host add-on reach it locally. The Client-role add-on on Lee Jae-yeon's PC gets presence and leases relayed by the host over the TLS LAN link, so the LAN has a single entry point.
 

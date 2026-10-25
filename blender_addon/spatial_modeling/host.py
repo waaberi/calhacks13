@@ -20,7 +20,10 @@ then answers the old host_epoch's requests as `unknown` (contracts/README.md,
 "Reconnecting"). They aren't kept on disk: every restart also starts a new open
 epoch, so an old receipt couldn't be checked against the scene anyway, and the
 fresh snapshot is what clients trust. Participants and leases live as long too
-(session.py, leases.py; in memory). may_write() and blocked() are where the host
+(session.py, leases.py; in memory). A background thread copies them to the
+SpacetimeDB server at the "SpacetimeDB" preference (127.0.0.1:3000 by default)
+while one answers, so the Unity app can subscribe to them; Blender never waits
+for it (session_store.MirroredStore). may_write() and blocked() are where the host
 desktop's own edits ask for permission; gate.py asks them before Blender's own
 tools change anything, and its poll() runs in the drain timer (#77).
 
@@ -35,12 +38,13 @@ scene.update before the sender has the result.
 """
 
 import functools
+import os
 import uuid
 
 import bpy
 from bpy.app.handlers import persistent
 
-from . import commands, document, edits, gate, lan, leases, server, session
+from . import commands, document, edits, gate, lan, leases, server, session, session_store
 from . import sync as scene_sync  # host.sync() is the role switch below
 
 DRAIN_INTERVAL = 0.02  # seconds between queue drains
@@ -55,6 +59,7 @@ _session_id = None  # used only while the add-on preferences aren't available
 _starting = False
 status = "Stopped"  # shown in the add-on preferences; never contains the token
 lan_status = "Off"
+SPACETIME_DATABASE = "spatial-modeling"  # spacetime/spacetime.json
 
 
 def undoable(label):
@@ -242,6 +247,26 @@ def _describe_lan(listener):
     return f"Listening on {where}, {how}"
 
 
+def _store(prefs):
+    """Where participants and leases live: memory, copied to SpacetimeDB if the preference
+    names a server. The host's SpacetimeDB token stays in Blender's config folder."""
+    url = prefs.spacetime_url.strip() if prefs else ""
+    if not url:
+        return None  # session.Session's own MemoryStore
+    folder = bpy.utils.user_resource("CONFIG", path=__package__, create=True)
+    token = os.path.join(folder, "spacetime-host-token")
+    connect = functools.partial(session_store.SpacetimeStore, token, url=url,
+                                database=SPACETIME_DATABASE)
+    return session_store.MirroredStore(connect)
+
+
+def spacetime_status():
+    store = _session.store if _session is not None else None
+    if isinstance(store, session_store.MirroredStore):
+        return store.status
+    return "Off" if _session is not None else "Stopped"
+
+
 def _voice():
     """voice_ops.Voice for voice.resolve, voice.grammar_query and voice.run, or None.
 
@@ -281,6 +306,7 @@ def start():
         on_change=_session_changed,
         name=prefs.host_name if prefs else None,
         client_can_edit=bool(prefs and prefs.client_edits),
+        store=_store(prefs),
     )
     editor = edits.Editor(scene_sync, undoable, doc, voice=_voice())
     lses = leases.Leases(sess, editor)
@@ -300,6 +326,7 @@ def start():
         if extra is not None:
             lan_status = "Not listening: the localhost port could not start"
         print("Spatial Modeling:", status)
+        _close_store(sess)
         return
     finally:
         _starting = False
@@ -321,9 +348,16 @@ def stop():
         _server.stop()
         _server = None
         print("Spatial Modeling: stopped the host server")
+    if _session is not None:
+        _close_store(_session)
     _session = _document = _commands = _leases = _shown = None
     status = "Stopped"
     lan_status = "Off"
+
+
+def _close_store(sess):
+    if isinstance(sess.store, session_store.MirroredStore):
+        sess.store.close()
 
 
 def sync():

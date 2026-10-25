@@ -1,6 +1,7 @@
-"""session_store.py: the same behavior from MemoryStore and SpacetimeStore.
+"""session_store.py: the same behavior from MemoryStore, MirroredStore and SpacetimeStore.
 
-Every `store` test runs against MemoryStore, and again against SpacetimeStore when a
+Every `store` test runs against MemoryStore and MirroredStore (with no server), and again
+against SpacetimeStore when a
 SpacetimeDB server is running on SPACETIME_URL (default http://127.0.0.1:3000) and the
 `spacetime` CLI can publish spacetime/ to it (run `npm install` in spacetime/ first). The
 SpacetimeDB runs publish a fresh database named spatial-modeling-test and are skipped in CI.
@@ -23,11 +24,18 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
-from session_store import MemoryStore, SessionError, SpacetimeStore, StoreUnavailable
+from session_store import (
+    MemoryStore,
+    MirroredStore,
+    SessionError,
+    SpacetimeStore,
+    StoreUnavailable,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 MODULE = ROOT / "spacetime"
 CHECK = Path(__file__).with_name("spacetime_blender_check.py")
+HOST_CHECK = Path(__file__).with_name("spacetime_host_check.py")
 SPACETIME_URL = os.environ.get("SPACETIME_URL", "http://127.0.0.1:3000")
 TEST_DB = "spatial-modeling-test"
 
@@ -115,11 +123,21 @@ def clear(store):
         store.leave(p["actor_id"])
 
 
-@pytest.fixture(params=["memory", "spacetime"])
+def no_server():
+    raise StoreUnavailable("no server in this test")
+
+
+@pytest.fixture(params=["memory", "mirrored", "spacetime"])
 def env(request):
     if request.param == "memory":
         clock = FakeClock()
         yield Env(MemoryStore(clock=clock), 6000, clock.advance)
+        return
+    if request.param == "mirrored":
+        clock = FakeClock()
+        store = MirroredStore(no_server, memory=MemoryStore(clock=clock), retry_s=60)
+        yield Env(store, 6000, clock.advance)
+        store.close()
         return
     store = spacetime_store(request.getfixturevalue("spacetime_token"), lease_ttl_ms=1500)
     clear(store)
@@ -400,3 +418,202 @@ def test_spacetime_from_blenders_own_python(spacetime_token, tmp_path):
             cmd, env=env, capture_output=True, text=True, timeout=180, check=False
         )
         assert result.returncode == 0, result.stdout + result.stderr
+
+
+# MirroredStore: memory decides at once, a thread copies participants and leases to SpacetimeDB
+
+
+class FakeRemote:
+    """Records the reducer calls MirroredStore makes; starts with an earlier host's rows."""
+
+    url = "http://fake"
+
+    def __init__(self, participants=(), leases=(), reject=()):
+        self.calls = []
+        self.rows = {"participant": list(participants), "lease": list(leases)}
+        self.reject = set(reject)
+        self.down = False
+
+    def call(self, reducer, args=None):
+        if self.down:
+            raise StoreUnavailable("down")
+        self.calls.append((reducer, args))
+        if reducer in self.reject:
+            raise SessionError("lease_conflict", "disagrees")
+
+    def select(self, sql):
+        if self.down:
+            raise StoreUnavailable("down")
+        return self.rows["participant" if "participant" in sql else "lease"]
+
+
+def mirrored(remote, **kwargs):
+    store = MirroredStore(lambda: remote, retry_s=0.05, **kwargs)
+    assert store.wait_idle(5)
+    return store
+
+
+def reducers(remote, *names):
+    return [(r, a) for r, a in remote.calls if r in names]
+
+
+def test_mirror_never_waits_for_spacetimedb():
+    def slow():
+        time.sleep(3)
+        raise StoreUnavailable("slow")
+
+    store = MirroredStore(slow)
+    try:
+        a, b = actor("Talia"), actor("Lee", "blender-client")
+        start = time.monotonic()
+        store.join(a)
+        store.join(b)
+        target = uuid.uuid4().hex
+        store.acquire(a["actor_id"], "shared", [target])
+        assert code_of(store.acquire, b["actor_id"], "shared", [target]) == "lease_conflict"
+        assert [x["owner"]["name"] for x in store.leases()] == ["Talia"]
+        assert time.monotonic() - start < 0.2
+    finally:
+        store.close()
+
+
+def test_mirror_clears_an_earlier_host_then_copies_in_order():
+    old = uuid.uuid4().hex
+    remote = FakeRemote(participants=[{"actor_id": old}], leases=[{"owner_id": old}])
+    store = mirrored(remote)
+    try:
+        assert remote.calls[0] == ("leave", {"actor_id": old})
+        a, b = actor("Talia"), actor("Lee", "blender-client")
+        store.join(a)
+        store.join(b)
+        target = uuid.uuid4().hex
+        lease = store.acquire(a["actor_id"], "shared", [target])
+        assert store.wait_idle(5)
+        assert reducers(remote, "join") == [("join", a), ("join", b)]
+        assert reducers(remote, "acquire") == [("acquire", {
+            "lease_id": lease["lease_id"], "owner_id": a["actor_id"], "mode": "shared",
+            "targets": [target], "ttl_ms": 6000})]
+        remote.calls.clear()
+        store.release(lease["lease_id"], a["actor_id"])
+        store.acquire(b["actor_id"], "shared", [target])
+        store.leave(a["actor_id"])
+        assert store.wait_idle(5)
+        names = [r for r, _ in remote.calls if r != "renew"]
+        # Talia's lease ends there (released, or with her leave) before Lee's is acquired.
+        assert names.count("acquire") == 1 and "leave" in names, names
+        assert min(names.index(r) for r in ("release", "leave") if r in names) < names.index(
+            "acquire"), names
+    finally:
+        store.close()
+
+
+def test_mirror_releases_before_an_overlapping_acquire():
+    remote = FakeRemote()
+    store = mirrored(remote)
+    try:
+        a, b = actor("Talia"), actor("Lee", "blender-client")
+        store.join(a)
+        store.join(b)
+        assert store.wait_idle(5)
+        first = store.acquire(a["actor_id"], "exclusive", [])
+        store.release(first["lease_id"], a["actor_id"])
+        store.acquire(b["actor_id"], "exclusive", [])
+        assert store.wait_idle(5)
+        writes = [r for r, _ in remote.calls if r in ("release", "acquire")]
+        assert writes in (["acquire"], ["acquire", "release", "acquire"])
+    finally:
+        store.close()
+
+
+def test_mirror_recopies_everything_after_spacetimedb_comes_back():
+    remote = FakeRemote()
+    store = mirrored(remote)
+    try:
+        a = actor("Talia")
+        store.join(a)
+        assert store.wait_idle(5)
+        remote.down = True
+        lease = store.acquire(a["actor_id"], "exclusive", [])  # memory still decides
+        time.sleep(0.2)
+        assert store.status.startswith("Not using SpacetimeDB")
+        remote.calls.clear()
+        remote.rows["participant"] = [{"actor_id": a["actor_id"]}]
+        remote.down = False
+        assert store.wait_idle(5)
+        assert remote.calls[0] == ("leave", {"actor_id": a["actor_id"]})
+        assert ("join", a) in remote.calls
+        assert ("acquire", {"lease_id": lease["lease_id"], "owner_id": a["actor_id"],
+                            "mode": "exclusive", "targets": [], "ttl_ms": 6000}) in remote.calls
+        assert store.status.startswith("Sharing")
+    finally:
+        store.close()
+
+
+def test_mirror_logs_a_rejection_and_carries_on():
+    remote = FakeRemote(reject={"acquire"})
+    store = mirrored(remote)
+    try:
+        a = actor("Talia")
+        store.join(a)
+        store.acquire(a["actor_id"], "exclusive", [])
+        assert store.wait_idle(5)
+        assert store.status.startswith("Sharing")
+        assert [x["owner"]["name"] for x in store.leases()] == ["Talia"]
+    finally:
+        store.close()
+
+
+def test_mirror_renews_and_leaves_on_close():
+    remote = FakeRemote()
+    store = MirroredStore(lambda: remote, renew_s=0.05)
+    a = actor("Talia")
+    store.join(a)
+    time.sleep(0.3)
+    assert len(reducers(remote, "renew")) >= 2
+    store.close()
+    store._thread.join(2)
+    assert remote.calls[-1] == ("leave", {"actor_id": a["actor_id"]})
+
+
+def test_mirror_copies_to_a_real_server(spacetime_token):
+    host = spacetime_store(spacetime_token)
+    clear(host)
+    store = MirroredStore(lambda: spacetime_store(spacetime_token))
+    try:
+        a, b = actor("Talia"), actor("Lee", "blender-client")
+        store.join(a)
+        store.join(b)
+        target = uuid.uuid4().hex
+        lease = store.acquire(a["actor_id"], "shared", [target])
+        assert code_of(store.acquire, b["actor_id"], "shared", [target]) == "lease_conflict"
+        assert store.wait_idle(5)
+        rows = host.select("SELECT * FROM lease")
+        assert [(r["lease_id"], r["owner_id"]) for r in rows] == [
+            (lease["lease_id"], a["actor_id"])]
+        # The module agrees: Lee can't take the same object there either.
+        assert code_of(host.acquire, b["actor_id"], "shared", [target]) == "lease_conflict"
+        store.release(lease["lease_id"], a["actor_id"])
+        assert store.wait_idle(5)
+        assert host.select("SELECT * FROM lease") == []
+    finally:
+        store.close()
+        store._thread.join(5)
+    assert host.select("SELECT * FROM participant") == []
+
+
+def test_host_addon_copies_leases_to_spacetimedb(spacetime_token, tmp_path):
+    """The add-on in Blender, with its own database so its host identity can claim it."""
+    blender = os.environ.get("BLENDER")
+    if not blender:
+        pytest.skip("set BLENDER to run the add-on in Blender")
+    database = "spatial-modeling-host-test"
+    cmd = [shutil.which("spacetime"), "publish", "--no-config", "--server", SPACETIME_URL,
+           "--module-path", str(MODULE), "--delete-data=always", "--yes", database]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    env = dict(os.environ, BLENDER_USER_RESOURCES=str(tmp_path))
+    cmd = [blender, "-b", "--factory-startup", "--python", str(HOST_CHECK), "--",
+           SPACETIME_URL, database]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=env,
+                            check=False)
+    assert result.returncode == 0, result.stdout[-4000:] + result.stderr[-4000:]

@@ -6,6 +6,9 @@ One interface, two implementations:
 - SpacetimeStore keeps it in the SpacetimeDB module in spacetime/, so it survives a Blender
   restart and the Unity app can subscribe to it live. Standard library only: reducer calls and
   SQL queries over HTTP to a server on localhost.
+- MirroredStore is what the host uses: a MemoryStore decides and answers at once, and a
+  background thread copies participants and leases to a SpacetimeStore, so Blender's main
+  thread never waits for SpacetimeDB and works the same while no server is running.
 
 The host is the only writer. It checks each request against contracts/README.md (session,
 document, schema) before calling in here; the store does the checks that must be atomic, such
@@ -20,6 +23,7 @@ No bpy: this module is tested outside Blender.
 """
 
 import json
+import logging
 import os
 import re
 import threading
@@ -34,6 +38,10 @@ UUID = re.compile(r"^[0-9a-f]{32}$")
 ROLES = ("vr", "blender-client", "host")
 OUTCOMES = ("pending", "applied", "rejected", "unknown")
 MAX_TARGETS = 1000
+MIRROR_RENEW_S = 2.0  # how often MirroredStore renews SpacetimeDB's copy of the leases
+MIRROR_RETRY_S = 5.0  # how long it waits after SpacetimeDB couldn't be reached
+
+log = logging.getLogger(__name__)
 
 
 class SessionError(Exception):
@@ -532,6 +540,197 @@ class SpacetimeStore(SessionStore):
             raise StoreUnavailable(f"SpacetimeDB answered {e.code}: {text[:300]}", e.code) from None
         except (urllib.error.URLError, OSError) as e:
             raise StoreUnavailable(f"can't reach SpacetimeDB at {self.url}: {e}") from None
+
+
+class MirroredStore(SessionStore):
+    """A MemoryStore that decides, copied to SpacetimeDB on a background thread.
+
+    Every call goes to `memory` (by default a MemoryStore whose leases end only by release
+    and leave, as the host wants) and returns at once; nothing on Blender's main thread waits
+    for the network. A thread named spacetime-mirror then makes SpacetimeDB's participant and
+    lease tables match memory: leave, release, join, then acquire, in that order, so a lease
+    is released there before an overlapping one is acquired. The module's reducers check every
+    write again; if one disagrees, that's logged and the copy carries on. While no server
+    answers, the host works exactly as with MemoryStore alone and the thread retries every
+    MIRROR_RETRY_S. When it (re)connects, it first clears whatever an earlier host left there.
+
+    SpacetimeDB's copy holds each lease for LEASE_TTL_MS and the thread renews it every
+    MIRROR_RENEW_S, so if this Blender quits or crashes, subscribers stop seeing its leases
+    within 6 s. The receipt log isn't copied: the host doesn't keep receipts in a store yet.
+
+    connect: () -> SpacetimeStore, called on the thread; it may raise StoreUnavailable or
+    SessionError (another identity is the host). `status` says what the copy is doing.
+    """
+
+    def __init__(self, connect, memory=None, renew_s=MIRROR_RENEW_S, retry_s=MIRROR_RETRY_S):
+        self.memory = MemoryStore(lease_ttl_ms=None) if memory is None else memory
+        self.lease_ttl_ms = self.memory.lease_ttl_ms
+        self.status = "Connecting to SpacetimeDB"
+        self._connect = connect
+        self._renew_s = renew_s
+        self._retry_s = retry_s
+        self._remote = None
+        self._pushed = None  # ({actor_id: actor}, {lease_id: lease}) SpacetimeDB holds, or None
+        self._wake = threading.Event()
+        self._stop = threading.Event()
+        self._idle = threading.Event()  # set while SpacetimeDB matches memory (for tests)
+        self._lock = threading.Lock()
+        self._generation = 0  # counts changes to memory
+        self._thread = threading.Thread(target=self._run, name="spacetime-mirror", daemon=True)
+        self._thread.start()
+
+    # SessionStore: memory answers
+
+    def join(self, actor):
+        self.memory.join(actor)
+        self._changed()
+
+    def leave(self, actor_id):
+        self.memory.leave(actor_id)
+        self._changed()
+
+    def renew(self, actor_id):
+        self.memory.renew(actor_id)
+
+    def acquire(self, owner_id, mode, targets, lease_id=None):
+        lease = self.memory.acquire(owner_id, mode, targets, lease_id)
+        self._changed()
+        return lease
+
+    def release(self, lease_id, owner_id):
+        self.memory.release(lease_id, owner_id)
+        self._changed()
+
+    def expire(self):
+        self.memory.expire()
+        self._changed()
+
+    def session(self):
+        return self.memory.session()
+
+    def record_receipt(self, receipt, digest=""):
+        self.memory.record_receipt(receipt, digest)
+
+    def replay(self, request_id, digest):
+        return self.memory.replay(request_id, digest)
+
+    def receipts(self, request_ids):
+        return self.memory.receipts(request_ids)
+
+    def close(self):
+        """Stop copying. The thread removes this host's participants from SpacetimeDB on its
+        way out, if it can; never waits for that."""
+        self._stop.set()
+        self._wake.set()
+
+    def wait_idle(self, timeout):
+        """Wait until SpacetimeDB matches memory. True if it does. For tests and checks."""
+        return self._idle.wait(timeout)
+
+    def _changed(self):
+        with self._lock:
+            self._generation += 1
+            self._idle.clear()
+            self._wake.set()
+
+    # The copy, on the spacetime-mirror thread
+
+    def _run(self):
+        renewed = 0.0
+        while not self._stop.is_set():
+            self._wake.clear()
+            with self._lock:
+                generation = self._generation
+            try:
+                if self._remote is None:
+                    self._remote = self._connect()
+                    self._pushed = None
+                if self._pushed is None:
+                    self._clear()
+                self._push()
+                if time.monotonic() - renewed >= self._renew_s:
+                    for actor_id in list(self._pushed[0]):
+                        self._write("renew", {"actor_id": actor_id, "ttl_ms": LEASE_TTL_MS})
+                    renewed = time.monotonic()
+                self._set_status(f"Sharing participants and leases with SpacetimeDB at "
+                                 f"{self._remote.url}")
+                with self._lock:
+                    if generation == self._generation:
+                        self._idle.set()
+                wait = self._renew_s
+            except (StoreUnavailable, SessionError) as e:
+                self._pushed = None
+                if isinstance(e, SessionError):  # claim_host refused: another host owns it
+                    self._remote = None
+                self._set_status(f"Not using SpacetimeDB: {e}")
+                wait = self._retry_s
+            except Exception:
+                log.exception("the SpacetimeDB copy failed")
+                self._pushed = None
+                self._set_status("Not using SpacetimeDB: the copy failed (see the console)")
+                wait = self._retry_s
+            self._wake.wait(wait)
+        self._leave_all()
+
+    def _clear(self):
+        """Remove every participant and lease an earlier host left in SpacetimeDB."""
+        owners = {r["actor_id"] for r in self._remote.select("SELECT * FROM participant")}
+        owners |= {r["owner_id"] for r in self._remote.select("SELECT * FROM lease")}
+        for actor_id in owners:
+            self._remote.call("leave", {"actor_id": actor_id})
+        self._pushed = ({}, {})
+
+    def _push(self):
+        """Make SpacetimeDB's participants and leases match memory's."""
+        want = self.memory.session()
+        actors = {a["actor_id"]: a for a in want["participants"]}
+        held = {x["lease_id"]: x for x in want["leases"]}
+        have_actors, have_leases = self._pushed
+        for actor_id in [a for a in have_actors if a not in actors]:
+            self._write("leave", {"actor_id": actor_id})
+            del have_actors[actor_id]
+            for lease_id in [k for k, v in have_leases.items() if v["owner"]["actor_id"] == actor_id]:
+                del have_leases[lease_id]
+        for lease_id in [k for k in have_leases if k not in held]:
+            owner_id = have_leases[lease_id]["owner"]["actor_id"]
+            self._write("release", {"lease_id": lease_id, "owner_id": owner_id})
+            del have_leases[lease_id]
+        for actor_id, actor in actors.items():
+            if have_actors.get(actor_id) != actor:
+                self._write("join", {k: actor[k] for k in ("actor_id", "name", "role")})
+                have_actors[actor_id] = actor
+        for lease_id, lease in held.items():
+            if lease_id not in have_leases:
+                self._write("acquire", {
+                    "lease_id": lease_id,
+                    "owner_id": lease["owner"]["actor_id"],
+                    "mode": lease["mode"],
+                    "targets": list(lease["targets"]),
+                    "ttl_ms": LEASE_TTL_MS,
+                })
+                have_leases[lease_id] = lease
+
+    def _write(self, reducer, args):
+        """Call a reducer. A rejection is logged, not raised: memory decided already."""
+        try:
+            self._remote.call(reducer, args)
+        except SessionError as e:
+            log.warning("SpacetimeDB rejected %s from the host: %s", reducer, e)
+
+    def _leave_all(self):
+        if self._remote is None or not self._pushed:
+            return
+        try:
+            for actor_id in self._pushed[0]:
+                self._remote.call("leave", {"actor_id": actor_id})
+        except (StoreUnavailable, SessionError):
+            pass  # its leases lapse within LEASE_TTL_MS anyway
+
+    def _set_status(self, text):
+        if text != self.status:
+            log.info("%s", text)
+            print("Spatial Modeling:", text)
+        self.status = text
 
 
 def _replayed(request_id, row, digest):

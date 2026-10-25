@@ -7,7 +7,7 @@ The module holds the session state the host shares: **participants**, **object l
 | File | What it is |
 | --- | --- |
 | [`src/index.ts`](src/index.ts) | The module: tables `participant`, `lease`, `receipt` (public) and `authority` (private), and the reducers. |
-| [`../blender_addon/spatial_modeling/session_store.py`](../blender_addon/spatial_modeling/session_store.py) | The host's side: one `SessionStore` interface, `MemoryStore` (fallback) and `SpacetimeStore` (stdlib HTTP). |
+| [`../blender_addon/spatial_modeling/session_store.py`](../blender_addon/spatial_modeling/session_store.py) | The host's side: one `SessionStore` interface, `MemoryStore`, `SpacetimeStore` (stdlib HTTP) and `MirroredStore`, which the host uses: memory decides, a thread copies to SpacetimeDB. |
 | [`LatencyProbe/`](LatencyProbe/) | C# console app on the official C# SDK; stands in for the Unity app. |
 | [`measure.py`](measure.py) | Measures HTTP round trips and subscription latency (stdlib only). |
 | [`../tests/backend/test_session_store.py`](../tests/backend/test_session_store.py) | Runs every store test against both stores; the SpacetimeDB half is skipped when no server is running. |
@@ -79,12 +79,12 @@ PowerShell, as Talia (not as administrator). Pin version **2.13.0** of everythin
    ```
 
    The first publish logs the CLI into the local server. That CLI identity owns the database. Publish again after a module change; the data is kept unless the schema changes incompatibly.
-5. **The host claims the database** the first time the add-on connects (in P3B). To see who holds it, run `spacetime sql spatial-modeling "SELECT * FROM authority"`: slot 0 is the publisher and slot 1 the host. Only the owner can read that table. If the host's token is lost, free the slot with `spacetime call spatial-modeling reset_host`, then restart the host.
+5. **The host claims the database** the first time the add-on connects (as soon as the host starts with this server running). To see who holds it, run `spacetime sql spatial-modeling "SELECT * FROM authority"`: slot 0 is the publisher and slot 1 the host. Only the owner can read that table. If the host's token is lost, free the slot with `spacetime call spatial-modeling reset_host`, then restart the host.
 6. *(Optional)* **Measure on this PC.** Install the .NET SDK (`winget install Microsoft.DotNet.SDK.10`) and generate the probe's bindings (`spacetime generate --lang csharp --out-dir LatencyProbe\module_bindings --module-path . -y`). Then run the measurement with Blender's own Python, so no other Python is needed: `& "C:\Program Files\Blender Foundation\Blender 5.2\5.2\python\bin\python.exe" measure.py`. It publishes its own `spatial-modeling-bench` database and leaves `spatial-modeling` alone.
 
 **Windows risks** (none of this has been tried on Windows yet):
 
-- Connecting to a closed port on Windows takes about 2 s rather than failing at once. So the host should create the `SpacetimeStore` once, when it starts, and fall back to `MemoryStore` if that raises `StoreUnavailable`. It shouldn't retry on every request. The store's timeout is 1 s.
+- Connecting to a closed port on Windows takes about 2 s rather than failing at once. That happens on the copy thread, so Blender doesn't notice. The store's timeout is 1 s.
 - urllib uses the Windows proxy settings. `SpacetimeStore` turns proxies off, so a system proxy can't capture localhost traffic.
 - Port 3000 is a common development port; it may already be in use.
 - The server signs tokens with keys in the CLI's configuration directory (`--jwt-key-dir`). Deleting that directory makes every token invalid, the publisher's included. `SpacetimeStore` gets a new identity when its token is refused, but it can't claim a database that still names the old host. I haven't tested recovery; it probably means wiping the server's data directory and publishing again. Back up the configuration directory, and don't delete it.
@@ -105,18 +105,19 @@ PowerShell, as Talia (not as administrator). Pin version **2.13.0** of everythin
 5. **Read only.** The bindings include the reducers, but only the host can call them; Unity gets `permission_denied`. Lease requests stay `lease.acquire` over the host connection. `session.update` over that connection carries the same lists, so the app must keep working without SpacetimeDB.
 6. **Criterion 2 in Unity:** in `OnInsert`, log `DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (long)row.AcquiredAt`. `acquired_at` is the server's clock when the reducer ran, on the same PC. The target is under 250 ms.
 
-## For the host (P3B)
+## For the host (P3B, #165)
 
-- Pick the store once, at host start: `SpacetimeStore(token_path)`, and fall back to `MemoryStore()` on `StoreUnavailable`. Show which one is in use in the add-on status. Never switch during a session; that would split the state.
-- Keep the token outside Git and outside the `.blend` file, for example in `bpy.utils.user_resource('CONFIG', path="spatial_modeling", create=True)`.
-- Call `renew(actor_id)` whenever a client is heard from, `leave(actor_id)` when its connection closes, and `expire()` now and then. For a command sent without a lease, check `conflict(...)`. Record a receipt as `pending` before applying and as final afterwards, so a crash between the two leaves a record.
-- Every call blocks Blender's main thread for its round trip. If a server stalls, a call waits up to the 1 s timeout and then raises `StoreUnavailable`. Treat that like `internal_error`: the outcome is unknown.
+The host add-on uses SpacetimeDB through `MirroredStore` in `session_store.py`. Blender decides every lease in memory, as before, and answers at once. A background thread (`spacetime-mirror`) then copies participants and leases to the server the **SpacetimeDB** preference names (`http://127.0.0.1:3000` by default; leave it blank to turn this off). Nothing on Blender's main thread waits for SpacetimeDB.
 
-**Where the host is now (#75).** Leases and presence go through `SessionStore`: `session.Session(store=...)` takes one, and `host.start()` passes none, so the host uses `MemoryStore(lease_ttl_ms=None)`. There, leases end only on release or when the owner's connection closes; the server closes a connection it hasn't heard from for 6 s, timed on its reader thread. SpacetimeDB isn't wired in yet, on purpose, until criterion 1 passes on Windows (#16). Before switching, settle these:
+- **Order.** The thread makes the server match memory: leave, release, join, then acquire, so a lease is released there before an overlapping one is acquired. The reducers check every write again; a disagreement is logged in the console, and the copy carries on.
+- **No server.** The host works exactly as with `MemoryStore` alone. The add-on preferences show why ("Not using SpacetimeDB: …"), and the thread tries again every 5 s. When the server comes back, the thread clears what an earlier host left and copies everything again.
+- **Lifetime.** Rows get the contract's 6 s TTL and the thread renews them every 2 s, even while Blender's main thread is busy rendering. If Blender quits or crashes, subscribers stop seeing its leases within 6 s. On a clean stop, the thread removes the host's participants.
+- **Token.** Kept in Blender's config folder as `spatial_modeling/spacetime-host-token`, outside Git and the `.blend` file. If the preferences say "another identity is already the host", free the slot with `spacetime call spatial-modeling reset_host` and change the SpacetimeDB preference (or restart Blender), so the host claims it.
+- **Not copied yet:** the receipt log. Receipts still live in `commands.py`, not in the store.
 
-- **Renewal while Blender is busy.** `renew()` would run on the main thread, which stops during a render. A render over 6 s would let every lease lapse in SpacetimeDB although the clients kept pinging, and `renew()` doesn't revive a lapsed lease. Renew from the reader thread's last-heard times when the main thread resumes, before anything else, or give the rows a longer TTL and let the host end them on leave.
-- **Cost per command.** Step 6 of every command reads the leases: two SQL queries, about 2.5 ms each time, on the main thread.
-- **Receipts** still live in `commands.py`, not in the store.
+The remote Blender client still joins through the host's TLS LAN port (8767) and gets presence and leases from the host. SpacetimeDB stays on localhost.
+
+`tests/backend/spacetime_host_check.py` runs this in Blender against a real server: two VR clients, a refused same-object lease, and the lease table before and after the release. `test_session_store.py` runs it when `BLENDER` is set and a server is up.
 
 ## Security notes
 

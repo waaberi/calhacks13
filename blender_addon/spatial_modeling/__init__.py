@@ -99,6 +99,17 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
         update=_restart,
     )
 
+    spacetime_url: bpy.props.StringProperty(
+        name="SpacetimeDB",
+        description=(
+            "Server that gets a copy of the participants and leases, for the Unity app to "
+            "subscribe to. Run it on this PC with `spacetime start --listen-addr "
+            "127.0.0.1:3000`. Blank: don't use SpacetimeDB"
+        ),
+        default="http://127.0.0.1:3000",
+        update=_restart,
+    )
+
     client_address: bpy.props.StringProperty(name="Host address", default="127.0.0.1")
     client_port: bpy.props.IntProperty(name="Host port", default=lan.PORT, min=1, max=65535)
     client_token: bpy.props.StringProperty(name="Session token", subtype="PASSWORD")
@@ -124,6 +135,8 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
         layout.label(text=f"VR app: {host.status}")
         for actor in host.participants():
             layout.label(text=f"Connected: {actor['name']} ({actor['role']})", icon="USER")
+        layout.prop(self, "spacetime_url")
+        layout.label(text=host.spacetime_status())
         box = layout.box()
         box.prop(self, "lan_enabled")
         col = box.column()
