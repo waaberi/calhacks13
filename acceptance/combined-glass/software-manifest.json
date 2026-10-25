@@ -1,10 +1,10 @@
 {
   "state": "GLASS_REQUESTED_CORRECTIONS_SOFTWARE_VERIFIED",
-  "checked_at_utc": "2026-10-25T04:58:25.706634+00:00",
+  "checked_at_utc": "2026-10-25T05:10:28.062558+00:00",
   "branch": "codex/talia-combined-glass-ui",
-  "application_source": "412785c755a315320943bbdafd5069351d37b758",
-  "package_source": "412785c755a315320943bbdafd5069351d37b758",
-  "assembly_sha256": "85c6937738e26b32bc982d10c0b5a0969163485e30b4dab60b996b8c0c05e225",
+  "application_source": "26fd8a1beebfc776efb4a73b779dc8d3e0783d53",
+  "package_source": "26fd8a1beebfc776efb4a73b779dc8d3e0783d53",
+  "assembly_sha256": "a972b1f20fbd1ddbd60cc68f566a1c3685f7829121576b57d94762160263ef51",
   "mandatory_markers": [
     "P25_MAPPING_CHECK PASS",
     "P25_TRANSPORT_CHECK PASS",
@@ -62,16 +62,17 @@
     "ROOM_RECOVERY_CHECKS PASS",
     "P25_QUICK_ACTION_CHECK PASS",
     "P25_DRAWING_MODE_CHECK PASS",
-    "LEFT_HAND_MENU_COMPACT_CHECK PASS"
+    "LEFT_HAND_MENU_COMPACT_CHECK PASS",
+    "GLASS_HELD_POINT_JITTER_CHECK PASS"
   ],
   "http_cases": [
     8,
     2,
     9
   ],
-  "http_and_helper_evidence_reused_from": "9af9909 v8; only room and left-hand menu source/checks changed, actual HTTP8+2+9 and159capture-helper passes retained",
+  "http_and_helper_evidence_reused_from": "9af9909 v8; room, left-menu and visual-controller paths changed; preview HTTP protocol/transport unchanged, actual HTTP8+2+9 and159capture-helper passes retained",
   "helper_tests": 159,
-  "compiler_inputs_verified": 351,
+  "compiler_inputs_verified": 360,
   "matching_packaged_python_sources": 41,
   "private_bootstrap": {
     "passed": true,
@@ -233,7 +234,7 @@
     "reason": "backend/contracts/VoiceCore trees byte-identical to verified combined base; affected Unity/input/controller/room and capture/helper tests freshly rerun"
   },
   "corrections": [
-    "same-current-device body/visual-ray sample and current logical hits; held object retains stabilization",
+    "cylinder, visual and logical free ray share existing stabilized aim; held endpoint is exact actual smooth contact, unrelated nearer surfaces ignored; manipulation path unchanged",
     "unbounded positive/negative joystick depth without reselect",
     "compact captions-only input panel with shared exact screen curve; Select object/Pin menu here/Recover workspace removed from one-third sized docked left-hand menu",
     "requested frame removals and near-view position lock",
@@ -264,6 +265,24 @@
     "v4 physical choppy/glitching/unaligned/controller rejection",
     "v7 wearer pointer lag/input/room/depth/layout feedback",
     "first v8 controller-tip test stopped at one-micrometre transform tolerance; corrected to ten-micrometre tolerance with explicit error reporting and full rerun",
-    "initial helper rerun used Python3.13 without Pillow; retained failure, rerun with actual capture Python3.12 environment159PASS"
-  ]
+    "initial helper rerun used Python3.13 without Pillow; retained failure, rerun with actual capture Python3.12 environment159PASS",
+    "v10 raw pointer physically rejected as very shaky/skipping while held objects smooth; replaced with exact held contact and synchronized stabilized visuals",
+    "v10-a editor fixture missed normal GlassRoot lifecycle; fixed fixture with strict active/hidden accessibility checks",
+    "v10-b RuntimeActionBindings existing-output collision; original retained and full build succeeded into fresh output"
+  ],
+  "object_movement_preservation": {
+    "held_object_update_block_byte_identical_to_v10": true,
+    "StabilizeRay_byte_identical_to_v10": true
+  },
+  "visual_regression": {
+    "physically_rejected_raw_v10": true,
+    "actual_RenderHand_noisy_samples": 1080,
+    "formats": 2,
+    "hands": 2,
+    "exact_held_contact_error_m": 0,
+    "nearer_mesh_and_menu_cannot_steal_held_endpoint": true,
+    "body_and_ray_same_stabilized_pose": true,
+    "object_follower_and_stabilizer_byte_unchanged": true,
+    "physical_acceptance": false
+  }
 }
