@@ -204,7 +204,14 @@ def configure_private_ui(bpy, resources):
     bpy.context.preferences.use_preferences_save = False
     spec = importlib.util.spec_from_file_location("private_glass_theme", Path(__file__).with_name("glass_blender_theme.py"))
     theme_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(theme_module)
+    # Blender's embedded Python ignores PYTHONDONTWRITEBYTECODE here. Keep the
+    # shipped support package immutable; only the private session may write files.
+    previous_bytecode = sys.dont_write_bytecode
+    try:
+        sys.dont_write_bytecode = True
+        spec.loader.exec_module(theme_module)
+    finally:
+        sys.dont_write_bytecode = previous_bytecode
     glass = theme_module.apply_private_theme(bpy)
     return {"config": str(config), "show_splash": False, "preference_autosave": False, "ui_scale": 1.5, "glass_theme": glass}
 
