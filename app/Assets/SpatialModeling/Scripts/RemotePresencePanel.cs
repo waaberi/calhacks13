@@ -16,7 +16,9 @@ namespace SpatialModeling
         string shown = "";
         string activityLine = "";
         float activityUntil;
-        HashSet<string> seenLeases = new HashSet<string>();
+        // Lease IDs are never reused, so this only grows: a reconnect doesn't announce old leases again.
+        readonly HashSet<string> seenLeases = new HashSet<string>();
+        readonly HashSet<string> editors = new HashSet<string>();
         readonly Dictionary<string, TextMesh> tags = new Dictionary<string, TextMesh>();
         readonly HashSet<string> wanted = new HashSet<string>();
         readonly List<KeyValuePair<string, string>> shownObjects = new List<KeyValuePair<string, string>>();
@@ -55,38 +57,32 @@ namespace SpatialModeling
 
         void OnActivity(ActivityNote n)
         {
-            activityLine = n.ActorName + ": " + n.Summary;
+            activityLine = n.ActorName + ": " + (n.Summary.Length > 0 ? n.Summary : n.Op);
             activityUntil = Time.time + activitySeconds;
         }
 
         // A lease you haven't seen before is the notice that someone started editing (contracts/README.md).
         void OnSession()
         {
-            host.GetShownObjects(shownObjects);
-            var now = new HashSet<string>();
             foreach (var l in host.Leases)
-            {
-                now.Add(l.Id);
-                if (l.Owner.Id != host.MyActorId && !seenLeases.Contains(l.Id))
+                if (seenLeases.Add(l.Id) && l.Owner.Id != host.MyActorId)
                 {
                     activityLine = l.Owner.Name + " started editing " + TargetNames(l);
                     activityUntil = Time.time + activitySeconds;
                 }
-            }
-            seenLeases = now;
         }
 
-        string NameOf(string id)
+        bool IsShown(string id)
         {
-            foreach (var o in shownObjects) if (o.Key == id) return o.Value;
-            return null;
+            foreach (var o in shownObjects) if (o.Key == id) return true;
+            return false;
         }
 
         string TargetNames(LeaseInfo l)
         {
             if (l.Mode == "exclusive") return "the whole document";
             var names = new List<string>();
-            foreach (var t in l.Targets) { string n = NameOf(t); if (n != null) names.Add(n); }
+            foreach (var t in l.Targets) { string n = host.ObjectName(t); if (n != null) names.Add(n); }
             return names.Count > 0 ? string.Join(", ", names) : "objects";
         }
 
@@ -100,9 +96,15 @@ namespace SpatialModeling
                 sb.Append("In session: ").Append(host.Participants.Count);
                 foreach (var p in host.Participants)
                     sb.Append('\n').Append(p.Name).Append(p.Id == host.MyActorId ? " (you)" : " (" + p.Role + ")");
+                editors.Clear();
                 foreach (var l in host.Leases)
+                {
+                    editors.Add(l.Owner.Id);
                     if (l.Owner.Id != host.MyActorId)
                         sb.Append('\n').Append(l.Owner.Name).Append(" is editing: ").Append(TargetNames(l));
+                }
+                // contracts/README.md, Leases and presence.
+                if (editors.Count >= 2) sb.Append("\nTwo people are editing");
             }
             if (activityLine.Length > 0 && Time.time < activityUntil) sb.Append("\n\n").Append(activityLine);
             return sb.ToString();
@@ -118,7 +120,7 @@ namespace SpatialModeling
 
             host.GetShownObjects(shownObjects);
             string t = BuildText();
-            if (t != shown) { shown = t; text.text = t; }
+            if (t != shown) { shown = t; text.text = t; VoiceUiAdapter.FitBacking(text); }
             text.color = host.SceneIsStale ? new Color(1f, 0.7f, 0.25f) : Color.white;
             UpdateTags(head);
         }
@@ -132,7 +134,8 @@ namespace SpatialModeling
                 if (l.Owner.Id == host.MyActorId || l.Mode == "exclusive") continue;
                 foreach (var id in l.Targets)
                 {
-                    if (!host.TryGetBounds(id, out Bounds b)) continue;
+                    // Only over objects drawn with a mesh: a camera or a hidden object has nowhere to put it.
+                    if (!IsShown(id) || !host.TryGetBounds(id, out Bounds b)) continue;
                     wanted.Add(id);
                     if (!tags.TryGetValue(id, out var tm) || tm == null)
                     {
@@ -143,7 +146,7 @@ namespace SpatialModeling
                         VoiceUiAdapter.SetupText(tm, go);
                         tags[id] = tm;
                     }
-                    if (tm.text != l.Owner.Name) tm.text = l.Owner.Name;
+                    if (tm.text != l.Owner.Name) { tm.text = l.Owner.Name; VoiceUiAdapter.FitBacking(tm); }
                     var pos = new Vector3(b.center.x, b.max.y + 0.03f, b.center.z);
                     tm.transform.position = pos;
                     tm.transform.rotation = Quaternion.LookRotation(pos - head.position, head.up);

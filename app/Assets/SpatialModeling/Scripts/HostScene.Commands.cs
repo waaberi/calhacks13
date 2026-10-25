@@ -178,6 +178,9 @@ namespace SpatialModeling
                     into.Add(new KeyValuePair<string, string>(pair.Key, pair.Value.name));
             }
         }
+        // The name of any object in the scene, shown or not (a camera, an empty); null if there is none.
+        public string ObjectName(string id) => id != null && objects.TryGetValue(id, out var go) && go != null ? go.name : null;
+
         public bool TryGetBounds(string id, out Bounds bounds)
         {
             bounds = default;
