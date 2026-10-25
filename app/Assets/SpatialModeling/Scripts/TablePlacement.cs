@@ -27,6 +27,7 @@ namespace SpatialModeling
         public Material PreviewMaterial => material;
         public bool MenuDocked { get; private set; } = true;
         const float MenuScale = 0.00055f;
+        const float DockedMenuFactor = 1f / 3f;
         Transform display, preview, panel;
         bool seeded, pointing, cancelAllowed, menuTracked;
         Pose savedPose;
@@ -281,17 +282,26 @@ namespace SpatialModeling
         public void PinMenu()
         {
             if (panel == null || !panel.gameObject.activeInHierarchy) return;
-            MenuDocked = false;
+            SetMenuDocked(false);
             Debug.Log("P2_MENU_PLACEMENT world anchored; grip/release to reposition");
         }
 
         public void DockMenu()
         {
             FindFirstObjectByType<WorkspaceInteraction>()?.CancelGrabs();
-            MenuDocked = true;
+            SetMenuDocked(true);
             menuTracked = false; // Wait for a current left-hand sample, not a stale pose.
             Refresh();
             Debug.Log("P2_MENU_PLACEMENT left hand; waiting for tracked grip pose");
+        }
+
+        void SetMenuDocked(bool docked)
+        {
+            // Scale only the dock transition. GlassRoot owns the accessibility
+            // multiplier, including changes while a docked menu is hidden.
+            if(panel!=null && MenuDocked!=docked)
+                panel.localScale*=docked?DockedMenuFactor:1f/DockedMenuFactor;
+            MenuDocked=docked;
         }
 
         // Use the same typed aim pose, stabilization, pointer and trigger edges
@@ -336,7 +346,7 @@ namespace SpatialModeling
             if (panel != null) return;
             if(roomSetup==null) roomSetup=gameObject.AddComponent<WorkspaceRoomSetup>();
             panel = new GameObject("P2 left-hand placeable menu", typeof(RectTransform), typeof(Canvas), typeof(RoundedGlassImage)).transform;
-            panel.localScale = Vector3.one * MenuScale;
+            panel.localScale = Vector3.one * MenuScale * (MenuDocked ? DockedMenuFactor : 1f);
             panel.gameObject.AddComponent<GlassRoot>();
             var canvas = panel.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
@@ -362,14 +372,14 @@ namespace SpatialModeling
                 ("Smaller", () => adjust(0,0,-.1f,0)), ("Rotate left", () => adjust(0,0,0,-15)),
                 ("Rotate right", () => adjust(0,0,0,15)), ("Recenter / confirm", () => GetComponent<HostScene>()?.RequestRecenter()),
                 ("Reset View", () => GetComponent<HostScene>()?.ResetObjectArrangement()),
-                ("Pin menu here", PinMenu), ("Return to left hand", DockMenu)
+                ("Return to left hand", DockMenu)
             };
             if(compact) actions=new (string, Action)[] {
-                ("Undo placement",arrangement.UndoPlacement), ("Recover workspace",arrangement.Recover),
+                ("Undo placement",arrangement.UndoPlacement),
                 ("Add horizontal plane",()=>arrangement.Surfaces.BeginPlane("horizontal")),
                 ("Add vertical plane",()=>arrangement.Surfaces.BeginPlane("vertical")),
                 ("Manage planes",()=>ChangeMenu(MenuPage.Planes)), ("Actual size",RestoreActualSize),
-                ("Pin menu here",PinMenu), ("Return to left hand",DockMenu),
+                ("Return to left hand",DockMenu),
             };
             if(compact && menuPage==MenuPage.Settings) actions=new (string,Action)[] {
                 ("Show room geometry",()=>{ arrangement.Surfaces.ToggleDetected(); RefreshMenu(); }),
@@ -413,7 +423,7 @@ namespace SpatialModeling
             if (compact && menuPage == MenuPage.Arrange && voice != null)
             {
                 var selectionActions = new List<(string, Action)>(actions) {
-                    ("Select object", voice.BeginObjectSelection), ("Clear selection", voice.ClearObjectSelection)
+                    ("Clear selection", voice.ClearObjectSelection)
                 };
                 actions = selectionActions.ToArray();
             }

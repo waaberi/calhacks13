@@ -33,6 +33,13 @@ public static class RoomRecoveryChecks
         Check(WorkspaceSurfaces.ValidateRoomRecovery(references).anchors.Count==2,"bad/duplicate/unknown-room UUIDs never enter recovery");
         Check(WorkspaceSurfaces.RoomRetryDelay(1)==15 && WorkspaceSurfaces.RoomRetryDelay(3)==45
             && WorkspaceSurfaces.RoomRetryDelay(1000)==60,"retries continue beyond three attempts without a busy query loop");
+        Check(WorkspaceSurfaces.RoomLocalizationTimeoutSeconds>1
+            && WorkspaceSurfaces.RoomLocalizationReadinessSeconds>=2*WorkspaceSurfaces.RoomLocalizationTimeoutSeconds+1,
+            "localization uses positive multi-second native deadlines and retains handles through two full requests plus fresh frames");
+        Check(WorkspaceSurfaces.RoomLocalizationCanStart(WorkspaceSurfaces.RoomLocalizationReadinessSeconds,0)
+            && WorkspaceSurfaces.RoomLocalizationCanStart(WorkspaceSurfaces.RoomLocalizationReadinessSeconds-5.1,1)
+            && !WorkspaceSurfaces.RoomLocalizationCanStart(4.9,1) && !WorkspaceSurfaces.RoomLocalizationCanStart(12,2),
+            "retry policy permits a second full localization window but cannot truncate it or issue more than two requests");
         var currentFloor=new WorkspaceRoomLocalization.FloorCandidate {Room=floor,Tracked=true,SampleTime=10,
             WorldPose=new Pose(new Vector3(3,0,-4),Quaternion.Euler(90,37,0)),
             Boundary=new[]{new Vector2(-2,-2),new Vector2(2,-2),new Vector2(2,0),Vector2.zero,new Vector2(0,2),new Vector2(-2,2)}};

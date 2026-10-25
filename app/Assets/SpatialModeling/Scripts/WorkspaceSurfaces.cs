@@ -222,7 +222,7 @@ namespace SpatialModeling
                     foreach (var anchor in elements)
                     {
                         if (!anchor.TryGetComponent<OVRLocatable>(out var locatable)) continue;
-                        await locatable.SetEnabledAsync(true);
+                        await locatable.SetEnabledAsync(true,timeout:RoomLocalizationTimeoutSeconds);
                         if (!Current()) return;
                         if (locatable.IsEnabled && !next.Exists(a=>a.Anchor.Uuid==anchor.Uuid))
                             next.Add(new RoomAnchor { Anchor=anchor,Locatable=locatable });
@@ -265,7 +265,7 @@ namespace SpatialModeling
                         foreach (var anchor in children)
                         {
                             if (!anchor.TryGetComponent<OVRLocatable>(out var locatable)) continue;
-                            await locatable.SetEnabledAsync(true);
+                            await locatable.SetEnabledAsync(true,timeout:RoomLocalizationTimeoutSeconds);
                             if (!Current()) return;
                             if (!locatable.IsEnabled || next.Exists(a => a.Anchor.Uuid == anchor.Uuid)) continue;
                             kinds.TryGetValue(anchor.Uuid, out var kind);
@@ -296,7 +296,7 @@ namespace SpatialModeling
                 foreach (var mesh in meshes)
                 {
                     if (next.Exists(a => a.Anchor.Uuid == mesh.Uuid) || !mesh.TryGetComponent<OVRLocatable>(out var local)) continue;
-                    await local.SetEnabledAsync(true);
+                    await local.SetEnabledAsync(true,timeout:RoomLocalizationTimeoutSeconds);
                     if (!Current()) return;
                     if (local.IsEnabled) next.Add(new RoomAnchor { Anchor = mesh, Locatable = local });
                 }

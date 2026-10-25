@@ -43,14 +43,19 @@ public static class CombinedGlassChecks
             var display=new GameObject("combined display fixture");display.transform.SetParent(owner.transform,false);
             table.Initialize(display.transform,AssetDatabase.LoadAssetAtPath<Material>("Assets/SpatialModeling/Materials/HostObject.mat"));
             table.SeedFromHead(new Vector3(0,1.65f,0),Vector3.forward);table.Place();
-            table.UpdateLeftHandMenu(new Pose(new Vector3(-.3f,1.15f,.3f),Quaternion.identity),new Vector3(0,1.65f,0),true);table.PinMenu();
+            table.UpdateLeftHandMenu(new Pose(new Vector3(-.3f,1.15f,.3f),Quaternion.identity),new Vector3(0,1.65f,0),true);
+            var dockedMenuScale=table.Menu.localScale;table.PinMenu();
+            Check(Vector3.Distance(table.Menu.localScale,dockedMenuScale*3f)<.000001f,"compact production menu expands to the existing full scale when pinned");
             var page=typeof(TablePlacement).GetNestedType("MenuPage",BindingFlags.NonPublic);
             void Settings()=>Invoke(table,"ChangeMenu",Enum.Parse(page,"Settings"));
             TableAction[] Actions()=>table.Menu.GetComponentsInChildren<TableAction>(true);
             var arrangeNames=Actions().Select(a=>a.name).ToArray();
-            foreach(var name in new[]{"Undo placement","Recover workspace","Add horizontal plane","Add vertical plane","Manage planes","Actual size","Pin menu here","Return to left hand","Select object","Clear selection"})
+            foreach(var name in new[]{"Undo placement","Add horizontal plane","Add vertical plane","Manage planes","Actual size","Return to left hand","Clear selection"})
                 Check(arrangeNames.Contains(name),"arrange control preserved: "+name);
+            foreach(var name in new[]{"Select object","Pin menu here","Recover workspace"})
+                Check(!arrangeNames.Contains(name),"human-requested menu action removed: "+name);
             Settings();
+            Check(Vector3.Distance(table.Menu.localScale,dockedMenuScale*3f)<.000001f,"page rebuild preserves the full pinned menu scale");
             foreach(var name in new[]{"Show room geometry","Auto surfaces on/off","Environment setup","Manage planes","Surface help on/off","Actual size","Lock Blender screen","Pointer: Right","Back to arrange","Appearance / accessibility","Voice transcription: OFF"})
                 Check(Actions().Any(a=>a.name==name),"Settings control preserved: "+name);
             void Toggle(string label)

@@ -101,21 +101,80 @@ public static class VoiceSelectionChecks
             Check(!interaction.IsHolding,"existing grip release remains separate");
             table.UpdateLeftHandMenu(new Pose(new Vector3(-.3f,1.1f,.3f),Quaternion.identity),new Vector3(0,1.65f,0),true);
             table.Menu.gameObject.SetActive(true);
-            var select = table.Menu.GetComponentsInChildren<TableAction>().Single(a=>a.name=="Select object");
+            Check(!table.Menu.GetComponentsInChildren<TableAction>().Any(a=>a.name=="Select object"),
+                "menu omits Select object while preserving direct trigger selection");
             var clear = table.Menu.GetComponentsInChildren<TableAction>().Single(a=>a.name=="Clear selection");
             var renderCamera = new GameObject("Voice selection menu render",typeof(Camera)).GetComponent<Camera>();
             typeof(SettingsMenuChecks).GetMethod("Preview",BindingFlags.Static|BindingFlags.NonPublic)
                 .Invoke(null,new object[]{table,arrangement,renderCamera,"voice-selection-menu.png"});
             Physics.SyncTransforms();
-            var menuRay = new Ray(select.transform.position-select.transform.forward*.2f,select.transform.forward);
-            Check(table.HoverController(menuRay,true) && voice.SelectingObject,"actual menu collider invokes explicit Select object control");
-            Check(voice.SelectedObjectId==null && !interaction.IsHolding,"arming selection neither selects through UI nor grabs");
+            voice.BeginObjectSelection();
+            Check(voice.SelectingObject&&voice.SelectedObjectId==null&&!interaction.IsHolding,
+                "public selection mode remains available without a redundant menu-arm button");
+            var menuRay = new Ray(clear.transform.position-clear.transform.forward*.2f,clear.transform.forward);
             aim(right,left,menuRay,true,false);
             Check(voice.SelectedObjectId==null,"menu trigger cannot fall through to a model");
+            voice.BeginObjectSelection();
             table.Menu.gameObject.SetActive(false);
             aim(right,left,toward(0),true,false);
             Check(!voice.SelectingObject && voice.SelectedObjectId==views[0].ObjectId,"armed mode completes on next model trigger");
             clear.Invoke(); Check(voice.SelectedObjectId==null,"Clear selection removes latched target");
+
+            // Exercise only the newly requested size/removal changes through the
+            // real trigger/grip route, including lifecycle and accessibility.
+            var leftMenuPose=new Pose(new Vector3(-.3f,1.1f,.3f),Quaternion.identity);
+            var menuHead=new Vector3(0,1.65f,0);
+            table.UpdateLeftHandMenu(leftMenuPose,menuHead,true);
+            var menuNames=table.Menu.GetComponentsInChildren<TableAction>().Select(a=>a.name).ToArray();
+            foreach(var removed in new[]{"Select object","Pin menu here","Recover workspace"})
+                Check(!menuNames.Contains(removed),"requested left-hand action is absent: "+removed);
+            var compactScale=table.Menu.localScale;
+            Check(Mathf.Abs(compactScale.x/GlassTheme.TextScale-.00055f/3f)<.000001f,
+                "docked production menu uses exactly one third of the previous physical scale");
+            var menuPosition=table.Menu.position;var menuRotation=table.Menu.rotation;
+            menuRay=new Ray(clear.transform.position-clear.transform.forward*.2f,clear.transform.forward);
+            Physics.SyncTransforms();aim(right,left,menuRay,false,true);
+            Check(interaction.IsHolding&&!table.MenuDocked&&Vector3.Distance(table.Menu.localScale,compactScale*3f)<.000001f,
+                "actual side-grip menu route preserves pinning and expands to full size");
+            Check(Vector3.Distance(table.Menu.position,menuPosition)<.000001f&&Quaternion.Angle(table.Menu.rotation,menuRotation)<.001f,
+                "dock-to-world size change preserves the menu's world pose");
+            aim(right,left,menuRay,false,false);
+            Check(!interaction.IsHolding,"menu grip release remains available without a Pin menu button");
+            table.DockMenu();table.DockMenu();
+            Check(Vector3.Distance(table.Menu.localScale,compactScale)<.000001f&&!table.Menu.gameObject.activeSelf,
+                "repeated return-to-hand shrinks once and waits for fresh tracking");
+            table.UpdateLeftHandMenu(leftMenuPose,menuHead,true);
+            table.UpdateLeftHandMenu(default,menuHead,false);
+            table.UpdateLeftHandMenu(leftMenuPose,menuHead,true);
+            Check(Vector3.Distance(table.Menu.localScale,compactScale)<.000001f,
+                "tracking disable/re-enable does not apply the one-third factor again");
+            const string glassPrefix="SpatialModeling.Glass.";
+            string[] glassKeys={"TextScale","Contrast","Opaque","Motion"};
+            var glassPresent=glassKeys.Select(key=>PlayerPrefs.HasKey(glassPrefix+key)).ToArray();
+            float oldTextScale=GlassTheme.TextScale;
+            bool oldContrast=GlassTheme.HighContrast,oldOpaque=GlassTheme.ReducedTransparency,oldMotion=GlassTheme.ReducedMotion;
+            try
+            {
+                float enlarged=oldTextScale<1.5f?2f:1f;
+                GlassTheme.SetAccessibility(enlarged,oldContrast,oldOpaque,oldMotion);
+                var accessibleScale=compactScale*(enlarged/oldTextScale);
+                Check(Vector3.Distance(table.Menu.localScale,accessibleScale)<.000001f,
+                    "docked one-third menu preserves the user's accessibility text-size multiplier");
+                table.PinMenu();table.PinMenu();
+                Check(Vector3.Distance(table.Menu.localScale,accessibleScale*3f)<.000001f,
+                    "full-size world menu preserves accessibility without duplicate enlargement");
+                table.DockMenu();table.DockMenu();table.UpdateLeftHandMenu(leftMenuPose,menuHead,true);
+                Check(Vector3.Distance(table.Menu.localScale,accessibleScale)<.000001f,
+                    "returning accessible menu to hand preserves exactly one compact factor");
+            }
+            finally
+            {
+                GlassTheme.SetAccessibility(oldTextScale,oldContrast,oldOpaque,oldMotion);
+                for(int i=0;i<glassKeys.Length;i++)if(!glassPresent[i])PlayerPrefs.DeleteKey(glassPrefix+glassKeys[i]);
+                PlayerPrefs.Save();
+            }
+            Debug.Log("LEFT_HAND_MENU_COMPACT_CHECK PASS removed_select_pin_recover direct_trigger_selection public_selection_method grip_world_pin exact_one_third_docked_scale full_pinned_scale repeated_dock_pin_idempotent tracking_reenable accessibility_retained");
+            table.Menu.gameObject.SetActive(false);
 
             // A nearer screen must occlude a model for selection, exactly as it does for grabbing.
             var panel=new GameObject("Blocking screen fixture",typeof(RectTransform),typeof(Canvas),typeof(GlassCurvedCanvas),typeof(RoundedGlassImage));
@@ -144,7 +203,7 @@ public static class VoiceSelectionChecks
             host.Handle(decoded); voice.SelectObject(views[0].ObjectId);
             host.Handle(new HostEvent(HostEventKind.Welcome) {DocumentId=Guid.NewGuid().ToString("N"),OpenEpoch=Guid.NewGuid().ToString("N")});
             Check(voice.SelectedObjectId==null,"new document/epoch cannot inherit old selected UUID");
-            Debug.Log("VOICE_OBJECT_SELECTION_CHECKS PASS both_controller_mesh_rays trigger_select_no_drag persistent_target menu_arm_clear UI_screen_occlusion grip_preserved dwell focus disconnect document_epoch native_invariant");
+            Debug.Log("VOICE_OBJECT_SELECTION_CHECKS PASS both_controller_mesh_rays trigger_select_no_drag persistent_target public_arm_menu_clear UI_screen_occlusion grip_preserved dwell focus disconnect document_epoch native_invariant");
         }
         finally
         {

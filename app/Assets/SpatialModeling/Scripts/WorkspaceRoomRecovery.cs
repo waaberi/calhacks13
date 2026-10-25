@@ -25,6 +25,13 @@ namespace SpatialModeling
         RoomRecoveryIndex roomRecovery;
         bool roomRecoveryRead;
         int roomRecoveryDiagnosticLoads;
+        // The installed OpenXR shim converts SDK timeout zero to zero ns.
+        // Always supply a real positive localization window. Keep the overall
+        // parallel batch bounded, and never start a retry it cannot finish.
+        public const double RoomLocalizationTimeoutSeconds=5;
+        public const double RoomLocalizationReadinessSeconds=12;
+        public static bool RoomLocalizationCanStart(double remainingSeconds,int requests)
+            => requests<2 && remainingSeconds>=RoomLocalizationTimeoutSeconds;
         string RoomRecoveryPath => Path.Combine(Application.persistentDataPath,"saved-room-references.json");
 
         // Keep retrying a temporarily unavailable Link service at a bounded rate.
@@ -48,6 +55,7 @@ namespace SpatialModeling
                 {
                     roomRecovery=RecoveryReferencesFromEvidence(JsonUtility.FromJson<RoomEvidence>(File.ReadAllText(evidence)));
                     Debug.Log("WORKSPACE_ROOM_RECOVERY imported private UUID references="+roomRecovery.anchors.Count+" saved_poses_used=False");
+                    PersistRoomRecoveryIndex(roomRecovery);
                 }
             }
             catch(Exception error) {Debug.LogWarning("WORKSPACE_ROOM_RECOVERY references unavailable "+error.GetType().Name);}
@@ -117,6 +125,9 @@ namespace SpatialModeling
                 bool diagnostic=roomRecoveryDiagnosticLoads++<2;
                 var preparations=new List<Task<RoomAnchor?>>();
                 int index=0;
+                if(diagnostic) OVRManager.SpaceSetComponentStatusComplete+=RoomEnableCompleteDiagnostic;
+                try
+                {
                 foreach(var anchor in recovered)
                 {
                     bool duplicate=next.Exists(item=>item.Anchor.Uuid==anchor.Uuid);
@@ -131,12 +142,14 @@ namespace SpatialModeling
                 AssociateRecoveredSceneElements(next);
                 Debug.Log("WORKSPACE_ROOM_RECOVERY prepared="+next.Count+" matched_references="+
                     next.FindAll(item=>references.ContainsKey(item.Anchor.Uuid)).Count);
+                }
+                finally {if(diagnostic) OVRManager.SpaceSetComponentStatusComplete-=RoomEnableCompleteDiagnostic;}
             }
         }
         async Task<RoomAnchor?> PrepareRecoveredRoomAnchor(OVRAnchor anchor,RoomRecoveryReference reference,
             Func<bool> current,bool diagnostic,int index)
         {
-            double until=Time.realtimeSinceStartupAsDouble+3;
+            double until=Time.realtimeSinceStartupAsDouble+RoomLocalizationReadinessSeconds;
             OVRLocatable locatable=default;
             OVRTask<bool> enable=default;
             bool component=false,enablePending=false,lastEnableResult=false;
@@ -169,8 +182,9 @@ namespace SpatialModeling
                     }
                     if(enablePending && enable.IsCompleted)
                     {lastEnableResult=enable.GetResult();enablePending=false;}
-                    if(component && !enablePending && requests<2)
-                    {enable=locatable.SetEnabledAsync(true,timeout:1);enablePending=true;requests++;}
+                    if(component && !enablePending && RoomLocalizationCanStart(until-Time.realtimeSinceStartupAsDouble,requests))
+                    {enable=diagnostic?BeginRoomEnableDiagnostic(anchor,locatable,index):locatable.SetEnabledAsync(true,timeout:RoomLocalizationTimeoutSeconds);
+                        enablePending=true;requests++;}
                     await Task.Delay(16);
                 }
                 Debug.LogWarning("WORKSPACE_ROOM_RECOVERY anchor="+index+" readiness_timeout locatable="+component+
@@ -179,6 +193,55 @@ namespace SpatialModeling
                 return null;
             }
             finally {if(enablePending) enable.Dispose();}
+        }
+        static OVRTask<bool> BeginRoomEnableDiagnostic(OVRAnchor anchor,OVRLocatable locatable,int index)
+        {
+            try
+            {
+            // The SDK's public wrapper reduces the immediate native Result to a
+            // bool. Use its identical existing shim/task path for this bounded
+            // diagnostic so rejection and later completion remain distinguishable.
+            var handleProperty=typeof(OVRAnchor).GetProperty("Handle",BindingFlags.Instance|BindingFlags.NonPublic);
+            var shim=typeof(OVRPlugin).GetNestedType("Shim",BindingFlags.NonPublic);
+            var set=shim?.GetMethod("ovrp_SetSpaceComponentStatus",BindingFlags.Static|BindingFlags.Public);
+            MethodInfo fromRequest=null;
+            foreach(var method in typeof(OVRTask).GetMethods(BindingFlags.Static|BindingFlags.NonPublic))
+                if(method.Name=="FromRequest" && method.IsGenericMethodDefinition && method.GetParameters().Length==1
+                    && method.GetParameters()[0].ParameterType==typeof(ulong)) {fromRequest=method.MakeGenericMethod(typeof(bool));break;}
+            if(handleProperty==null || set==null || fromRequest==null) return locatable.SetEnabledAsync(true,timeout:RoomLocalizationTimeoutSeconds);
+            ulong handle=(ulong)handleProperty.GetValue(anchor);
+            if(OVRPlugin.GetSpaceComponentStatus(handle,OVRPlugin.SpaceComponentType.Locatable,out bool enabled,out bool pending)
+                && (enabled || pending)) return locatable.SetEnabledAsync(true,timeout:RoomLocalizationTimeoutSeconds);
+            object[] arguments={handle,OVRPlugin.SpaceComponentType.Locatable,OVRPlugin.Bool.True,RoomLocalizationTimeoutSeconds,0UL};
+            var result=(OVRPlugin.Result)set.Invoke(null,arguments);
+            ulong request=(ulong)arguments[4];
+            Debug.Log("WORKSPACE_ROOM_RECOVERY anchor="+index+" enable_native_result="+result+" code="+(int)result+
+                " request_nonzero="+(request!=0)+" timeout_seconds="+RoomLocalizationTimeoutSeconds);
+            return (int)result<0 ? OVRTask.FromResult(false):(OVRTask<bool>)fromRequest.Invoke(null,new object[]{request});
+            }
+            catch(Exception error)
+            {
+                Debug.LogWarning("WORKSPACE_ROOM_RECOVERY native_enable_diagnostic_unavailable="+error.GetType().Name);
+                return locatable.SetEnabledAsync(true,timeout:RoomLocalizationTimeoutSeconds);
+            }
+        }
+        static int roomEnableDiagnosticEvents;
+        static void RoomEnableCompleteDiagnostic(ulong request,bool success,OVRSpace space,Guid uuid,
+            OVRPlugin.SpaceComponentType component,bool enabled)
+        {
+            if(component!=OVRPlugin.SpaceComponentType.Locatable || roomEnableDiagnosticEvents++>=44) return;
+            try
+            {
+                // This event fires while OVRManager still holds the same parsed
+                // buffer. Observe it without polling/consuming another XR event.
+                var field=typeof(OVRManager).GetField("eventDataBuffer",BindingFlags.Static|BindingFlags.NonPublic);
+                var buffer=(OVRPlugin.EventDataBuffer)field.GetValue(null);
+                if(buffer.EventType!=OVRPlugin.EventType.SpaceSetComponentStatusComplete || buffer.EventData.Length<12) return;
+                int code=BitConverter.ToInt32(buffer.EventData,8);
+                Debug.Log("WORKSPACE_ROOM_RECOVERY enable_completion_result="+(OVRPlugin.Result)code+" code="+code+
+                    " success="+success+" enabled="+enabled);
+            }
+            catch(Exception error) {Debug.LogWarning("WORKSPACE_ROOM_RECOVERY completion_diagnostic_unavailable="+error.GetType().Name);}
         }
         static string RecoveredAnchorNativeStatus(OVRAnchor anchor)
         {
@@ -350,6 +413,12 @@ namespace SpatialModeling
             value=ValidateRoomRecovery(value);
             if(value.anchors.Count==0) return;
             roomRecovery=value;roomRecoveryRead=true;
+            PersistRoomRecoveryIndex(value);
+        }
+        void PersistRoomRecoveryIndex(RoomRecoveryIndex value)
+        {
+            value=ValidateRoomRecovery(value);
+            if(value.anchors.Count==0) return;
             if(!Application.isPlaying) return;
             try
             {

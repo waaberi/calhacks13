@@ -52,7 +52,8 @@ the inactive-XR fallback are both covered without inventing which one ran.
 
 ### Left-hand menu and world placement
 
-The P2 controls start at the tracked left controller, approximately 35cm wide.
+The P2 controls start at the tracked left controller, approximately 12cm wide at
+standard text size: one third of the previous approximately 35cm docked menu.
 They do not use a head-relative HUD offset. The shared typed controller-pose
 reader supplies world coordinates, including the tracking origin exactly once.
 While docked, the panel follows the left controller and faces the wearer. Missing
@@ -60,8 +61,11 @@ left tracking hides a docked panel rather than displaying a stale hand pose.
 
 Point at the menu with either controller and hold grip to move it using the
 accepted aim-driven placement mapping; release leaves it in world space. Trigger
-activates buttons. "Pin menu here" freezes its current pose, and "Return to left
-hand" restores docking after a fresh tracked sample. A pinned menu never follows
+activates buttons. Gripping restores the existing full-size world menu while
+preserving its pose; release leaves it anchored. The redundant "Pin menu here"
+button is removed. "Return to left hand" restores the smaller docked scale after
+a fresh tracked sample. Repeated docking or tracking loss cannot repeatedly
+shrink it, and accessibility text size applies to both scales. A pinned menu never follows
 subsequent head/hand motion. The menu root is independent from the model/table;
 menu placement must not change native data, table pose, or screen pose. Only the
 explicit table controls, recenter/reset, or genuine tracking-origin reset can
