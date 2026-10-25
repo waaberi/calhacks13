@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "at": "2026-10-25T11:27:15.617096+00:00",
+  "state": "SOFTWARE_SOURCE_VERIFIED_AWAITING_FINAL_COMBINED_BUILD",
+  "source": "2914a467a45d3b90d1ce394bdc3829a265f852dd",
+  "published_feature_merge": "4119970b806dfd625038fb3af98bdc8f46a93938",
+  "published_features": [
+    "165/167 asynchronous SpacetimeDB decision mirror",
+    "156/109 remote presence UI",
+    "169/166 optional Maincloud bridge"
+  ],
+  "combined_base": "f0f3b4f87180a5fd67d7e2c790312299eada3d9c",
+  "stable_direct_tool_source_composed": "e5d6e78",
+  "further_root_tool_updates_required": true,
+  "protocol_schemas_changed": false,
+  "xr_project_settings_changed": false,
+  "runtime_launched": false,
+  "physical_acceptance": false,
+  "second_pc_acceptance": false,
+  "separate_network_acceptance": false,
+  "unity_compiled": false,
+  "complete_package": null,
+  "checks": {
+    "python": {
+      "passed": 1553,
+      "skipped": 40
+    },
+    "real_windows_store": {
+      "passed": 95,
+      "skipped": 2
+    },
+    "typescript_module_bridge_board": "PASS",
+    "native_direct_two_blender": {
+      "passed": true,
+      "checks": 6
+    },
+    "native_relay_two_blender": {
+      "passed": true,
+      "checks": 6
+    },
+    "native_preview_direct_atomic_voice_handoff": {
+      "passed": true,
+      "physical_acceptance": false,
+      "checks": [
+        "same-user preview explicit end ACK; real foreign writer refused; display owner is local VR",
+        "SpacetimeDB-granted live native updates; foreign conflicts; one UndoRedo preserves prior work",
+        "native live Cancel restores exact accepted baseline",
+        "direct-to-atomic-voice handoff uses native Commands/identity/generation/lease and one UndoRedo"
+      ]
+    },
+    "optional_bridge_runtime_import_and_powershell_parse": "PASS"
+  },
+  "evidence_sha256": {
+    "python-final.log": "29473f56c1ae322ff19cd021fa543d721f90d00d16ffa1a9260d55ff5b283380",
+    "real-server-c/store-tests.log": "881b36af5ac8f8a716fbd5eb863f298c5d21a29f80ad002494d95c1b9b226c8e",
+    "real-server-c/native-lan/client-result.json": "3eb82f9aaf7897d4307cca20f7776b13433bcc4cc69be6c869eef332c70843bd",
+    "real-server-c/native-relay/client-result.json": "6e242b534ac2f6334698bb7c121b61e526fae3075be1858e2c62ca1dff0d1c13",
+    "real-server-h/native-handoff.json": "90aeb650d5667c1d26a4ac4e22526f1b2d4f292aec84ebb34c1e0c450e9144ea",
+    "package-handoff-support/support-manifest.json": "e2aaa6c1ea7fd89c942f3e0b15cbd12e97613775306321216fa09a30a5b27a41"
+  },
+  "remaining": [
+    "Root stable complete controller/popup commits must be composed before final verification",
+    "Root-owned cumulative Unity/HTTP/render checks must run; new MultiUserIntegrationChecks has not run",
+    "Complete matching Player/backend/contracts/helper/voice and optional bridge support package must validate",
+    "Actual two-PC/headset and separate home network acceptance pending; all native tests used one Windows PC"
+  ],
+  "limits": [
+    "Client role retains published controlled remote tool/Apply/Cancel scope; not arbitrary free native co-editing",
+    "Maincloud not contacted or claimed by these integration tests; bridge transport verified against private local Windows server",
+    "Published store receipt-copy limitations remain; native Commands receipts and unknown-outcome semantics preserved",
+    "Existing current-room fit and direct-tool/Gemini microphone usability are separately unaccepted; no old accepted-menu retests or FPS work"
+  ]
+}
