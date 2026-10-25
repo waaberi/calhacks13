@@ -76,6 +76,8 @@ public static class CombinedGlassChecks
                 typeof(GlassChecks).GetMethod("Render",BindingFlags.Static|BindingFlags.NonPublic).Invoke(null,new object[]{camera,Path.Combine(output,"combined-settings-transcription-off.png")});
                 table.Menu.gameObject.SetActive(false);camera.orthographicSize=.6f;pending.head=camera.transform;pending.offset=new Vector3(0,0,1);
                 pending.ShowDelete("Delete Cube",DateTime.UtcNow.AddSeconds(15));Invoke(pending,"LateUpdate");
+                var promptMaterial=pending.transform.Find("VoiceTextBacking").GetComponent<RoundedGlassImage>().material;
+                Check(promptMaterial.renderQueue==4000&&promptMaterial.GetInt("unity_GUIZTestMode")== (int)UnityEngine.Rendering.CompareFunction.Always,"reactivated voice prompt preserves overlay depth and draw order");
                 typeof(GlassChecks).GetMethod("Render",BindingFlags.Static|BindingFlags.NonPublic).Invoke(null,new object[]{camera,Path.Combine(output,"combined-voice-confirmation-transcription-off.png")});
                 AssertText(Path.Combine(output,"combined-voice-confirmation-transcription-off.png"));
                 pending.Hide();voice.SetShowTranscription(true);Invoke(voice,"PlaceStatus");

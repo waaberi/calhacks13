@@ -27,6 +27,9 @@ namespace SpatialModeling
             var bounds=text.GetComponent<MeshRenderer>().localBounds;
             bool show=text.gameObject.activeInHierarchy&&!string.IsNullOrEmpty(text.text)&&bounds.size.x>0&&bounds.size.y>0;
             backing.gameObject.SetActive(show);if(!show)return;
+            // RoundedGlassImage restores its shared material on re-enable. Voice
+            // overlays must retain their existing always-visible prompt contract.
+            backing.GetComponent<RoundedGlassImage>().material=material;
             float margin=Mathf.Max(text.characterSize*text.fontSize*.02f,.024f*GlassTheme.TextScale);
             backing.localPosition=new Vector3(bounds.center.x,bounds.center.y,.002f);
             backing.localRotation=Quaternion.identity;backing.localScale=Vector3.one*.001f;
