@@ -15,11 +15,13 @@ from unittest.mock import patch
 
 from capture_helper import (
     LatestFrame,
+    RecoveryLog,
     capture_refresh_due,
     graphics_capture_loop,
     make_server,
     measured_frame_rate,
     owned_capture_pixels,
+    secondary_blender_window,
 )
 from PIL import Image
 
@@ -134,6 +136,23 @@ class CaptureContractTests(unittest.TestCase):
         self.assertFalse(capture_refresh_due(10, 11.9))
         self.assertTrue(capture_refresh_due(10, 12))
         self.assertTrue(capture_refresh_due(10, 7200))
+
+    def test_static_window_reopen_is_logged_once_a_minute(self):
+        log = RecoveryLog(every=60)
+        first = log.note(0)
+        self.assertEqual(first, "CAPTURE_RECOVERY no_new_callback; reopening selected window")
+        self.assertEqual([log.note(t) for t in range(2, 60, 2)], [None] * 29)
+        self.assertEqual(log.note(60), first + " (29 more since the last message)")
+        self.assertIsNone(log.note(62))
+
+    def test_only_main_blender_windows_are_offered(self):
+        for title in ("Blender Preferences", "Blender Render", "Blender File View",
+                      "Blender Drivers", "Blender Info"):
+            self.assertTrue(secondary_blender_window(title), title)
+        for title in ("* (Unsaved) - Blender 5.2.2 LTS",
+                      "bracket.blend - C:\\work\\bracket.blend - Blender 5.2.2 LTS",
+                      "Blender test.blend - C:\\Blender test.blend - Blender 5.2.2 LTS", ""):
+            self.assertFalse(secondary_blender_window(title), title)
 
     def test_async_encoder_owns_pixels_independent_of_native_frame(self):
         import numpy as np

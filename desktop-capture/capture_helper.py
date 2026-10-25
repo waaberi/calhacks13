@@ -100,7 +100,8 @@ class Windows:
         @self.callback
         def visit(hwnd, _):
             item = self.identity(hwnd) if self.u.IsWindowVisible(hwnd) else None
-            if item:
+            # Offer only main windows: Preferences and the like are never the model view.
+            if item and not secondary_blender_window(item["title"]):
                 result.append(item)
             return True
 
@@ -251,6 +252,34 @@ def capture_refresh_due(last_callback, now):
     return now - last_callback >= 2.0
 
 
+class RecoveryLog:
+    """Rate-limits the static-window reopen message; the reopen itself is unchanged.
+
+    A static window is reopened every 2 s, so printing each one floods the console.
+    The first reopen is logged at once, later ones at most every `every` seconds
+    with how many happened in between.
+    """
+
+    def __init__(self, every=60.0):
+        self.every, self.last, self.skipped = every, None, 0
+
+    def note(self, now):
+        if self.last is not None and now - self.last < self.every:
+            self.skipped += 1
+            return None
+        text = "CAPTURE_RECOVERY no_new_callback; reopening selected window"
+        if self.skipped:
+            text += f" ({self.skipped} more since the last message)"
+        self.last, self.skipped = now, 0
+        return text
+
+
+# Blender's own secondary windows (Preferences, Render, File View, Drivers, Info) are
+# titled "Blender <name>"; main windows read "<file> - Blender <version>".
+def secondary_blender_window(title):
+    return title.startswith("Blender ") and " - Blender" not in title
+
+
 def owned_capture_pixels(frame):
     # Never retain a native mapped GPU frame across the callback/encoder boundary.
     # An owned, contiguous CPU snapshot lets WGC release/reuse its mapped surface.
@@ -312,6 +341,7 @@ def graphics_capture_loop(api, latest, stop, fps):
     encoded_lock = threading.Lock()
     session = [0]
     last_callback = [time.monotonic()]
+    recovery_log = RecoveryLog()
 
     def encode_newest():
         while not stop.is_set():
@@ -487,7 +517,9 @@ def graphics_capture_loop(api, latest, stop, fps):
                 # A quick static-window refresh must not blank/flicker the panel.
                 stop_capture(control)
                 control, _capture = None, None
-                print("CAPTURE_RECOVERY no_new_callback; reopening selected window", flush=True)
+                message = recovery_log.note(time.monotonic())
+                if message:
+                    print(message, flush=True)
             if control is not None and control.is_finished():
                 # The native thread ended by itself (an error in a frame callback, or the
                 # window closed). windows-capture keeps that error for the join; log it.
