@@ -38,6 +38,30 @@ public static class P25Checks
         P25ObjectUiChecks.Run();
         P25CommonUiChecks.Run();
         P25WindowUiChecks.Run();
+        RunCaptureClarity();
+    }
+
+    static void RunCaptureClarity()
+    {
+        var source = new Texture2D(64, 64, TextureFormat.RGB24, true);
+        try
+        {
+            var pixels = new Color32[64 * 64];
+            for (int i = 0; i < pixels.Length; i++) pixels[i] = i % 7 < 2 ? new Color32(230, 230, 230, 255) : new Color32(30, 30, 30, 255);
+            source.SetPixels32(pixels); source.Apply(); int mips = source.mipmapCount;
+            BlenderScreen.ConfigureCaptureTexture(source, true);
+            Check(source.width == 64 && source.height == 64 && source.mipmapCount == mips && mips > 1,
+                "clear capture retains source resolution and anti-aliasing mip chain");
+            Check(source.filterMode == FilterMode.Trilinear && source.anisoLevel == 4 && Mathf.Approximately(source.mipMapBias, -.65f),
+                "clear capture retains oblique filtering with bounded detail bias");
+            var after = source.GetPixels32();
+            for (int i = 0; i < pixels.Length; i++) Check(after[i].Equals(pixels[i]), "clarity sampling cannot edit native source pixels");
+            BlenderScreen.ConfigureCaptureTexture(source, false);
+            Check(source.mipMapBias == 0 && source.filterMode == FilterMode.Trilinear && source.anisoLevel == 4,
+                "non-P25 capture retains accepted texture filtering");
+            Debug.Log("P225_CAPTURE_CLARITY_CHECK PASS source_pixels_resolution_mips_preserved bounded_bias=-0.65 legacy_filter_unchanged");
+        }
+        finally { UnityEngine.Object.DestroyImmediate(source); }
     }
 
     public static void RunCumulativeEditor()

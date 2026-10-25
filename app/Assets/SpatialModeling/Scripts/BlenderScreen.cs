@@ -210,6 +210,15 @@ namespace SpatialModeling
             }
         }
 
+        public static void ConfigureCaptureTexture(Texture2D target, bool clearText)
+        {
+            target.filterMode = FilterMode.Trilinear;
+            target.anisoLevel = 4;
+            // Keep the mip chain/oblique filtering; a bounded bias retains more
+            // native UI detail when the streamed desktop is reduced in VR.
+            target.mipMapBias = clearText ? -.65f : 0f;
+        }
+
         void LogDisplayQuality()
         {
             if (texture == null) return;
@@ -223,7 +232,7 @@ namespace SpatialModeling
             loggedViewportScale = viewport; loggedEyeScale = eyeScale;
             var pipeline = UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline
                 as UnityEngine.Rendering.Universal.UniversalRenderPipelineAsset;
-            Debug.Log($"P1_DISPLAY_QUALITY source={texture.width}x{texture.height} eye={eyeWidth}x{eyeHeight} eye_scale={eyeScale:F2} viewport_scale={viewport:F2} pipeline_scale={pipeline?.renderScale:F2} msaa={pipeline?.msaaSampleCount} filter={texture.filterMode} mips={texture.mipmapCount}");
+            Debug.Log($"P1_DISPLAY_QUALITY source={texture.width}x{texture.height} eye={eyeWidth}x{eyeHeight} eye_scale={eyeScale:F2} viewport_scale={viewport:F2} pipeline_scale={pipeline?.renderScale:F2} msaa={pipeline?.msaaSampleCount} filter={texture.filterMode} mips={texture.mipmapCount} mip_bias={texture.mipMapBias:F2}");
         }
 
         public void Toggle()
@@ -443,8 +452,7 @@ namespace SpatialModeling
                         {
                             if (texture != null) Destroy(texture);
                             texture = decoded;
-                            texture.filterMode = FilterMode.Trilinear;
-                            texture.anisoLevel = 4;
+                            ConfigureCaptureTexture(texture, PreviewInteraction.Requested);
                             image.texture = texture;
                             image.enabled = true;
                             var scale = Mathf.Min(ScreenWidth / texture.width, ScreenHeight / texture.height);

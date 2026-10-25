@@ -1,5 +1,27 @@
 # Integrated P2/P2.5 software result
 
+## Human-requested VR readability candidate
+
+The wearer requested clearer streamed Blender text. The clarity candidate uses
+150% Blender interface scale inside the disposable profile, maximum-quality JPEG
+100 with unchanged4:4:4/full native capture, and a bounded-0.65 mip sampling bias
+on the P2.5 preview. Trilinear/aniso4/mipmaps remain; non-P2.5 filtering, eye/render
+scale, MSAA4, alpha, panel placement, source geometry/history and input mapping
+remain unchanged. No frame-rate target or optimization was introduced.
+
+Software PASS:151 helper tests/Ruff, actual Unity HTTP7+2+9,36 mandatory cumulative
+build markers including source-resolution/pixel/mip preservation and unchanged P2
+filtering. A small-text encoding regression verifies reduced reconstruction error,
+4:4:4 and native dimensions; actual packaged native/CAD bootstrap exited0 with
+private UI scale1.5.61 compiler inputs/154metas match; generated SDK settings were
+archived/inspected/restored. An initial helper run lacked Pillow in its environment;
+the complete packaged dependency environment passed. No assertions were weakened.
+
+The running private Blender has unsaved user edits: keep it open, change only its
+display preference, and retain the same document/process. Desktop inspection shows
+larger source text; headset sharpness, shimmer and readability remain PENDING human
+confirmation. This is not physical acceptance or a promise of monitor-level detail.
+
 ## Physical activation failure and repair candidate
 
 The wearer briefly opened File with the green indicator on v6/929b78f, then

@@ -199,8 +199,9 @@ def configure_private_ui(bpy, resources):
     if not config.is_relative_to(Path(resources).resolve()):
         raise RuntimeError("Blender resolved its configuration outside the private resources")
     bpy.context.preferences.view.show_splash = False
+    bpy.context.preferences.view.ui_scale = 1.5
     bpy.context.preferences.use_preferences_save = False
-    return {"config": str(config), "show_splash": False, "preference_autosave": False}
+    return {"config": str(config), "show_splash": False, "preference_autosave": False, "ui_scale": 1.5}
 
 
 def run(args, argv=None):

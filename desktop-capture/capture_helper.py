@@ -249,7 +249,8 @@ class Windows:
 
 
 class LatestFrame:
-    def __init__(self):
+    def __init__(self, clear_text=False):
+        self.jpeg_quality = 100 if clear_text else 95
         self.lock = threading.Lock()
         self.selected = None
         self.generation = 0
@@ -306,7 +307,7 @@ class LatestFrame:
 
     def publish(self, generation, image, title, fps, captured_ms, input_geometry=None):
         output = io.BytesIO()
-        image.save(output, format="JPEG", quality=95, subsampling=0)
+        image.save(output, format="JPEG", quality=self.jpeg_quality, subsampling=0)
         return self.publish_jpeg(
             generation, output.getvalue(), image.width, image.height, title, fps, captured_ms,
             input_geometry
@@ -479,7 +480,7 @@ def graphics_capture_loop(api, latest, stop, fps):
                     pixels,
                     [
                         cv2.IMWRITE_JPEG_QUALITY,
-                        95,
+                        latest.jpeg_quality,
                         cv2.IMWRITE_JPEG_SAMPLING_FACTOR,
                         cv2.IMWRITE_JPEG_SAMPLING_FACTOR_444,
                     ],
@@ -883,6 +884,7 @@ def main():
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--enable-input", action="store_true",
                         help="Explicitly enable P2.5 input for the selected Blender window")
+    parser.add_argument("--clear-text", action="store_true", help="Maximum JPEG quality for native UI text; retains full 4:4:4 capture")
     args = parser.parse_args()
     if not 1 <= args.fps <= 60:
         parser.error("--fps must be between 1 and 60")
@@ -890,7 +892,7 @@ def main():
     if args.list:
         print(json.dumps(api.windows(), ensure_ascii=False))
         return
-    latest = LatestFrame()
+    latest = LatestFrame(clear_text=args.clear_text)
     if args.window:
         selected = api.identity(args.window)
         if not selected:

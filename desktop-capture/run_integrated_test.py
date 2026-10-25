@@ -98,7 +98,8 @@ def main():
         raise RuntimeError("Expected one private main Blender window; no arbitrary window was selected")
     helper_log = (session / "capture.log").open("w", encoding="utf-8")
     helper = subprocess.Popen([sys.executable, str(package / "support/capture_helper.py"),
-                               "--port", str(capture_port), "--window", str(windows[0]["hwnd"]), "--enable-input"],
+                               "--port", str(capture_port), "--window", str(windows[0]["hwnd"]), "--enable-input",
+                               *(["--clear-text"] if config.get("clear_text", False) else [])],
                               env=env, stdout=helper_log, stderr=subprocess.STDOUT,
                               creationflags=subprocess.CREATE_NO_WINDOW)
 

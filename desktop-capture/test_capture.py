@@ -19,10 +19,28 @@ from capture_helper import (
     measured_frame_rate,
     owned_capture_pixels,
 )
-from PIL import Image
+from PIL import Image, ImageChops, ImageDraw, ImageStat
 
 
 class CaptureContractTests(unittest.TestCase):
+    def test_clear_text_retains_native_pixels_and_reduces_text_encoding_error(self):
+        image = Image.new("RGB", (256, 96), (37, 37, 37))
+        draw = ImageDraw.Draw(image)
+        for y in range(3, 85, 13):
+            draw.text((7, y), "Blender Location X 20.000 mm", fill=(218, 222, 231))
+        errors = []
+        for clear in (False, True):
+            latest = LatestFrame(clear_text=clear)
+            latest.select({"hwnd": 100, "pid": 200, "title": "Blender"})
+            latest.publish(latest.generation, image, "Blender", 1, int(time.time() * 1000))
+            decoded = Image.open(io.BytesIO(latest.jpeg))
+            self.assertEqual(decoded.size, image.size)
+            self.assertEqual(decoded.layer[0][1:3], (1, 1), "native UI retains 4:4:4 chroma")
+            errors.append(sum(ImageStat.Stat(ImageChops.difference(image, decoded)).mean))
+            if clear:
+                self.assertTrue(all(value == 1 for table in decoded.quantization.values() for value in table))
+        self.assertLess(errors[1], errors[0], "maximum-quality text must reduce reconstruction error")
+
     def setUp(self):
         self.latest = LatestFrame()
         self.server = make_server(self.latest, 0)

@@ -51,6 +51,8 @@ class BootstrapPreparationTests(unittest.TestCase):
         self.assertFalse(prefs.view.show_splash)
         self.assertFalse(prefs.use_preferences_save)
         self.assertFalse(result["show_splash"])
+        self.assertEqual(prefs.view.ui_scale, 1.5)
+        self.assertEqual(result["ui_scale"], 1.5)
         self.assertFalse(config.exists(), "this pure fixture must not create files or save user preferences")
 
     def test_private_ui_refuses_foreign_profile_before_changing_preferences(self):
