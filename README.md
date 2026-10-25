@@ -1,4 +1,4 @@
-# Spatial Modeling
+# Coplanar
 
 ![Blender 5.2](https://img.shields.io/badge/Blender-5.2-E87D0D?logo=blender&logoColor=white)
 ![Unity 6](https://img.shields.io/badge/Unity-6-000000?logo=unity&logoColor=white)
@@ -6,7 +6,9 @@
 ![SpacetimeDB](https://img.shields.io/badge/SpacetimeDB-session_state-5B3FD9)
 ![CalHacks 13](https://img.shields.io/badge/CalHacks-13-FDB515)
 
-Spatial Modeling lets you edit a real Blender project in VR, together with someone working in desktop Blender.
+**3D modeling is better with friends.** Coplanar turns Blender into a multiplayer VR workspace where you can build together, from a headset or a desktop.
+
+**[coplanar.design](https://coplanar.design)** · [Devpost](https://devpost.com/software/coplanar)
 
 Put on a Quest and your scene appears on a table in your room, at real size. Grab objects, move them, rotate them and type exact values. Give it voice commands. Every edit happens in Blender itself, so the file, Undo, Redo and Save all work as usual. A teammate on another PC can open the same session in their own Blender and edit alongside you.
 
@@ -82,5 +84,20 @@ Then:
 - **SpacetimeDB (optional):** Node.js and the SpacetimeDB CLI. See [spacetime/README.md](spacetime/README.md). Without it, the host keeps session state in memory.
 
 Team notes and repo rules are in [CONTRIBUTING.md](CONTRIBUTING.md). The demo script is in [docs/demo/DEMO_STEPS.md](docs/demo/DEMO_STEPS.md).
+
+## Website
+
+The public site lives in [`website/`](website/). It uses static HTML, CSS and
+JavaScript with no build step. Run it locally with:
+
+```sh
+python3 -m http.server 4173 --directory website
+```
+
+Submit changes through a pull request. Vercel is connected to this repository
+with `website` as its Root Directory and `main` as its production branch.
+Changes to `website/` deploy automatically to [coplanar.design](https://coplanar.design)
+after merging. Changes elsewhere do not redeploy the site. See the
+[website README](website/README.md) for deployment settings.
 
 The add-on is licensed GPL-3.0-or-later.

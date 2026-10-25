@@ -14,12 +14,19 @@ Any static file server works. Use a server, not `file://`, because the scripts a
 
 ## Deploy on Vercel
 
+- Project: `coplanar` in Waaberi's projects, connected to `waaberi/calhacks13`.
+- Production branch: `main`; production URL: https://coplanar.design.
 - Root Directory: `website`
 - Framework Preset: Other
 - Build Command: none
 - Output Directory: `.`
 
 `vercel.json` sets clean URLs, caching and security headers (including a strict same-origin Content Security Policy).
+
+Merge website changes through a pull request. Vercel deploys the merged `main`
+commit automatically. `ignore-build.sh` skips deployments when this folder has
+not changed since the branch's last successful deployment. The first deployment
+and any deployment without its previous Git history proceed normally.
 
 ## Files
 
