@@ -27,8 +27,33 @@ public static class P25WindowUiChecks
     static void Check(bool ok, string why) { if (!ok) throw new Exception("P25_WINDOW_UI: " + why); }
     public static void Run()
     {
-        Chooser(); SelectionSequence(); Handoff(); Revocation();
+        Chooser(); SelectionSequence(); Handoff(); Revocation(); InputIndicator();
         Debug.Log("P25_WINDOW_UI_CHECK PASS actual chooser/pages/stale-choice/bounded-refresh/no-image-recovery/current-sequence/stamped-handoff/lease-retention/typed-staleness/mode-exit/overlay; actual OS popup capture unverified");
+    }
+
+    static void InputIndicator()
+    {
+        using var f = new Fixture();
+        var button = f.Button("Focus Blender");
+        string Label() => button.GetComponentInChildren<Text>().text;
+        void Refresh() => Invoke(f.Preview, "RefreshInputIndicator");
+        Refresh();
+        Check(Label() == "Input ON · turn off" && button.colors.normalColor.g > button.colors.normalColor.r,
+            "actual toggle is green and ON only after complete admission");
+        f.State["focused"] = false; Refresh();
+        Check(Label() == "Enabling… · cancel", "requested input cannot look ON without desktop focus");
+        f.State["focused"] = true; Property(f.Screen, "DisplayedCaptureGeometry", "stale-geometry"); Refresh();
+        Check(Label() == "Enabling… · cancel", "focused input cannot look ON with a mismatched displayed frame");
+        f.Frame(f.State); Set(f.Preview, "inputEnabled", false); Set(f.Preview, "focusRequested", true); Refresh();
+        Check(Label() == "Enabling… · cancel", "permission request is visibly pending");
+        Set(f.Preview, "focusRequested", false); Set(f.Preview, "lastInputFailure", "test denied"); Refresh();
+        Check(Label() == "Input blocked · retry" && button.colors.normalColor.r > button.colors.normalColor.g,
+            "blocked activation remains visibly distinct from OFF and ON");
+        Set(f.Preview, "lastInputFailure", ""); Refresh();
+        Check(Label() == "Input OFF · enable", "idle mode shows OFF");
+        Set(f.Preview, "inputEnabled", true); f.Click("Focus Blender");
+        Check(Label() == "Releasing input…" && !button.interactable && (bool)Get(f.Preview, "endAfterRelease")
+            && f.Sent.Count == 0, "clicking ON toggles off while retaining the native lease through release acknowledgement");
     }
 
     sealed class Fixture : IDisposable
@@ -240,6 +265,7 @@ public static class P25WindowUiChecks
     {
         yield return HttpHandoff(true); yield return HttpHandoff(false);
         yield return HttpChoice(false); yield return HttpChoice(true); yield return HttpChoice(false, 100);
+        yield return HttpFocusDenied();
     }
     static void TickHttp()
     {
@@ -345,6 +371,29 @@ public static class P25WindowUiChecks
         cases.Add(new JObject { ["name"] = failFocus ? "explicit_choice_focus_refused_no_replay" : hwnd == 100 ? "explicit_current_unfocused_window_recovery"
             : "explicit_choice_current_sequence_then_frame_ack", ["passed"] = true });
     }
+    static IEnumerator HttpFocusDenied()
+    {
+        using var server = new FakeServer(true, true);
+        Environment.SetEnvironmentVariable("CALHACKS_CAPTURE_PORT", server.Port.ToString());
+        using var f = new Fixture();
+        f.State["focused"] = false; server.State(f.State);
+        f.Events.Enqueue(new JObject { ["type"] = "focus" });
+        yield return Drive((IEnumerator)Invoke(f.Preview, "SendEvents"), () => server.Posts == 1 && !(bool)Get(f.Preview, "sendingEvent"));
+        Check(!(bool)Get(f.Preview, "windowResuming") && !(bool)Get(f.Preview, "inputEnabled")
+            && (bool)Get(f.Preview, "endAfterRelease") && f.Sent.Count == 0,
+            "focus denial stops admission and preserves native ownership until release ACK; it is not a dialog transition");
+        Check(f.Preview.Notice.Contains("Windows did not activate Blender"), "foreground denial explains the actual failure");
+        yield return Drive((IEnumerator)Invoke(f.Preview, "ReadState"), () => f.Transport.Synchronized && !(bool)Get(f.Preview, "readingState"));
+        Check(f.Preview.Notice.Contains("Windows did not activate Blender") && server.Posts == 1,
+            "later helper GET cannot overwrite the focus error with generic frame-waiting text or retry focus");
+        f.Tick();
+        Check(f.Events.Count == 1 && (string)f.Events.Peek()["type"] == "release", "only cleanup is queued after focus failure");
+        yield return Drive((IEnumerator)Invoke(f.Preview, "SendEvents"), () => server.Posts == 2 && !(bool)Get(f.Preview, "sendingEvent"));
+        Check(server.Kinds.SequenceEqual(new[] { "focus", "release" }) && f.Sent.Count == 1
+            && (string)f.Sent[0]["type"] == "preview.ui.end", "exact release ACK precedes native session end with no input replay");
+        cases.Add(new JObject { ["name"] = "focus_denial_keeps_actionable_error_and_orders_cleanup", ["passed"] = true });
+    }
+
     sealed class FakeServer : IDisposable
     {
         readonly TcpListener listener;
@@ -396,7 +445,7 @@ public static class P25WindowUiChecks
                             var request = JObject.Parse(Encoding.UTF8.GetString(bytes)); Kinds.Enqueue((string)request["type"]); Requests.Enqueue((JObject)request.DeepClone());
                             Check((string)request["session"] == (string)state["session"] && (long)request["seq"] == (long)state["next_seq"], "handoff uses authoritative new helper session and sequence");
                             state["next_seq"] = (long)state["next_seq"] + 1; Interlocked.Increment(ref posts);
-                            rejected = failFocus && (string)request["type"] == "select_window";
+                            rejected = failFocus && ((string)request["type"] == "select_window" || (string)request["type"] == "focus");
                             response = rejected ? "{\"reason\":\"foreground_activation_denied\"}"
                                 : valid ? new JObject { ["ok"] = true, ["seq"] = request["seq"] }.ToString() : "{}";
                             if (!rejected && (string)request["type"] == "select_window" && selectedState != null) state = (JObject)selectedState.DeepClone();

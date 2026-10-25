@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from bootstrap_p25 import (
     WHEEL_NAME,
     configure_private_server,
+    configure_private_ui,
     isolated_port,
     prepare,
     private_temporary_files,
@@ -40,6 +41,26 @@ class BootstrapPreparationTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_private_ui_suppresses_first_run_splash_without_saving_preferences(self):
+        prefs = SimpleNamespace(view=SimpleNamespace(show_splash=True), use_preferences_save=True)
+        config = self.session / "blender-resources/config"
+        fake = SimpleNamespace(context=SimpleNamespace(preferences=prefs),
+                               utils=SimpleNamespace(user_resource=lambda *a, **kw: str(config)))
+        result = configure_private_ui(fake, config.parent)
+        self.assertFalse(prefs.view.show_splash)
+        self.assertFalse(prefs.use_preferences_save)
+        self.assertFalse(result["show_splash"])
+        self.assertFalse(config.exists(), "this pure fixture must not create files or save user preferences")
+
+    def test_private_ui_refuses_foreign_profile_before_changing_preferences(self):
+        prefs = SimpleNamespace(view=SimpleNamespace(show_splash=True), use_preferences_save=True)
+        fake = SimpleNamespace(context=SimpleNamespace(preferences=prefs),
+                               utils=SimpleNamespace(user_resource=lambda *a, **kw: str(self.root / "personal")))
+        with self.assertRaisesRegex(RuntimeError, "outside the private"):
+            configure_private_ui(fake, self.session / "blender-resources")
+        self.assertTrue(prefs.view.show_splash)
+        self.assertTrue(prefs.use_preferences_save)
 
     def cad_source(self):
         path = self.root / "CAD_Sketcher"

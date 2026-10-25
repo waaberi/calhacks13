@@ -40,7 +40,7 @@ namespace SpatialModeling
         float windowResumeUntil;
         Text numberFeedback, shortcutFeedback;
         Text feedback, objectTargetText;
-        Button moveStepButton, turnStepButton, primitiveSizeButton;
+        Button moveStepButton, turnStepButton, primitiveSizeButton, focusButton;
         readonly List<Button> buttons = new List<Button>();
         readonly Queue<JObject> events = new Queue<JObject>();
         JObject state;
@@ -50,6 +50,7 @@ namespace SpatialModeling
         bool readingState, sendingEvent;
         bool inputEnabled, triggerWasDown, mouseHeld, keyboardShown, shiftText;
         bool focusRequested, endAfterRelease, releaseQueued, spatialRequested, objectsRequested, modelToolsShown;
+        string lastInputFailure = "", lastLoggedNotice = "", lastLoggedGates = "";
         bool numbersShown, shortcutsShown, fullKeyboard, editorPointSet;
         int shortcutPage;
         Vector2 editorPoint;
@@ -169,10 +170,22 @@ namespace SpatialModeling
             { Enqueue(new JObject { ["type"] = "release" }); releaseQueued = true; }
             if (inputEnabled && Time.unscaledTime >= nextHeartbeat)
             { nextHeartbeat = Time.unscaledTime + .25f; Enqueue(new JObject { ["type"] = "heartbeat" }); }
+            RefreshInputIndicator();
             if (feedback != null)
-                feedback.text = "P2.5 · " + (inputEnabled ? "Native UI" : "Native UI off") + " · Mouse: " + mouseButton
+                feedback.text = "Blender input: " + InputMode + " · Mouse: " + mouseButton
                     + " · " + (PrimaryHand == XRNode.RightHand ? "Right" : "Left") + " pointer\n" + Notice
                     + "\n" + (Drawing != null ? Drawing.StatusText : "Waiting for spatial bridge");
+            if (Notice != lastLoggedNotice)
+            { lastLoggedNotice = Notice; Debug.Log("P25_INPUT_NOTICE " + Notice); }
+            string gates = "requested=" + (focusRequested || inputEnabled || windowResuming) + " owned=" + NativeInputOwned
+                + " helperReady=" + ((bool?)state?["ready"] == true) + " focused=" + ((bool?)state?["focused"] == true)
+                + " host=" + MatchesNativeHost() + " image=" + (screen != null && screen.HasImage)
+                + " frame=" + (screen != null && state != null && PreviewInputMapping.FrameMatches(screen.DisplayedCaptureInstance,
+                    screen.DisplayedSelectionGeneration, (string)state["capture_instance"], (long?)state["capture_generation"] ?? -1))
+                + " geometry=" + (screen != null && !string.IsNullOrEmpty(screen.DisplayedCaptureGeometry)
+                    && screen.DisplayedCaptureGeometry == (string)state?["capture_geometry"])
+                + " releaseError=" + ((bool?)state?["release_error"] != false) + " cleanup=" + endAfterRelease;
+            if (gates != lastLoggedGates) { lastLoggedGates = gates; Debug.Log("P25_INPUT_GATES " + gates); }
             if (modelToolsShown) RefreshObjectLabels();
             if (numbersShown) RefreshNumbers();
             if (windowsShown) RefreshWindows();
@@ -288,9 +301,36 @@ namespace SpatialModeling
                 (string)state["capture_instance"], (long?)state["capture_generation"] ?? -1)
             && !string.IsNullOrEmpty(screen.DisplayedCaptureGeometry)
             && screen.DisplayedCaptureGeometry == (string)state["capture_geometry"];
+        string InputMode => endAfterRelease ? "Releasing" : lastInputFailure.Length != 0 ? "Blocked"
+            : inputEnabled && Ready() ? "On" : inputEnabled || focusRequested || windowResuming ? "Enabling" : "Off";
+        void RefreshInputIndicator()
+        {
+            if (focusButton == null) return;
+            string mode = InputMode;
+            focusButton.GetComponentInChildren<Text>().text = mode == "On" ? "Input ON · turn off"
+                : mode == "Off" ? "Input OFF · enable" : mode == "Blocked" ? "Input blocked · retry"
+                : mode == "Releasing" ? "Releasing input…" : "Enabling… · cancel";
+            focusButton.interactable = !endAfterRelease;
+            var colors = focusButton.colors;
+            colors.normalColor = mode == "On" ? new Color(.12f, .65f, .28f)
+                : mode == "Blocked" ? new Color(.75f, .18f, .16f)
+                : mode == "Enabling" || mode == "Releasing" ? new Color(.8f, .5f, .08f)
+                : new Color(.16f, .36f, .65f);
+            colors.highlightedColor = colors.selectedColor = colors.normalColor;
+            focusButton.colors = colors;
+        }
+        void ToggleNativeUi()
+        {
+            if (endAfterRelease) return;
+            if (inputEnabled || focusRequested || windowResuming)
+            { Suspend(); Notice = "Input disabled; releasing held keys and buttons"; }
+            else FocusNativeUi();
+            RefreshInputIndicator();
+        }
         void FocusNativeUi()
         {
             if (endAfterRelease) { Notice = "Waiting for native input cleanup before focusing again"; return; }
+            lastInputFailure = "";
             if (state == null || (bool?)state["enabled"] != true || session.Length == 0)
             { Notice = "Start the P2.5 helper with input enabled and select the connected Blender window"; return; }
             objectsRequested = modelToolsShown = false;
@@ -527,13 +567,17 @@ namespace SpatialModeling
                 transport.Observe(session, (long)fresh["next_seq"]);
             else transport.Unknown();
             if ((bool?)fresh["enabled"] != true) Notice = "Start this feature's helper with --enable-input";
+            else if (lastInputFailure.Length != 0) { ReleaseNative(); Notice = lastInputFailure; }
             else if (!Ready())
             {
                 ReleaseNative();
                 string why = (string)fresh["reason"];
                 Notice = !MatchesNativeHost() ? "Capture must select the connected Blender host"
                     : !NativeInputOwned ? "Use Focus Blender to begin native preview interaction"
-                    : !string.IsNullOrEmpty(why) ? why : "Waiting for the selected window's displayed frame and focus";
+                    : !string.IsNullOrEmpty(why) ? why
+                    : (bool?)fresh["focused"] != true ? "Blender is not the active desktop window; use Focus Blender"
+                    : screen == null || !screen.HasImage ? "Waiting for a fresh Blender image"
+                    : "Waiting for the selected window's matching displayed frame";
             }
         }
 
@@ -564,7 +608,12 @@ namespace SpatialModeling
                     if (session != sentSession) { sendingEvent = false; continue; }
                     if (request.result != UnityWebRequest.Result.Success)
                     {
-                        if (request.responseCode == 409 && !endAfterRelease && NativeInputOwned && windowAuthority.ProcessId > 0)
+                        string rejection = "";
+                        try { rejection = (string)JObject.Parse(request.downloadHandler.text)["reason"] ?? ""; }
+                        catch (Exception) { }
+                        if (kind == "focus" && rejection == "foreground_activation_denied")
+                            FailTransport("Windows did not activate Blender. Bring the test Blender window forward, then use Focus Blender. No click was sent.");
+                        else if (request.responseCode == 409 && !endAfterRelease && NativeInputOwned && windowAuthority.ProcessId > 0)
                             AwaitWindowState("Blender window changed; waiting for fresh state. The action was not retried.");
                         else FailTransport("Input stopped: " + request.responseCode + ". Refresh/focus; the action was not retried.");
                     }
@@ -598,6 +647,7 @@ namespace SpatialModeling
 
         void FailTransport(string reason)
         {
+            lastInputFailure = reason;
             bool needsCleanup = inputEnabled || focusRequested || endAfterRelease || windowResuming || NativeInputOwned;
             transport.Unknown(); state = null; events.Clear(); pendingPointer = null;
             inputEnabled = focusRequested = mouseHeld = false; modifiers.Clear();
@@ -610,7 +660,8 @@ namespace SpatialModeling
         void BuildControls()
         {
             panel = MakePanel("P2.5 controls", new Vector2(0, -1120), new Vector2(1840, 540));
-            AddButton(panel, "Focus Blender", 0, 0, FocusNativeUi);
+            focusButton = AddButton(panel, "Focus Blender", 0, 0, ToggleNativeUi);
+            RefreshInputIndicator();
             AddButton(panel, "Disable input", 1, 0, Suspend);
             AddButton(panel, "Keyboard", 2, 0, () => { if (keyboardShown) keyboardShown = false; else OpenKeyboard(false); });
             AddButton(panel, "Mouse left", 3, 0, () => { ReleaseNative(); mouseButton = "left"; });

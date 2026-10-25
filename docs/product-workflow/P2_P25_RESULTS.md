@@ -1,7 +1,39 @@
 # Integrated P2/P2.5 software result
 
-Software passed; physical acceptance is pending. No integrated Player, native GUI
-input or capture session has replaced the accepted P2 runtime.
+## Physical activation failure and repair candidate
+
+The human approved starting physical testing. The wearer could not click
+Blender's captured interface on v4/a779f98. Clearing the disposable Blender's
+first-run setup/splash did not resolve that reported failure. Physical acceptance
+remains failed/pending investigation; the accepted P2 rollback is preserved.
+
+The repair adds a persistent input toggle showing Off, Enabling, On, Blocked or
+Releasing, with text and colour. On requires the existing complete native
+ownership, foreground, fresh displayed frame and geometry admission. Toggling off
+retains release acknowledgement ordering. Transition diagnostics identify each
+admission predicate without logging input tokens or document/room data.
+
+A reproduced HTTP focus-denial path previously treated Windows refusing focus as
+a dialog handoff, then hid the error behind the generic waiting message. It now
+retains an actionable error, discards pending actions and waits for exact cleanup
+acknowledgement before ending native ownership. This reproduced defect is not yet
+established as the wearer's remaining root cause. Private-profile startup also
+disables the splash without writing personal preferences; a fresh actual GUI
+bootstrap exited successfully with no saved preference file.
+
+Repair software checks: 150 helper tests and Ruff passed; actual Unity HTTP
+6+2+9 cases passed, including focus denial/no replay/ordered release. The fresh
+Windows build passed all 35 cumulative markers with zero errors and the exact
+34 accepted P2 Standalone XR flags before/after build. All 61 source/scene/shader
+inputs and 154 metas matched the frozen prebuild hashes. Generated Editor feature
+sets, WebGL records and Android install-location changes were archived, inspected
+and restored; no generated configuration was committed. These checks do not
+establish that the wearer's activation failure is resolved.
+
+## Original v4 software delivery (historical)
+
+Software passed; physical acceptance was pending at delivery. The following
+results describe the original frozen v4 package before its physical trial.
 
 Frozen application/build source: `a779f98ee882e22d52a4b7cd3cd961a88522b8f6`.
 Integration merge: `c9997217792849e907ddbc7309683e56340d3c95`, with parents final
