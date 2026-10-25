@@ -5,7 +5,7 @@ curve shared by its labels and pointer targets. Grip and aim to move it; while
 held it faces the wearer. Release leaves it stationary. Return to left hand
 restores the larger docked size. Display/menu changes never edit Blender data.
 
-**Surface detection: ON/OFF** is on the handheld Arrange page. It controls the
+**Surface detection: ON/OFF** is on the handheld main page. It controls the
 existing surface placement assistance. Settings retains automatic room loading,
 detected geometry and independent plane controls. The successfully loaded new
 room scan is preserved; its physical fit still requires the wearer's observation.
@@ -15,7 +15,9 @@ view and its surrounding buttons together. The saved preference starts opaque.
 It does not change handheld-menu transparency or room passthrough.
 
 **Edit model** opens real Blender input and a three-page guide. Its checkmark
-reflects the active editing workflow. **Arrange space** ends that input safely.
+reflects the active editing workflow. **Arrange space** beside the Blender view
+ends that input safely. The handheld menu omits the Arrange-space heading and
+Actual-size action/status requested for removal.
 See [Editing Blender from VR](BLENDER_EDITING_IN_VR.md) for native menu, mesh,
 keyboard, controller and drawing steps. Input ON is the local user's own Blender
 input method. A voice edit switches out of native input automatically after

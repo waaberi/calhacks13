@@ -392,14 +392,13 @@ namespace SpatialModeling
                 ("Undo placement",arrangement.UndoPlacement),
                 ("Add horizontal plane",()=>arrangement.Surfaces.BeginPlane("horizontal")),
                 ("Add vertical plane",()=>arrangement.Surfaces.BeginPlane("vertical")),
-                ("Manage planes",()=>ChangeMenu(MenuPage.Planes)), ("Actual size",RestoreActualSize),
+                ("Manage planes",()=>ChangeMenu(MenuPage.Planes)),
                 ("Return to left hand",DockMenu),
             };
             if(compact && menuPage==MenuPage.Settings) actions=new (string,Action)[] {
                 ("Show room geometry",()=>{ arrangement.Surfaces.ToggleDetected(); RefreshMenu(); }),
                 ("Auto surfaces on/off",arrangement.Surfaces.ToggleAutomatic),
                 ("Environment setup",()=>SetupMenu(true)), ("Manage planes",()=>ChangeMenu(MenuPage.Planes)),
-                ("Actual size",RestoreActualSize),
                 (FindFirstObjectByType<BlenderScreen>()?.PositionLocked == true ? "Unlock Blender screen" : "Lock Blender screen",
                     ()=>{ FindFirstObjectByType<BlenderScreen>()?.TogglePositionLock(); RefreshMenu(); }),
                 ("Pointer: " + (PreviewInteraction.Current?.PrimaryHand==UnityEngine.XR.XRNode.LeftHand?"Left":"Right"),()=>{
@@ -488,9 +487,9 @@ namespace SpatialModeling
             if(menuPage==MenuPage.Environment) return roomSetup.Heading;
             if(menuPage==MenuPage.Settings) return "Settings\nRoom geometry: "+(arrangement.Surfaces.ShowDetected?"shown":"hidden")+
                 " · auto surfaces: "+(arrangement.Surfaces.AutomaticEnabled?"on":"off")+
-                "\nSurface detection: "+(arrangement.AssistEnabled?"on":"off")+"\n"+ScaleLabel;
+                "\nSurface detection: "+(arrangement.AssistEnabled?"on":"off");
             if(menuPage==MenuPage.Planes) return "Horizontal / vertical planes\n"+(string.IsNullOrEmpty(planeNotice)?"Manual corrections stay independent":planeNotice)+"\nPage "+(planePage+1)+" · "+arrangement.Surfaces.PlaneTargets.Count+" planes";
-            return $"Arrange space · {(MenuDocked ? "left hand" : "in space")}\n{arrangement.SurfaceState}\n{ScaleLabel}";
+            return arrangement.SurfaceState;
         }
 
         (string,Action)[] PlaneActions(WorkspaceSurfaces surfaces)

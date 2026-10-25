@@ -160,8 +160,11 @@ public static class SettingsMenuChecks
             table.Adjust(0, 0, 1, 0, Vector3.zero, Vector3.forward);
             var displayPose = new Pose(table.Display.position, table.Display.rotation);
             Check(!table.IsActualSize && table.ScaleLabel.Contains("2×"), "inspection magnification is explicit");
-            Click(table, "Actual size");
-            Check(table.IsActualSize && table.ScaleLabel == "Actual size · 1:1", "Settings Actual size restores truthful physical scale");
+            Check(!table.Menu.GetComponentsInChildren<TableAction>(true).Any(a=>a.name=="Actual size")
+                &&!table.Menu.GetComponentsInChildren<Text>(true).Any(t=>t.text.Contains("Actual size")||t.text.Contains("1:1")),
+                "requested Actual size action and scale status are absent from handheld Settings");
+            table.RestoreActualSize();
+            Check(table.IsActualSize && table.ScaleLabel == "Actual size · 1:1", "retained scale API restores truthful physical scale");
             Near(table.Display.localScale, Vector3.one, "Actual size removes magnification");
             Near(table.Display.position, displayPose.position, "Actual size preserves workspace position");
             Check(Quaternion.Angle(table.Display.rotation, displayPose.rotation) < .001f, "Actual size preserves workspace heading");
@@ -216,7 +219,7 @@ public static class SettingsMenuChecks
             Click(table, "Back to arrange");
             Click(table, "Settings"); Click(table, "Settings");
             Check(!table.SettingsOpen, "gear toggles Settings back to Arrange"); PoseUnchanged(table, menuPose);
-            Debug.Log("SETTINGS_MENU_CHECKS PASS actual collider dispatch, bottom-right graphic gear, hidden default with automatic surfaces retained, physical Actual size, multiple horizontal/vertical planes, individual deletion, pagination and pinned-menu pose retention");
+            Debug.Log("SETTINGS_MENU_CHECKS PASS actual collider dispatch, bottom-right graphic gear, hidden default with automatic surfaces retained, requested Actual size action/status absent with scale API retained, multiple horizontal/vertical planes, individual deletion, pagination and pinned-menu pose retention");
         }
         finally
         {

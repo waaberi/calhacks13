@@ -44,6 +44,13 @@ public static class HandheldMenuChecks
                 Check(graphic.GetComponent<GlassCurveMesh>()!=null,"all text and controls bend with the menu");
             var actions=table.Menu.GetComponentsInChildren<TableAction>(true);
             Check(actions.Any(a=>a.name=="Surface detection: ON"),"surface detection is directly on the handheld arrange page");
+            Check(actions.Any(a=>a.name=="Settings")&&actions.Any(a=>a.name=="Undo placement")
+                &&actions.Any(a=>a.name=="Add horizontal plane")&&actions.Any(a=>a.name=="Add vertical plane")
+                &&actions.Any(a=>a.name=="Manage planes")&&actions.Any(a=>a.name=="Return to left hand"),
+                "handheld menu retains Settings and the remaining placement and plane actions");
+            Check(!actions.Any(a=>a.name=="Actual size"),"requested Actual size action is absent from the handheld main page");
+            Check(!table.Menu.GetComponentsInChildren<Text>(true).Any(t=>t.text.Contains("Arrange space")||t.text.Contains("Actual size")||t.text.Contains("1:1")),
+                "handheld main page omits the requested Arrange space and Actual size 1:1 heading/status");
             foreach(var action in actions)
             {
                 int calls=0;var original=action.Click;action.Click=()=>calls++;
@@ -57,6 +64,9 @@ public static class HandheldMenuChecks
                 "surface detection dispatches real assistance toggle");
             Check(table.Menu.GetComponentsInChildren<TableAction>(true).Any(a=>a.name=="Surface detection: OFF"),"toggle visibly reports new state");
             table.PinMenu();Check(Vector3.Distance(table.Menu.localScale,docked/TablePlacement.DockedMenuFactor)<.000001f,"pin expands to unchanged full size");
+            Invoke(table,"Update");
+            Check(!table.Menu.GetComponentsInChildren<Text>(true).Any(t=>t.text.Contains("Arrange space")||t.text.Contains("Actual size")||t.text.Contains("1:1")),
+                "world-pinned menu does not restore the removed Arrange space in space heading or scale status on update");
             var tablePose=new Pose(display.transform.position,display.transform.rotation);
             table.Menu.SetPositionAndRotation(new Vector3(.4f,1.4f,.8f),Quaternion.Euler(60,130,25));
             var position=table.Menu.position;var scale=table.Menu.localScale;
@@ -72,11 +82,14 @@ public static class HandheldMenuChecks
             Check(Vector3.Distance(table.Menu.localScale,docked)<.000001f,"return to left hand restores enlarged docked scale without repeated multiplication");
             var page=typeof(TablePlacement).GetNestedType("MenuPage",BindingFlags.NonPublic);
             Invoke(table,"ChangeMenu",Enum.Parse(page,"Settings"));
+            Check(!table.Menu.GetComponentsInChildren<TableAction>(true).Any(a=>a.name=="Actual size")
+                &&!table.Menu.GetComponentsInChildren<Text>(true).Any(t=>t.text.Contains("Actual size")||t.text.Contains("1:1")),
+                "Settings does not restore the removed handheld Actual size action or status");
             Check(!table.Menu.GetComponentsInChildren<TableAction>(true).Any(a=>a.name.StartsWith("Surface help")||a.name.StartsWith("Surface detection")),"surface control moved out of Settings");
             Check(!table.Menu.GetComponentsInChildren<TableAction>(true).Any(a=>a.name.Contains("Physical keyboard")||a.name.Contains("keyboard window")),"rejected physical-keyboard window has no Settings control");
             Check(typeof(TablePlacement).Assembly.GetType("SpatialModeling.KeyboardPassthrough")==null,"physical-keyboard outline/handle/window cannot be constructed in the runtime");
             Check(Resources.Load<Shader>("KeyboardPassthrough")==null,"removed physical-keyboard alpha punch shader is not retained as a resource");
-            Debug.Log("HANDHELD_MENU_CHECK PASS enlarged_readable_dock matched_curve_render_and_actual_ray_dispatch every_action direct_surface_toggle upright_held_facing anchored_release model_invariance");
+            Debug.Log("HANDHELD_MENU_CHECK PASS enlarged_readable_dock matched_curve_render_and_actual_ray_dispatch every_action direct_surface_toggle upright_held_facing anchored_release model_invariance requested_heading_and_actual_size_removed");
         }
         finally
         {
