@@ -256,6 +256,186 @@
             },
             "additionalProperties": false
           }
+        },
+        "live_supported": {
+          "type": "boolean"
+        },
+        "tool": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "settings": {
+          "type": "object",
+          "maxProperties": 64
+        },
+        "selection": {
+          "type": "object",
+          "properties": {
+            "component": {
+              "enum": [
+                "object",
+                "vertex",
+                "edge",
+                "face"
+              ]
+            },
+            "indices": {
+              "type": "array",
+              "maxItems": 16384,
+              "uniqueItems": true,
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 16383
+              }
+            },
+            "objects": {
+              "type": "array",
+              "maxItems": 256,
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "generation"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "generation": {
+                    "$ref": "envelope.schema.json#/$defs/revision"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "active_id": {
+              "type": "string"
+            },
+            "selection_token": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "order_complete": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "selection_token": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "snap_geometry": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "generation",
+              "selected",
+              "in_edit_mode",
+              "selectable",
+              "vertices",
+              "edges"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "generation": {
+                "$ref": "envelope.schema.json#/$defs/revision"
+              },
+              "selected": {
+                "type": "boolean"
+              },
+              "in_edit_mode": {
+                "type": "boolean"
+              },
+              "selectable": {
+                "type": "boolean"
+              },
+              "vertices": {
+                "type": "array",
+                "maxItems": 8192,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "index",
+                    "position"
+                  ],
+                  "properties": {
+                    "index": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 16383
+                    },
+                    "position": {
+                      "type": "array",
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "items": {
+                        "type": "number",
+                        "minimum": -100000,
+                        "maximum": 100000
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "edges": {
+                "type": "array",
+                "maxItems": 16384,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "index",
+                    "vertices"
+                  ],
+                  "properties": {
+                    "index": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 16383
+                    },
+                    "vertices": {
+                      "type": "array",
+                      "minItems": 2,
+                      "maxItems": 2,
+                      "items": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 16383
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "snap_geometry_unavailable": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "reason"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false

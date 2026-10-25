@@ -34,6 +34,8 @@ namespace SpatialModeling
         bool welcomed;   // welcome arrived on this connection: voice.* requests may go before the snapshot
         readonly Dictionary<string, long> generations = new Dictionary<string, long>();
         readonly Dictionary<string, string> pendingOps = new Dictionary<string, string>();
+        readonly HashSet<string> queuedCommands = new HashSet<string>();
+        readonly HashSet<string> queuedAiCommands = new HashSet<string>();
         readonly HashSet<string> pendingVoiceHandoffs = new HashSet<string>();
 
         // True only while the scene is current and the host lets this connection edit.
@@ -51,6 +53,7 @@ namespace SpatialModeling
                     sessionId = e.SessionId; hostEpoch = e.HostEpoch; actorId = e.ActorId; canEdit = e.CanEdit;
                     welcomeDocumentId = e.DocumentId; welcomeOpenEpoch = e.OpenEpoch;
                     pendingOps.Clear();
+                    queuedCommands.Clear(); queuedAiCommands.Clear();
                     pendingVoiceHandoffs.Clear();
                     if (newDocument) DocumentChanged?.Invoke();
                     Welcomed?.Invoke();
@@ -64,8 +67,11 @@ namespace SpatialModeling
                     // contracts/README.md, Outcomes: a connection lost before the result is an unknown outcome.
                     // Report it (never replay it), so the sender can say "check the model".
                     foreach (var re in new List<string>(pendingOps.Keys))
-                        Answer(re, null, "unknown", "", "The connection closed before Blender answered.", null);
+                        if (queuedAiCommands.Contains(re))
+                            Answer(re, null, "cancelled", "cancelled_before_send", "AI edit cancelled before native input release. No edit was sent.", null);
+                        else Answer(re, null, "unknown", "", "The connection closed before Blender answered.", null);
                     pendingOps.Clear();
+                    queuedCommands.Clear(); queuedAiCommands.Clear();
                     break;
                 case HostEventKind.Scene:
                     if (e.Snapshot) generations.Clear();
@@ -86,6 +92,7 @@ namespace SpatialModeling
         {
             if (string.IsNullOrEmpty(re) || !pendingOps.TryGetValue(re, out var sentOp)) return;
             pendingOps.Remove(re);
+            queuedCommands.Remove(re); queuedAiCommands.Remove(re);
             CommandAnswered?.Invoke(new CommandAnswer
             {
                 RequestId = re,
@@ -102,6 +109,24 @@ namespace SpatialModeling
         // Returns the request ID, or null when it could not be sent (not connected, read-only, stale scene,
         // or the target's generation is unknown). Never retry a command whose answer is lost.
         public string SendCommand(string op, string targetId, JObject args, string source)
+            => SendCommandCore(op,targetId,args,source,false,null);
+
+        // The AI adapter owns cancellation only until this exact reviewed run
+        // crosses the wire. Ordinary voice/menu commands retain their owners.
+        public string SendAiCommand(string op, string targetId, JObject args, string source, Func<bool> stillCurrent = null)
+            => op == "voice.run" ? SendCommandCore(op,targetId,args,source,true,stillCurrent) : null;
+
+        public bool IsCommandQueued(string id) => id != null && pendingOps.ContainsKey(id) && queuedCommands.Contains(id);
+        public bool IsCommandInFlight(string id) => id != null && pendingOps.ContainsKey(id) && !queuedCommands.Contains(id);
+        public bool CancelQueuedAiCommand(string id, string reason = null)
+        {
+            if (id == null || !queuedAiCommands.Contains(id) || !IsCommandQueued(id)) return false;
+            Answer(id,null,"cancelled","cancelled_before_send",
+                string.IsNullOrEmpty(reason) ? "AI edit cancelled before native input release. No edit was sent." : reason, null);
+            return true;
+        }
+
+        string SendCommandCore(string op, string targetId, JObject args, string source, bool aiOwned, Func<bool> stillCurrent)
         {
             if (!CanSend) return null;
             var preview = PreviewInteraction.Current;
@@ -113,9 +138,15 @@ namespace SpatialModeling
             if (targetId != null && !generations.TryGetValue(targetId, out queuedGeneration)) return null;
             var frozenArgs = (JObject)(args ?? new JObject()).DeepClone();
             pendingOps[id] = op;
+            queuedCommands.Add(id);
+            if(aiOwned)queuedAiCommands.Add(id);
             preview.HandoffNativeCommand(() =>
             {
-                if (!pendingOps.ContainsKey(id)) return; // Disconnection already reported an unknown outcome; never send it later.
+                // Cancellation/disconnection removes the exact queued token.
+                // Native cleanup still finishes, but this callback cannot replay it.
+                if (!pendingOps.ContainsKey(id) || !queuedCommands.Contains(id)) return;
+                if(aiOwned&&stillCurrent!=null&&!stillCurrent())
+                {Answer(id,op,"cancelled","cancelled_before_send","AI context changed before native input release. No edit was sent.",null);return;}
                 string contextError = CommandHandoffContextError(identity, targetId, queuedGeneration);
                 if (contextError != null)
                 { Answer(id, op, "rejected", "stale_context", contextError, null); return; }
@@ -173,7 +204,11 @@ namespace SpatialModeling
                 id = requestId;
                 link.SendEnvelope(new JObject { ["v"] = 1, ["type"] = "command", ["id"] = id, ["payload"] = payload });
             }
-            if (id != null) pendingOps[id] = op;
+            if (id != null)
+            {
+                pendingOps[id] = op;
+                queuedCommands.Remove(id); queuedAiCommands.Remove(id);
+            }
             return id;
         }
 
@@ -237,6 +272,15 @@ namespace SpatialModeling
                 if (pair.Value.activeSelf && renderer != null && renderer.enabled)
                     into.Add(new KeyValuePair<string, string>(pair.Key, pair.Value.name));
             }
+        }
+        // AI data/pose tools can target visible native objects without a drawn
+        // mesh (armatures, cameras, lights). Keep basic voice grammar unchanged.
+        public void GetVisibleNativeObjects(List<KeyValuePair<string,string>> into)
+        {
+            into.Clear();
+            foreach(var pair in objects)
+                if(pair.Value!=null&&pair.Value.activeSelf)
+                    into.Add(new KeyValuePair<string,string>(pair.Key,pair.Value.name));
         }
         public bool TryGetBounds(string id, out Bounds bounds)
         {

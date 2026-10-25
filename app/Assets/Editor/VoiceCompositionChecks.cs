@@ -75,13 +75,14 @@ public static class VoiceCompositionChecks
             Check(Resources.Load<AudioClip>(prompt.ClipResource) != null, "packaged audible prompt " + prompt.Id);
         NativeResolveHandoff();
         ActualVoiceCancelDirectDraft();
+        AICancellationChecks.Run();
         Debug.Log("VOICE_COMPOSITION_CHECK PASS ordered host routing/selection continuation/axis memory/one native command/confirmation/cancel/expiry/document/disconnect/no partial fallback/audio");
     }
 
     static void ActualVoiceCancelDirectDraft()
     {
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
-        var fixtureType = typeof(DirectModelEditingChecks).GetNestedType("Fixture", System.Reflection.BindingFlags.NonPublic);
+        var fixtureType = typeof(DirectModelEditingChecks).GetNestedType("Fixture", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
         var current = typeof(SpatialModeling.PreviewInteraction).GetProperty("Current").GetSetMethod(true);
         var previous = SpatialModeling.PreviewInteraction.Current;
         foreach (string stage in new[] { "local", "direct-handoff", "voice-handoff" })

@@ -237,6 +237,7 @@ namespace SpatialModeling
         {
             if (p == null) throw new FormatException("no payload");
             var e = new HostEvent(HostEventKind.Scene) { Snapshot = snapshot };
+            e.LiveEdit = p["live_edit"] is JObject liveEdit ? (JObject)liveEdit.DeepClone() : null;
             if (p["document"] is JObject d && d["revision"]?.Type == JTokenType.Integer)
             {
                 e.Revision = (long)d["revision"];
@@ -382,6 +383,7 @@ namespace SpatialModeling
         public string Code = "";   // Error
         public string DocumentId = "", OpenEpoch = "";
         public JObject RawMessage;
+        public JObject LiveEdit;
         public bool Snapshot;      // Scene
         public long? Revision;
         public string Re = "", Op = "", Outcome = "";                                    // Result, Error

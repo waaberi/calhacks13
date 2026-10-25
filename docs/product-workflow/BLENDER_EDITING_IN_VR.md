@@ -1,65 +1,122 @@
 # Editing Blender from VR
 
-Choose **Edit model** beside the Blender view. This requests the existing native
-Blender input session and opens a three-page guide in VR. Close the guide to reach
-the captured Blender viewport and menus; choosing Edit model again reopens it.
-Blender remains the modeling interface. There is no second geometry editor.
+Use Blender's existing view as the modeling menu. Choose a native tool there,
+then use the controllers on the floating model to change its actual geometry.
+The same controllers can still edit Blender's 2D viewport, menus and dialogs.
+Both routes operate on the same document and native Undo history.
 
-1. Enable Input and point at Blender's actual viewport. Front trigger selects;
-   hold the trigger and aim to drag. Use Blender's native Object/Add menus and
-   toolbar to transform or create geometry.
-2. Select a mesh and choose Edit Mode in Blender's top-left mode menu. Use its
-   vertex/edge/face selection controls and Mesh menu or toolbar to edit geometry.
-3. **Keyboard** supplies letters/numbers and modifiers. **Full keyboard** adds
-   function and numpad keys. Click the intended native editor before typing.
-   Blender's G/R/S start move/rotate/scale; Tab changes mode. Enter confirms;
-   Escape cancels. Keyboard input targets the selected captured Blender window.
-4. **Lock screen position** enables side-grip right-click over the native view.
-   Stick tilt scrolls/zooms; hold stick and tilt to pan. With the screen unlocked,
-   grip retains the accepted VR screen arrangement behavior.
-5. For direct sketch drawing, choose a CAD sketch and its Line, Circle or Corner
-   Rectangle tool in Blender, then choose **Draw in VR**. The existing input
-   release barrier ends the preview writer before two controller points create
-   a typed native sketch edit on that sketch's plane.
+The current integration candidate is unlaunched until an explicit runtime switch.
+Software verification does not establish headset, physical alignment or live
+microphone/Gemini acceptance.
 
-Trigger selection of a floating 3D object supplies the voice target. Gripping that
-object arranges its VR representation; it does not change native Blender geometry.
-Use the native menus, direct sketch drawing, or existing voice commands for edits
-that must change Blender. **Arrange space** ends native preview input safely.
+## Choose a tool, then edit the floating model
 
-## Switching from Input ON to a voice edit
+1. Choose **Edit model** beside the Blender view. Close its existing guide, or
+   choose **Start Blender editing**. Enable **Input ON** to reach Blender's native
+   toolbar and mode controls with the configured pointer hand.
+2. Choose Object Mode and Move/Rotate/Scale, or select a mesh and choose Edit
+   Mode with one vertex/edge/face selection mode. Use face mode for Extrude
+   Region/Individual and Inset, and edge mode for Loop Cut. Finish any native
+   modal operation before moving to the floating model.
+3. Point at a visible floating object/component. A front-trigger tap selects or
+   deselects without changing geometry. Use the existing keyboard's **SHIFT** to
+   add/remove members. Drag an already selected member to edit the selection.
+4. Hold the front trigger and aim. Keep holding while Input ON safely releases
+   native window ownership. Once acknowledged, the held gesture changes real
+   Blender geometry and updates the floating model live.
+5. Release to finish one native Undo step. Escape, voice Cancel or grip cancels
+   the held operation; wait for native rollback before another edit or re-grip.
 
-Input ON reserves an ordinary exclusive native desktop lease. Sending a VR command
-while retaining that writer previously conflicted with the same user's preview
-reservation. The correction keeps native authority and serializes the handoff:
+Input remains OFF after direct editing. Enable it again to choose a different
+tool or return to 2D editing. Manually switching Input OFF retains Edit model and
+sticky spatial SHIFT. **Arrange space** ends direct editing safely. The configured
+pointer hand and existing grip/stick arrangement controls are preserved.
 
-1. Freeze one explicit edit's arguments, session/document identity and original
-   target generation. Reject concurrent handoffs and active native modals or
-   pending drawing drafts/receipts.
-2. Request synthetic held-input release from the capture helper. Retain the native
-   reservation until the helper acknowledges cleanup.
-3. End the native preview session and await fresh telemetry confirming no owner,
-   token, ending state, transition or running modal.
-4. Recheck identity and target generation, build with the current scene revision,
-   and send once with the original request ID. A changed/deleted target, changed
-   document/session, tracking loss, or eight-second timeout cancels the waiting
-   intent. Never replay a rejected gesture or lost command.
+The floating axis/plane handles use the same trigger gesture. Transform
+orientation, pivot, constraints, snapping and proportional properties are chosen
+in Blender. Extrude Region supports native constraints, grid/surface snapping and
+proportional movement of its new selection. Individual-normal extrusion refuses
+combined snapped/constrained/proportional movement; use a separate Move afterward.
+Inset, Bevel, Loop Cut and Knife use their supported native tool
+properties; see the exact [direct tool table](DIRECT_MODEL_EDITING.md).
 
-Input remains OFF afterward; enable it to return to native menus. Finish or cancel
-a running Blender operation with Enter/Escape before asking for another writer.
-No automatic confirmation, modal cancellation, lease bypass, or file save occurs.
+Knife is a held surface stroke: start on a visible face, trace at least two
+distinct points, then release to complete it. Loop Cut uses one picked native
+edge and its quad ring, with the configured number of cuts and controller slide.
+For Merge, Dissolve and Delete, first select in 3D and wait for native selection
+sync. Enable Input, choose the tool in Blender's Edit Mode toolbar and set its
+native properties. Selecting the toolbar tool only arms it. Hold the trigger and
+move on the floating selection to start; release gives one Undo, while Escape or
+grip cancels/restores. Merge requires vertex mode and at least two vertices.
+First/Last Merge uses captured native selection order, which need not preserve
+controller tap order after synchronization. Native 2D viewport clicks, Mesh
+menu/keyboard actions and confirmed voice recipes remain available.
 
-## Verification and remaining physical checks
+## Keep editing the native 2D view
 
-`P25CommonUiChecks.RunEditingWorkflow` exercises the real guide callbacks and ray
-occlusion, owner-release barrier, exactly-once callback, timeout/tracking/modal and
-stale/token/ending/malformed-owner refusal. It also checks HostScene's actual
-handoff context validator against changed/deleted targets and every native
-identity field. `RunNativeOnly` invokes it in cumulative builds.
+With **Input ON**, front trigger clicks/drags Blender's actual viewport, menus
+and buttons. An idle ray aimed at the Blender image is routed to that image,
+including when Edit model is active. A blocked or disabled image does not pass
+the same trigger through to geometry behind it.
 
-These checks do not inject OS input or establish headset/native GUI acceptance.
-In the replacement build, confirm Edit model reaches Blender menus, a native mesh
-edit visibly updates the floating 3D model, and an Input-ON voice edit safely
-switches ownership and reaches a native receipt. Retain the existing physical room
-alignment and controller visual confirmation gates; do not repeat accepted menu
-tests or claim full phase/two-PC/production authority acceptance.
+**Keyboard** supplies letters, numbers and modifiers. **Full keyboard** adds
+function and numpad keys. Click the intended native editor before typing. G/R/S
+start Blender's own move/rotate/scale; Tab changes mode; Enter confirms and Escape
+cancels the native operation. The real laptop keyboard remains visible through
+its existing passthrough window.
+
+With **Lock screen position**, the side grip right-clicks over the native view.
+Stick tilt scrolls/zooms; hold stick and tilt to pan. Outside a held direct edit,
+grip retains its accepted VR display arrangement behavior. Grip does not become a
+second modeling trigger.
+
+**Draw in VR** remains the separate CAD sketch workflow: choose the native sketch
+and Line, Circle or Corner Rectangle tool, then place the controller points on
+that sketch plane. Existing numeric, preview, window/dialog and voice controls
+remain available through their current UI.
+
+## Native input handoff
+
+Input ON owns the native preview writer. A direct or voice edit waits for held
+synthetic keys/buttons to be released and acknowledged, the preview owner/token
+to end, and fresh telemetry to confirm there is no modal or pending transition.
+The next edit uses the ordinary native permission path after rechecking identity
+and targets. It does not bypass the reservation or assume the computer is idle.
+
+Finish/cancel a running native modal with Enter/Escape first. An early-released
+controller gesture cannot launch later when cleanup finishes. A changed document,
+target, native tool/settings or tracking context invalidates the relevant pending
+intent. Commands already sent reconcile their actual receipt; an unknown result
+is never automatically replayed.
+
+## Voice and reviewed AI plans
+
+The existing basic editing commands and command chains remain available. A chain
+such as “add a cube, then move it twenty centimeters along x, then colour it blue”
+is validated as a whole. “It” follows the actual resulting object. See
+[VOICE_COMMAND_CHAINS.md](VOICE_COMMAND_CHAINS.md).
+
+When the optional Gemini interpreter is configured, additional catalog tools can
+be proposed as a typed plan. Review every page before the existing left-stick
+confirmation. The model does not execute arbitrary Blender operators. Undo,
+Redo, Cancel and Save remain separate controls. The exact recipe workflow and
+catalog are in [LIVE_MODELING_AI.md](LIVE_MODELING_AI.md).
+
+## Remaining headset checks after an authorized switch
+
+- Choose a native tool in Blender, then see both Blender and the floating model
+  change during a held direct gesture. Release, Undo, Redo, then cancel another
+  held gesture and confirm restoration.
+- Add/remove several objects/components with SHIFT; try native axis/plane
+  constraints and the intended snapping/proportional settings.
+- Confirm face Extrude/Inset, Bevel, one-edge Loop Cut/slide and a completed Knife
+  surface stroke. Arm Merge/Dissolve/Delete in the Blender toolbar without an
+  immediate edit, then test floating-model release/Undo and cancellation.
+- Keep editing the 2D Blender viewport with the same controller controls. Confirm
+  laptop-keyboard visibility and safe Input-ON handoff into a new voice edit.
+- If AI is configured, review and confirm one new plan, clarify an incomplete
+  request and cancel an unsent queued plan. Speech/service acceptance remains a
+  separate physical check.
+
+Retain the outstanding physical room alignment and controller visual correction
+checks. These are new workflow checks, not a restart of accepted old P2 menus.

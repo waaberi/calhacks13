@@ -51,6 +51,7 @@ namespace SpatialModeling
         public Pose PlacementHeadPose { get; private set; }
         readonly StartupFacingGate startupFacing = new StartupFacingGate();
         string documentId = "", openEpoch = "";
+        string localActorId = "";
         TablePlacement table;
         internal HostLink Link => link;
         internal event System.Action<HostEvent> HostEventReceived;
@@ -391,6 +392,7 @@ namespace SpatialModeling
                 case HostEventKind.Welcome:
                     hostError = hostErrorCode = "";
                     documentName = e.Text;
+                    localActorId = e.ActorId;
                     break;
                 case HostEventKind.Error:
                     hostErrorCode = e.Code;
@@ -448,7 +450,20 @@ namespace SpatialModeling
                     bool applied = true;
                     foreach (var r in e.Objects)
                     {
-                        try { ApplyObject(r); }
+                        try
+                        {
+                            if (objects.TryGetValue(r.Id, out var existingView))
+                            {
+                                var inspectedView = existingView.GetComponent<WorkspaceObjectView>();
+                                bool acceptedEcho = inspectedView == null || inspectedView.AcceptLiveEcho(e.LiveEdit, localActorId);
+                                if (!acceptedEcho && inspectedView != null &&
+                                    !string.IsNullOrEmpty(inspectedView.LivePresentationId) &&
+                                    (string)e.LiveEdit?["id"] == inspectedView.LivePresentationId &&
+                                    (string)e.LiveEdit?["actor_id"] == localActorId)
+                                    continue;
+                            }
+                            ApplyObject(r);
+                        }
                         catch (System.Exception ex) { applied = false; Debug.LogWarning($"HostScene: couldn't draw {r.Id}: {ex.Message}"); }
                     }
                     if (!applied)

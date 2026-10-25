@@ -135,8 +135,14 @@ class Editor:
         return result
 
     def apply(self, op, target_id, args):
+        from . import live_edit
+        live_edit.ensure_no_active()
         mode = bpy.context.mode
-        spatial_mesh = mode == "EDIT_MESH" and op in ("object.spatial_edit", "history.undo", "history.redo")
+        spatial_mesh = (mode == "EDIT_MESH" and op == "object.spatial_edit" or
+                        mode in ("EDIT_MESH", "POSE") and op in ("history.undo", "history.redo"))
+        if mode != "OBJECT" and op == "voice.run" and self.voice is not None:
+            recipe = getattr(self.voice, "is_recipe", None)
+            spatial_mesh = callable(recipe) and recipe(args)
         if op != "document.save" and mode != "OBJECT" and not spatial_mesh:
             name = MODE_NAMES.get(mode, mode.replace("_", " ").title())
             raise Refused("failed", f"Host Blender is in {name}. Switch it to Object Mode first.")

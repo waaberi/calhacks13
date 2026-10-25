@@ -69,7 +69,7 @@ namespace SpatialModeling
             Active = enabled;
             live?.SetEnabled(enabled);
             if (drawing != null) drawing.DirectModelToolsActive = enabled;
-            if (enabled) Notice = "Choose Move / Rotate / Scale in Blender, then trigger and aim at the floating model";
+            if (enabled) Notice = "Choose a native tool and settings in Blender, then trigger and aim at the floating model";
         }
         void OnDisable() => Cancel("Direct edit cancelled because input is unavailable");
         void OnDestroy()
@@ -82,6 +82,7 @@ namespace SpatialModeling
         void Update()
         {
             live?.Tick();
+            if(live!=null&&live.Available)Notice=live.Notice;
             if ((held && moved) || submitted)
             {
                 if (submitted && drawing.Session.NativeCommandExecuting)

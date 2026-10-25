@@ -33,7 +33,7 @@ from spatial_modeling import spatial_model_edit as spatial
 
 
 def run(args):
-    bpy.ops.wm.read_factory_settings(use_empty=False)
+    assert "--factory-startup" in sys.argv, "Use a new factory process only"
     # Background startup skips the native default keymap. Extrude's ToolDef
     # retains a callable until the same installed startup registration used by
     # the GUI materializes it. Initialize that real keyconfig in this disposable

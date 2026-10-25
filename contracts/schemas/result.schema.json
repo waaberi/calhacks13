@@ -92,12 +92,17 @@
           "$ref": "envelope.schema.json#/$defs/timestamp"
         },
         "selection": {
-          "description": "Applied voice sequence: final local VR selection. Does not change host desktop selection.",
+          "description": "Final acknowledged object and optional native component selection.",
           "type": "object",
           "required": [
             "id"
           ],
           "properties": {
+            "component": {"enum": ["object", "vertex", "edge", "face"]},
+            "indices": {"type": "array", "maxItems": 16384, "uniqueItems": true,
+                        "items": {"type": "integer", "minimum": 0, "maximum": 16383}},
+            "objects": {"type": "array", "maxItems": 256,
+                        "items": {"$ref": "envelope.schema.json#/$defs/uuid"}},
             "id": {
               "anyOf": [
                 {

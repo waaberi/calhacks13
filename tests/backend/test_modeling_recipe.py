@@ -59,6 +59,19 @@ def test_complete_ordered_recipe_preserves_selected_components_and_geometry_outp
     assert plan["confirm"] is True
 
 
+@pytest.mark.parametrize("variant", ["FIRST", "LAST"])
+def test_first_last_merge_requires_actual_ordered_native_vertex_picks(variant):
+    captured = context()
+    captured["selection"].update(component="vertex", indices=[2, 1])
+    captured["native_selection"] = copy.deepcopy(captured["selection"])
+    captured["native_selection"]["order_complete"] = False
+    with pytest.raises(recipe.Clarify):
+        prepare([step("mesh.merge", {"variant": variant})], expected=captured, actual=captured)
+    captured["native_selection"]["order_complete"] = True
+    _, plan = prepare([step("mesh.merge", {"variant": variant})], expected=captured, actual=captured)
+    assert plan["steps"][0]["selection"]["indices"] == [2, 1]
+
+
 @pytest.mark.parametrize("tool,component,params", [
     ("mesh.extrude", "face", {"translation_m": [0, 0, .005]}),
     ("mesh.inset", "face", {"thickness_m": .002}),

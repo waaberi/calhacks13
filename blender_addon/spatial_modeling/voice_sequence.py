@@ -35,7 +35,7 @@ def _rna_values(value):
             ("__object_uid__", v.session_uid)
             if isinstance(v, bpy.types.Object)
             else tuple(v)
-            if prop.is_array
+            if getattr(prop, "is_array", False)
             else v
         )
     return result
@@ -59,10 +59,27 @@ class Backup:
     def __init__(self, objects):
         self.before_objects = {o.session_uid for o in bpy.data.objects}
         self.before_materials = {m.session_uid for m in bpy.data.materials}
+        self.before_actions = {a.session_uid for a in bpy.data.actions}
+        scene_state = bpy.context.scene
+        self.scene_state = {name: getattr(scene_state, name) for name in (
+            "frame_current", "frame_subframe", "frame_start", "frame_end", "use_preview_range",
+            "frame_preview_start", "frame_preview_end")}
         self.saved, self.data, self.clones = [], {}, []
         self.selection = edits._selection()
         self.used_clones = set()
+        self.restored_objects = {}
         for obj in objects:
+            native_selection = None
+            if obj.type == "MESH" and obj.data.is_editmode:
+                import bmesh
+
+                from . import spatial_model_edit
+                bm = bmesh.from_edit_mesh(obj.data)
+                spatial_model_edit._index(bm)
+                native_selection = {
+                    "history": [(type(element).__name__, element.index) for element in bm.select_history],
+                    "active_face": bm.faces.active.index if bm.faces.active is not None else None,
+                }
             data_uid = obj.data.session_uid if obj.data else None
             if data_uid is not None and data_uid not in self.data:
                 self.data[data_uid] = (obj.data, obj.data.copy(), obj.data.name)
@@ -78,6 +95,12 @@ class Backup:
                     "uid": obj.session_uid,
                     "object": obj,
                     "name": obj.name,
+                    "visibility": (obj.hide_get(), obj.hide_viewport, obj.hide_render, obj.hide_select),
+                    "parent_inverse": obj.matrix_parent_inverse.copy(),
+                    "rotation_mode": obj.rotation_mode,
+                    "animation": _animation_snapshot(obj),
+                    "active_material": obj.active_material_index,
+                    "native_selection": native_selection,
                     "clone": clone,
                     "collections": tuple(obj.users_collection),
                     "data": data_uid,
@@ -117,11 +140,20 @@ class Backup:
                     obj.data = backup
         for record in self.saved:
             obj = restored[record["uid"]]
+            obj.name = "__SpatialRestore_" + str(record["uid"])
+        for record in self.saved:
+            obj = restored[record["uid"]]
+            obj.name = record["name"]
             if record["data"] is not None:
                 obj.data = self.data[record["data"]][1]
             parent = record["parent"]
             obj.parent = restored.get(parent, live.get(parent)) if parent is not None else None
+            obj.matrix_parent_inverse = record["parent_inverse"]
+            obj.rotation_mode = record["rotation_mode"]
             edits._restore(obj, record["channels"])
+            hidden, obj.hide_viewport, obj.hide_render, obj.hide_select = record["visibility"]
+            obj.hide_set(hidden)
+            _restore_animation(obj, record["animation"])
             for key in list(obj.keys()):
                 del obj[key]
             for key, value in record["props"].items():
@@ -135,11 +167,36 @@ class Backup:
                     modifier[key] = value
             for slot, (link, material) in zip(obj.material_slots, record["slots"]):
                 slot.link, slot.material = link, material
+            obj.active_material_index = record["active_material"]
         for material in list(bpy.data.materials):
             if material.session_uid not in self.before_materials and material.users == 0:
                 bpy.data.materials.remove(material)
         bpy.context.view_layer.update()
+        saved_frame = self.scene_state
+        for name, value in saved_frame.items():
+            if name not in ("frame_current", "frame_subframe"):
+                setattr(bpy.context.scene, name, value)
+        bpy.context.scene.frame_set(saved_frame["frame_current"], subframe=saved_frame["frame_subframe"])
         edits._restore_selection(self.selection)
+        self.restored_objects = restored
+
+    def restore_native_selection(self):
+        """Restore ordered Edit selection after the caller re-enters native Edit Mode."""
+        import bmesh
+
+        from . import spatial_model_edit
+        for record in self.saved:
+            selected = record["native_selection"]
+            if selected is None:
+                continue
+            obj = self.restored_objects.get(record["uid"])
+            if obj is None or obj.type != "MESH" or not obj.data.is_editmode:
+                raise ValueError("The restored native mesh is not in its original Edit Mode")
+            bm = bmesh.from_edit_mesh(obj.data)
+            spatial_model_edit._index(bm)
+            bm.faces.active = None
+            spatial_model_edit._restore_history(bm, selected["history"], selected["active_face"])
+            bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
 
     def close(self, restored=False):
         for clone in self.clones:
@@ -152,7 +209,36 @@ class Backup:
                     backup.name = name
             elif backup.users == 0:
                 bpy.data.batch_remove(ids=[backup])
+        for action in list(bpy.data.actions):
+            if action.session_uid not in self.before_actions and action.users == 0:
+                bpy.data.actions.remove(action)
         edits._restore_selection(self.selection)
+
+
+def _animation_snapshot(obj):
+    data = obj.animation_data
+    if data is None:
+        return None
+    slot = getattr(data, "action_slot", None)
+    return {"action": data.action, "slot": slot.identifier if slot is not None else None,
+            "blend": data.action_blend_type, "extrapolation": data.action_extrapolation,
+            "influence": data.action_influence}
+
+
+def _restore_animation(obj, saved):
+    if saved is None:
+        if obj.animation_data is not None:
+            obj.animation_data_clear()
+        return
+    data = obj.animation_data_create()
+    data.action = saved["action"]
+    if data.action is not None and saved["slot"] is not None:
+        slot = next((s for s in data.action.slots if s.identifier == saved["slot"]), None)
+        if slot is not None:
+            data.action_slot = slot
+    data.action_blend_type = saved["blend"]
+    data.action_extrapolation = saved["extrapolation"]
+    data.action_influence = saved["influence"]
 
 
 def _colour(obj, step):

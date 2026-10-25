@@ -16,7 +16,16 @@ through bpy.app.timers. Never execute received data as Python.
 
 import bpy
 
-from . import blender_ui, gate, host, lan, remote_client, remote_edit_ui, remote_test_ui
+from . import (
+    blender_ui,
+    gate,
+    host,
+    lan,
+    native_modeling_toolbar,
+    remote_client,
+    remote_edit_ui,
+    remote_test_ui,
+)
 
 
 def _sync_roles(self, context):
@@ -212,10 +221,12 @@ def register():
     from . import ownership
     ownership.register()
     blender_ui.register()
+    native_modeling_toolbar.register()
 
 
 def unregister():
     from . import ownership
+    native_modeling_toolbar.unregister()
     blender_ui.unregister()
     ownership.unregister()
     remote_edit_ui.unregister()

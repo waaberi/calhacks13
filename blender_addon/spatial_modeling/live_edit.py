@@ -121,10 +121,20 @@ def native_context():
             options[name] = sorted(value) if isinstance(value, set) else list(value) if hasattr(value, "__len__") and not isinstance(value, str) else value
     active = ctx.active_object
     tool_options = getattr(spatial_model_edit, "_options", None)
+    selection = {"objects": sorted(obj.get("spatial_modeling_id", "") for obj in ctx.selected_objects)}
+    if ctx.mode == "EDIT_MESH" and active is not None:
+        import bmesh
+        bm = bmesh.from_edit_mesh(active.data)
+        spatial_model_edit._index(bm)
+        selection.update({domain: [e.index for e in values if e.select and not e.hide]
+                          for domain, values in (("vertices", bm.verts), ("edges", bm.edges), ("faces", bm.faces))})
+        selection["history"] = [(type(item).__name__, item.index) for item in bm.select_history]
+        selection["active_face"] = bm.faces.active.index if bm.faces.active is not None else None
     return {"mode": ctx.mode, "native_tool": tool,
             "active_id": active.get("spatial_modeling_id", "") if active else "",
             "orientation": ctx.scene.transform_orientation_slots[0].type,
             "options": options,
+            "selection": selection,
             "tool_options": tool_options(ctx, active, tool) if tool_options and active else {}}
 
 

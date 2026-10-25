@@ -19,7 +19,7 @@ from spatial_modeling import commands, document, edits, host, leases, live_edit,
 
 
 def run(output):
-    bpy.ops.wm.read_factory_settings(use_empty=False)
+    assert "--factory-startup" in sys.argv, "Use a new factory process only"
     bpy.context.preferences.edit.use_global_undo = True
     doc = document.Document()
     sess = session.Session(sync.describe, sync.snapshot, uuid.uuid4().hex)

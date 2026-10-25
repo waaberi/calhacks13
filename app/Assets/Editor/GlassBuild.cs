@@ -10,6 +10,7 @@ public static class GlassBuild
         HandheldMenuChecks.Run();
         BlenderViewAppearanceChecks.Run();
         KeyboardPassthroughChecks.Run();
+        LiveModelEditSessionChecks.Run();
         P25Build.Windows();
         CombinedGlassChecks.Run();
         VoiceCompositionChecks.Run();

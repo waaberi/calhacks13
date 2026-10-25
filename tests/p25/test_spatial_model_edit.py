@@ -102,6 +102,15 @@ def test_state_serialization_failure_does_not_escape_preview_handler():
     assert state["vertices"] == state["edges"] == state["faces"] == state["triangles"] == []
 
 
+@pytest.mark.parametrize("mode,component", [("OBJECT", "object"), ("EDIT_MESH", "vertex"), ("EDIT_MESH", "edge")])
+def test_live_individual_extrude_reports_face_mode_before_native_geometry(monkeypatch, mode, component):
+    monkeypatch.setattr(native, "_tool", lambda _context: ("builtin.extrude_individual", ""))
+    monkeypatch.setattr(native, "_component", lambda _context: component)
+    state = native.read_state(NS(mode=mode, active_object=None))
+    assert not state["available"]
+    assert "Extrude Region / Individual" in state["reason"] and "face selection" in state["reason"]
+
+
 @pytest.mark.parametrize("setting", ["use_snap", "use_proportional_edit", "use_mesh_automerge",
                                     "use_transform_data_origin", "use_transform_skip_children"])
 def test_native_tool_options_are_not_silently_ignored(setting):

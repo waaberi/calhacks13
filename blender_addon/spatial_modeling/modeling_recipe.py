@@ -12,7 +12,7 @@ import time
 import uuid
 
 MAX_STEPS = 24
-MAX_INDICES = 256
+MAX_INDICES = 16384
 TTL = 120.0
 _ID = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,47}\Z")
 _UUID = re.compile(r"[0-9a-f]{32}\Z")
@@ -61,7 +61,7 @@ def validate_wire(draft, context):
                     raise InvalidRecipe("Invalid object reference")
             elif value != "captured":
                 _keys(value, ("component", "indices"))
-                if not isinstance(value["component"], str) or value["component"] not in _COMPONENTS or not isinstance(value["indices"], list) or len(value["indices"]) > 256:
+                if not isinstance(value["component"], str) or value["component"] not in _COMPONENTS or not isinstance(value["indices"], list) or len(value["indices"]) > MAX_INDICES:
                     raise InvalidRecipe("Invalid component selection")
                 indices = value["indices"]
                 if any(not _integer(i) for i in indices) or len(set(indices)) != len(indices):
@@ -123,7 +123,7 @@ def _selection(value):
         raise InvalidRecipe("Choose object, vertex, edge or face selection.")
     indices = value["indices"]
     if not isinstance(indices, list) or len(indices) > MAX_INDICES:
-        raise InvalidRecipe("A selection may contain at most 256 components.")
+        raise InvalidRecipe("A selection may contain at most 16384 native components.")
     if any(not _integer(i) for i in indices):
         raise InvalidRecipe("Component indices must be nonnegative integers.")
     if len(indices) != len(set(indices)):
@@ -175,6 +175,8 @@ def validate_context(expected, actual):
         raise InvalidRecipe("A fresh captured modeling context is required.")
     if expected.get("gesture_active"):
         raise InvalidRecipe("Finish or cancel the active controller edit before requesting a plan.")
+    if actual.get("options", {}).get("native_context_fingerprint_unavailable"):
+        raise InvalidRecipe("The complete native editing context could not be captured. Narrow the visible scene and request a fresh plan.")
     for name in ("document_id", "open_epoch", "revision", "mode", "native_tool", "topology_token", "options", "native_selection"):
         if name in expected and expected[name] != actual.get(name):
             raise InvalidRecipe("The Blender document, geometry, tool or options changed. Request a fresh plan.")
@@ -260,6 +262,19 @@ class Planner:
             if not isinstance(params, dict):
                 raise InvalidRecipe("Tool parameters must be typed JSON fields.")
             _numbers(params)
+            if tool == "mesh.merge" and params.get("variant") in {"FIRST", "LAST"}:
+                native_selection = actual.get("native_selection", {})
+                if (not native_selection.get("order_complete")
+                        or selection.get("component") != "vertex"
+                        or selection.get("indices") != native_selection.get("indices")):
+                    raise Clarify("selection", "Merge First/Last needs the current ordered native vertex picks; select vertices individually and request the complete edit again.")
+            for name, value in list(params.items()):
+                if name.endswith("_id"):
+                    value = aliases.get(value, value) if isinstance(value, str) else value
+                    if not isinstance(value, str) or value not in objects:
+                        raise Clarify(sid + "." + name, "Choose the exact visible object for " + name.replace("_", " ") + ".")
+                    params[name] = value
+                    generations[value] = objects[value]["generation"]
             required = set(spec.get("parameters", {}).get("required", [])) - set(params)
             if required:
                 field = min(required)
@@ -343,17 +358,20 @@ def execute(voice, candidate, editor):
             if not isinstance(result, dict):
                 raise TypeError("A modeling kernel returned no typed result")
             outputs[step["id"]] = copy.deepcopy(result.get("outputs", {}))
-            final = result.get("selection") or final
+            if "selection" in result:
+                final = result["selection"] or {"id": None}
             bpy.context.view_layer.update()
     except Exception as exc:
         backup.restore()
         if extra_backup is not None:
             extra_backup.restore()
         restored = True
-        if original_mode == "EDIT_MESH" and bpy.context.view_layer.objects.active is not None:
+        if original_mode in {"EDIT_MESH", "POSE"} and bpy.context.view_layer.objects.active is not None:
             # Backup.restore also restores active selection, including an object
             # recreated after deletion. Never reuse an invalid pre-delete RNA ref.
-            bpy.ops.object.mode_set(mode="EDIT")
+            bpy.ops.object.mode_set(mode="EDIT" if original_mode == "EDIT_MESH" else "POSE")
+            if original_mode == "EDIT_MESH":
+                backup.restore_native_selection()
         if isinstance(exc, ValueError):
             raise commands.Refused("failed", "The complete recipe was restored: " + str(exc)) from exc
         raise
@@ -361,4 +379,4 @@ def execute(voice, candidate, editor):
         backup.close(restored)
         if extra_backup is not None:
             extra_backup.close(restored)
-    return commands.Applied("AI recipe: " + candidate["label"], selection={"id": final.get("id")})
+    return commands.Applied("AI recipe: " + candidate["label"], selection=copy.deepcopy(final) or {"id": None})

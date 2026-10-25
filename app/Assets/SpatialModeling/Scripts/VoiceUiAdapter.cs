@@ -455,6 +455,11 @@ namespace SpatialModeling
                 names.Add(o.Value);
                 if (deleteWaiting != null && o.Key == deleteWaiting.TargetId) deleteTargetShown = true;
             }
+            if(AiConfirmationWaiting&&deleteWaiting.TargetId!=null)
+            {
+                var nativeTargets=new List<KeyValuePair<string,string>>();host.GetVisibleNativeObjects(nativeTargets);
+                deleteTargetShown=nativeTargets.Exists(obj=>obj.Key==deleteWaiting.TargetId);
+            }
             if (deleteWaiting?.TargetId != null && !deleteTargetShown) DropDelete(Prompt.TargetDeleted);
             Handle(session.SetObjects(list));
             if (SelectedObjectId != null && !list.Exists(o => o.Id == SelectedObjectId)) ClearObjectSelection();
@@ -520,10 +525,15 @@ namespace SpatialModeling
         // Esc or "cancel": drops the delete waiting for its confirmation and the pending command.
         void CancelPressed()
         {
-            InvalidateAi();
+            bool sentAiStillPending=InvalidateAi();
             PreviewInteraction.Current?.CancelDirectModelDraft("Voice / Escape cancelled the local direct edit");
             DropDelete(Prompt.Cancelled);
             Handle(session.Cancel());
+            if(sentAiStillPending)
+            {
+                resultLine="AI edit was already sent. Waiting for Blender's actual receipt; check the model before another edit.";
+                Enqueue(Prompt.Busy,resultLine);
+            }
         }
 
         void DropDelete(Prompt why)
@@ -545,7 +555,9 @@ namespace SpatialModeling
         void Send(HostCommand c)
         {
             if (!host.CanSend) { Enqueue(Prompt.NotConnected, null); return; }
-            string id = host.SendCommand(c.Op, c.TargetId, JObject.FromObject(c.Args), HostCommand.Source);
+            bool aiOwned=IsAiRun(c);
+            string id = aiOwned ? host.SendAiCommand(c.Op,c.TargetId,JObject.FromObject(c.Args),HostCommand.Source,AiContextCurrent)
+                : host.SendCommand(c.Op, c.TargetId, JObject.FromObject(c.Args), HostCommand.Source);
             if (id == null)
             {
                 // Connected but not sent: the target is no longer in the scene, or the socket just failed.
@@ -553,13 +565,17 @@ namespace SpatialModeling
                 return;
             }
             voiceRequests.Add(id);
+            if(aiOwned)TrackAiCommand(id);
             Debug.Log($"VOICE command {c.Op} target {c.TargetId ?? "-"} args {JObject.FromObject(c.Args).ToString(Newtonsoft.Json.Formatting.None)} sent {id} after {Since()} ms");
             // Explicit selection stays latched until cleared, replaced, deleted or the document/session changes.
         }
 
         void OnAnswered(CommandAnswer a)
         {
+            CompleteAiCommand(a.RequestId);
             if (!voiceRequests.Remove(a.RequestId)) return;   // controller/menu commands speak for themselves
+            if(a.Outcome=="cancelled"&&a.ErrorCode=="cancelled_before_send")
+            {resultLine="Cancelled: "+a.Message;Enqueue(Prompt.Cancelled,a.Message);return;}
             if (a.Outcome == "applied" && a.SelectionSpecified)
             {
                 if (a.SelectedId == null || !SelectObject(a.SelectedId)) ClearObjectSelection();

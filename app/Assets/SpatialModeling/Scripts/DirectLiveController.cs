@@ -12,6 +12,7 @@ namespace SpatialModeling
     // geometry. Every parameter is cumulative from the immutable gesture start.
     public sealed class DirectLiveController
     {
+        public const int MaximumSelectionSegments=512;
         readonly HostScene scene;
         readonly PreviewInteraction preview;
         readonly PreviewSpatialDrawing drawing;
@@ -62,7 +63,7 @@ namespace SpatialModeling
             // These are derived from the active geometry. An acknowledged own
             // rotation/selection legitimately changes them; the frozen operation
             // retains the original basis and pivot for the entire gesture.
-            if(value["settings"] is JObject settings){settings.Remove("pivot_m");settings.Remove("orientation_matrix");}
+            if(value["settings"] is JObject settings){settings.Remove("pivot_m");settings.Remove("orientation_matrix");settings.Remove("native_context_fingerprint");settings.Remove("native_context_fingerprint_unavailable");}
             return value.ToString(Formatting.None);
         }
         public void Tick()
@@ -84,7 +85,7 @@ namespace SpatialModeling
             if(Session.Busy&&Time.unscaledTime-lastTransportAt>10f){lastTransportAt=Time.unscaledTime;Session.Timeout();}
             if(held&&Session.Active&&Time.unscaledTime>=nextKeepAlive)
             {nextKeepAlive=Time.unscaledTime+4f;Session.KeepAlive();}
-            if(enabled&&!held&&!Busy){DrawHandles();DrawSelection();}else HideHandles();
+            if(enabled&&!held&&!Busy){DrawHandles();DrawSelection();Notice=ToolLabel();}else HideHandles();
         }
         public void Receive(JObject message)
         {
@@ -225,7 +226,8 @@ namespace SpatialModeling
         string ToolLabel()
         {
             if((bool?)Model?["available"]!=true)return (string)Model?["reason"]??"Choose a native tool";
-            return ((string)Model["tool"]??(string)Model["native_tool"])+" · trigger tap: select · hold + aim: live edit · grip: cancel / arrange";
+            string selected=Selection.Component=="object"?Selection.ObjectIds.Count+" object(s)":Selection.Indices.Count+" "+Selection.Component+" element(s)";
+            return ((string)Model["tool"]??(string)Model["native_tool"])+" · "+selected+" selected · trigger tap: select · hold + aim: live edit · grip: cancel / arrange";
         }
         WorkspaceObjectView FindView(string id)
         {foreach(var view in scene.ObjectViews)if(view!=null&&view.ObjectId==id)return view;return null;}
@@ -288,7 +290,11 @@ namespace SpatialModeling
             if(tool.EndsWith(".translate",StringComparison.Ordinal)||tool=="mesh.extrude")
             {
                 var value=new JObject { ["translation_m"]=DirectModelEditMath.ToWire(native) };
-                if(tool=="mesh.extrude")value["individual"]=(bool?)settings["individual"]??false;
+                if(tool=="mesh.extrude")
+                {
+                    value["individual"]=(bool?)settings["individual"]??false;
+                    if ((bool)value["individual"]) value["normal_distance_m"]=MetricDrag(primaryMap,displayDelta,firstRay.direction);
+                }
                 var result=PerTarget(value,(map)=>new JObject { ["translation_m"]=DirectModelEditMath.ToWire(map.inverse.MultiplyVector(displayDelta)) });
                 if((bool?)settings["use_snap"]==true&&(bool?)settings["use_snap_translate"]!=false&&TrySnap(ray,settings,out var snap,out var normal))
                 {
@@ -324,7 +330,7 @@ namespace SpatialModeling
                 ["boundary"]=(bool?)settings["boundary"]??true };
             if(tool=="mesh.bevel")return new JObject { ["width_m"]=Mathf.Abs(MetricDrag(primaryMap,displayDelta,firstRay.direction)),
                 ["segments"]=(int?)settings["segments"]??1,["profile"]=(float?)settings["profile"]??.5f,
-                ["vertices"]=pickedComponent=="vertex",["clamp_overlap"]=(bool?)settings["clamp_overlap"]??true,
+                ["vertices"]=settings["affect"]!=null?(string)settings["affect"]=="VERTICES":pickedComponent=="vertex",["clamp_overlap"]=(bool?)settings["clamp_overlap"]??true,
                 ["offset_type"]=(string)settings["offset_type"]??"OFFSET" };
             if(tool=="mesh.loop_cut")return new JObject { ["cuts"]=(int?)settings["cuts"]??1,["slide"]=LoopSlide(native) };
             if(tool=="mesh.knife")
@@ -641,25 +647,28 @@ namespace SpatialModeling
             var segments=new List<Vector3[]>();
             foreach(string id in Selection.ObjectIds)
             {
+                if(segments.Count>=MaximumSelectionSegments)break;
                 var view=FindView(id);if(view==null)continue;
                 if(Selection.Component=="object")
                 {
                     var mesh=view.GetComponent<MeshFilter>()?.sharedMesh;if(mesh==null)continue;var bounds=mesh.bounds;
                     var corners=new Vector3[8];for(int i=0;i<8;i++)corners[i]=view.transform.TransformPoint(bounds.center+Vector3.Scale(bounds.extents,
                         new Vector3((i&1)==0?-1:1,(i&2)==0?-1:1,(i&4)==0?-1:1)));
-                    for(int i=0;i<8;i++)foreach(int bit in new[]{1,2,4})if((i&bit)==0)segments.Add(new[]{corners[i],corners[i|bit]});
+                    for(int i=0;i<8;i++)foreach(int bit in new[]{1,2,4})if((i&bit)==0&&segments.Count<MaximumSelectionSegments)segments.Add(new[]{corners[i],corners[i|bit]});
                     continue;
                 }
                 if(!(Model?["vertices"] is JArray vertices))continue;
                 var positions=vertices.OfType<JObject>().ToDictionary(v=>(int)v["index"],v=>view.NativeToDisplayMatrix.MultiplyPoint3x4(DirectModelEditMath.ToUnity((JArray)v["position"])));
                 if(Selection.Component=="vertex")foreach(int index in Selection.Indices)
                 {
+                    if(segments.Count+3>MaximumSelectionSegments)break;
                     if(!positions.TryGetValue(index,out var p))continue;
                     foreach(var axis in new[]{Vector3.right,Vector3.up,Vector3.forward})segments.Add(new[]{p-axis*.003f,p+axis*.003f});
                 }
                 else if(Model[Selection.Component=="edge"?"edges":"faces"] is JArray components)
                     foreach(JObject item in components)if(Selection.Indices.Contains((int)item["index"])&&item["vertices"] is JArray ids)
                     {
+                        if(segments.Count>=MaximumSelectionSegments)break;
                         var path=ids.Values<int>().Where(positions.ContainsKey).Select(index=>positions[index]).ToList();
                         if(Selection.Component=="face"&&path.Count>2)path.Add(path[0]);if(path.Count>1)segments.Add(path.ToArray());
                     }

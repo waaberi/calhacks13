@@ -34,7 +34,8 @@ namespace SpatialModeling.VoiceCore
 
     /// <summary>
     /// An object the user can refer to: one the VR app shows (in the scene with <c>visible</c> true and a
-    /// <c>mesh</c>). <see cref="Id"/> is the contract's object <c>id</c>.
+    /// <c>mesh</c>). Reviewed recipes may instead provide an exact visible native
+    /// data/pose target. <see cref="Id"/> is the contract's object <c>id</c>.
     /// </summary>
     public sealed class SceneObject
     {
@@ -76,6 +77,23 @@ namespace SpatialModeling.VoiceCore
             Choice = candidate.Choice;
             Say = candidate.Say;
             confirmation = candidate.RequiresConfirmation;
+        }
+
+        /// <summary>Admit one reviewed host recipe against its exact visible native target.
+        /// This does not add data/pose objects to the ordinary speech grammar.</summary>
+        public static VoiceCommand ReviewedRecipeCandidate(string resolution, VoiceCandidate candidate, SceneObject exactNativeTarget)
+        {
+            if(string.IsNullOrWhiteSpace(resolution))throw new ArgumentException("A reviewed recipe needs its stored resolution",nameof(resolution));
+            if(candidate==null)throw new ArgumentNullException(nameof(candidate));
+            if(!candidate.RequiresConfirmation||candidate.Choice<1||candidate.Choice>3)
+                throw new ArgumentException("A reviewed recipe needs one deliberate confirmed choice",nameof(candidate));
+            if(candidate.NeedsTarget&&(string.IsNullOrEmpty(candidate.TargetId)||exactNativeTarget==null))
+                throw new ArgumentException("A reviewed recipe needs its exact native target",nameof(exactNativeTarget));
+            if(candidate.TargetId!=null&&(exactNativeTarget==null||candidate.TargetId!=exactNativeTarget.Id))
+                throw new ArgumentException("The reviewed native target does not match the host candidate",nameof(exactNativeTarget));
+            if(!candidate.NeedsTarget&&exactNativeTarget!=null)
+                throw new ArgumentException("A target-free recipe cannot receive a fallback target",nameof(exactNativeTarget));
+            return new VoiceCommand(resolution,candidate,exactNativeTarget);
         }
 
         public CommandKind Kind { get; }

@@ -18,7 +18,7 @@ public static class LiveControllerChecks
     {for(int i=0;i<16;i++)Check(Mathf.Abs(a[i]-b[i])<.00005f,why+" element "+i);}
     public static void Run()
     {
-        Selection();Presentation();GestureMath();LiveRoute();SelectionSync();ToolGestures();SelectionAndCancellation();
+        Selection();Presentation();GestureMath();LiveRoute();SelectionSync();ToolGestures();SelectionAndCancellation();SelectionOutlineBound();
         Debug.Log("LIVE_CONTROLLER_CHECK PASS actual held native-update route/one commit/cancel/selection-only no-geometry/SHIFT multi-selection+input-off/epoch/native Inset+Bevel+LoopCut+surface Knife/native axis handle+settings cancellation/own-echo identity+sequence/affine M0 mirrored nonuniform live+commit+reset+restore; physical acceptance pending");
     }
     public static void Selection()
@@ -195,10 +195,26 @@ public static class LiveControllerChecks
         using(var f=new DirectModelEditingChecks.Fixture())
         {
             NativeLive(f);f.Route(true);f.Route(true,.05f);GrantAndBegin(f);var model=(JObject)f.Drawing.NativeState["model_edit"];
-            model["settings"]["pivot_m"]=new JArray(.1,0,0);Invoke(f.Direct,"Update");
-            Check(!f.Sent.Any(m=>(string)m["type"]=="live.edit.cancel"),"own-derived native pivot telemetry does not cancel a frozen gesture");
+            model["settings"]["pivot_m"]=new JArray(.1,0,0);model["settings"]["native_context_fingerprint"]="own-updated-native-mesh";Invoke(f.Direct,"Update");
+            Check(!f.Sent.Any(m=>(string)m["type"]=="live.edit.cancel"),"own-derived native pivot/fingerprint telemetry does not cancel a frozen gesture");
             model["settings"]["orientation"]="LOCAL";Invoke(f.Direct,"Update");f.Route(false,.05f);
+            Check(!f.Sent.Any(m=>(string)m["type"]=="live.edit.commit")&&!f.Direct.Gesturing,"native settings invalidate the gesture immediately while its update receipt is pending");
+            var update=f.Sent.Last(m=>(string)m["type"]=="live.edit.update");State(f,"updated",1,(string)update["id"]);
             Check(f.Sent.Count(m=>(string)m["type"]=="live.edit.cancel")==1&&!f.Sent.Any(m=>(string)m["type"]=="live.edit.commit"),"actual native tool-setting change cancels once and delayed release cannot commit");
+            var rollback=f.Sent.Last(m=>(string)m["type"]=="live.edit.cancel");State(f,"cancelled",1,(string)rollback["id"]);f.Route(false,.05f);
+            Check(!f.Drawing.Session.ExternalEditBusy&&!f.Sent.Any(m=>(string)m["type"]=="live.edit.commit"),"native cancellation receipt finishes cleanup without a replay");
         }
+    }
+    static void SelectionOutlineBound()
+    {
+        using var f=new DirectModelEditingChecks.Fixture("builtin.move","EDIT_MESH");var model=(JObject)f.Drawing.NativeState["model_edit"];model["component"]="vertex";
+        NativeLive(f,"mesh.translate");var vertices=new JArray();var indices=new JArray();
+        for(int index=0;index<600;index++){vertices.Add(new JObject { ["index"]=index,["position"]=new JArray(index*.001,2,0) });indices.Add(index);}
+        model["vertices"]=vertices;model["selection"]["indices"]=indices;Invoke(f.Direct,"Update");
+        var live=(DirectLiveController)Get(f.Direct,"live");var lines=(List<LineRenderer>)Get(live,"selectionLines");
+        Check(lines.Count>0&&lines.Count<=DirectLiveController.MaximumSelectionSegments,"native Select All bounds allocated outline GameObjects");
+        Check(live.Selection.Indices.Count==600&&((JArray)f.Direct.SelectionSnapshot["indices"]).Count==600&&live.Notice.Contains("600"),"outline sampling retains the complete actionable selection and full count feedback");
+        model["selection"]["indices"]=new JArray(0,1);Invoke(f.Direct,"Update");
+        Check(lines.Count(line=>line.gameObject.activeSelf)==6,"small selected vertex crosses remain exact after large selection reuse");
     }
 }

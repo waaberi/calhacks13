@@ -28,7 +28,7 @@ from spatial_modeling import (
 
 
 def run(output):
-    bpy.ops.wm.read_factory_settings(use_empty=True)
+    assert "--factory-startup" in sys.argv, "Use a new factory process only"
     bpy.utils.keyconfig_init()
     from bl_ui.space_toolsystem_toolbar import VIEW3D_PT_tools_active
     VIEW3D_PT_tools_active.register_ensure()
@@ -64,11 +64,18 @@ def run(output):
         obj = sync.find_object(oid)
         bm = bmesh.from_edit_mesh(obj.data)
         spatial_model_edit._index(bm)
+        # Native Undo can reorder edge/face storage and reverse an undirected
+        # edge. Compare oriented topology and each UV corner without treating
+        # those native storage choices as a geometry/history change.
+        layers = list(bm.loops.layers.uv.values())
+        faces = []
+        for face in bm.faces:
+            corners = [(loop.vert.index, tuple(tuple(loop[layer].uv) for layer in layers)) for loop in face.loops]
+            start = min(range(len(corners)), key=lambda i: corners[i][0])
+            faces.append((tuple(corners[start:] + corners[:start]), face.material_index))
         return {"verts": [tuple(v.co) for v in bm.verts],
-                "edges": [tuple(v.index for v in edge.verts) for edge in bm.edges],
-                "faces": [(tuple(v.index for v in face.verts), face.material_index) for face in bm.faces],
-                "uv": {layer.name: [[tuple(loop[layer].uv) for loop in face.loops] for face in bm.faces]
-                       for layer in bm.loops.layers.uv.values()}}
+                "edges": sorted(tuple(sorted(v.index for v in edge.verts)) for edge in bm.edges),
+                "faces": sorted(faces), "uv_layers": [layer.name for layer in layers]}
     def fresh(component, unit, native_tool):
         if bpy.context.mode != "OBJECT":
             bpy.ops.object.mode_set(mode="OBJECT")
@@ -142,7 +149,8 @@ def run(output):
                 assert bpy.context.scene.get(edits.STEP_PROPERTY) == marker, "Held samples must not introduce history markers"
                 ask("commit", edit_session_id=edit_id, sequence=2)
                 lses.end(lease["lease_id"], actor["actor_id"])
-                assert mesh_state(oid) == final_mesh
+                redo_mesh = mesh_state(oid)
+                assert redo_mesh == final_mesh, {"tool": tool, "before_redo": final_mesh, "after_redo": redo_mesh}
                 editor.apply("history.undo", None, {})
                 assert mesh_state(oid) == before, f"{tool} one Undo must retain preexisting native mesh/UV data"
                 editor.apply("history.redo", None, {})

@@ -19,7 +19,7 @@ namespace SpatialModeling
         GeminiVoiceInterpreter ai;
         JArray aiTools = new JArray(), aiReview;
         JObject aiPendingDraft, aiExpectedContext;
-        string aiRecipeRequest, aiOriginal, aiQuestion, aiFingerprint;
+        string aiRecipeRequest, aiOriginal, aiQuestion, aiFingerprint, aiRunResolution, aiSubmittedCommand;
         DateTime aiQuestionUntil;
         int aiSequence, aiReviewPage, aiReviewedThrough;
         bool aiBusy;
@@ -27,34 +27,70 @@ namespace SpatialModeling
         public void SetAi(bool enabled) { InvalidateAi(); aiMode = enabled; }
         void AcceptAiCatalog(JObject grammar)
         { aiTools = (int?)grammar["recipe_version"] == 1 && grammar["tools"] is JArray tools ? (JArray)tools.DeepClone() : new JArray(); }
-        void InvalidateAi()
+        bool InvalidateAi()
         {
-            bool owned = aiBusy || aiRecipeRequest != null || aiReview != null || aiQuestion != null;
+            bool alreadySent = host != null && host.IsCommandInFlight(aiSubmittedCommand);
+            if(aiSubmittedCommand!=null&&!alreadySent)
+            {
+                host?.CancelQueuedAiCommand(aiSubmittedCommand,"AI edit cancelled before native input release. No edit was sent.");
+                aiSubmittedCommand=null;
+            }
+            bool owned = aiBusy || aiRecipeRequest != null || aiReview != null || aiQuestion != null || aiRunResolution != null;
             if (aiReview != null) deleteWaiting = null;
             if (owned) session?.Cancel();
             aiSequence++; ai?.Cancel(); aiBusy = false; aiQuestion = aiRecipeRequest = null;
             aiPendingDraft = aiExpectedContext = null; aiReview = null;
+            aiRunResolution = null;
+            return alreadySent;
         }
+        bool IsAiRun(HostCommand command) => command.Op == HostCommand.RunOp && aiRunResolution != null
+            && command.Args.TryGetValue("resolution",out var resolution) && (string)resolution == aiRunResolution;
+        void TrackAiCommand(string id)
+        {
+            aiSubmittedCommand=id;
+            // Queuing intentionally cancels any local direct draft while native
+            // input releases. Capture that own epoch transition, then reject any
+            // subsequent context change before this command crosses the wire.
+            aiFingerprint=CaptureAiContext().ToString(Formatting.None);
+        }
+        void CompleteAiCommand(string id)
+        {if(id==aiSubmittedCommand){aiSubmittedCommand=null;aiRunResolution=null;}}
+        bool AiContextCurrent() => host != null && host.HasCurrentScene && aiFingerprint != null
+            && CaptureAiContext().ToString(Formatting.None)==aiFingerprint;
         JObject CaptureAiContext()
         {
             var preview = PreviewInteraction.Current; var drawing = preview?.Drawing;
             var model = drawing?.NativeState["model_edit"] as JObject ?? new JObject();
             var nativeSelection = model["selection"] as JObject ?? new JObject();
-            var selected = preview?.DirectEditing?.SelectionSnapshot;
-            if (selected == null || !(selected["objects"] is JArray selectedObjects) || selectedObjects.Count == 0)
+            string mode=(string)model["mode"]??(string)drawing?.NativeState["mode"]??"OBJECT";
+            var shown = new List<KeyValuePair<string,string>>(); host.GetVisibleNativeObjects(shown);
+            var visible=new HashSet<string>(shown.Select(obj=>obj.Key),StringComparer.Ordinal);
+            var selected=(JObject)nativeSelection.DeepClone();
+            selected["component"]=(string)nativeSelection["component"]??(string)model["component"]??"object";
+            selected["indices"]=nativeSelection["indices"]?.DeepClone()??new JArray();
+            selected["active_id"]=(string)nativeSelection["active_id"]??(string)model["active_object_id"]??"";
+            selected["topology_token"]=(string)model["topology_token"]??"";
+            var selectedObjects=new JArray();
+            if(nativeSelection["objects"] is JArray nativeObjects)foreach(var entry in nativeObjects)
             {
-                string id = SelectedObjectId ?? (string)model["active_object_id"];
-                selected = new JObject { ["component"] = (string)nativeSelection["component"] ?? (string)model["component"] ?? "object",
-                    ["indices"] = nativeSelection["indices"]?.DeepClone() ?? model["selected_indices"]?.DeepClone() ?? new JArray(), ["objects"] = new JArray() };
-                if (id != null && host.TryGetGeneration(id, out long generation))
-                    ((JArray)selected["objects"]).Add(new JObject { ["id"] = id, ["generation"] = generation });
+                string id=entry is JObject row?(string)row["id"]:(string)entry;
+                if(id==null||!visible.Contains(id)||!host.TryGetGeneration(id,out long generation))continue;
+                selectedObjects.Add(new JObject { ["id"]=id,["generation"]=entry is JObject record?record["generation"]?.DeepClone()??new JValue(generation):new JValue(generation) });
             }
-            var shown = new List<KeyValuePair<string,string>>(); host.GetShownObjects(shown);
+            selected["objects"]=selectedObjects;
+            // Native selection is authoritative outside an acknowledged current
+            // spatial domain. In particular, an old mesh snapshot must not mask
+            // Pose Mode or resurrect a natively cleared Object Mode selection.
+            var direct=preview?.DirectEditing;var spatial=direct?.SelectionSnapshot;
+            if(direct!=null&&direct.Active&&drawing.NativeStateCurrent&&(bool?)model["live_supported"]==true
+                &&nativeSelection["objects"] is JArray&&nativeSelection["indices"] is JArray
+                &&(mode=="OBJECT"||mode=="EDIT_MESH")&&SpatialSelectionAcknowledged(spatial,selected,model,mode))
+                selected=spatial;
             var objects = new JArray();
             foreach (var obj in shown)
                 if (host.TryGetGeneration(obj.Key, out long generation)) objects.Add(new JObject { ["id"] = obj.Key, ["name"] = obj.Value, ["generation"] = generation });
             return new JObject { ["document_id"] = host.DocumentId, ["open_epoch"] = host.OpenEpoch, ["revision"] = host.Revision,
-                ["mode"] = (string)model["mode"] ?? (string)drawing?.NativeState["mode"] ?? "OBJECT",
+                ["mode"] = mode,
                 ["native_tool"] = (string)model["native_tool"] ?? "", ["topology_token"] = (string)model["topology_token"] ?? "",
                 ["options"] = model["options"]?.DeepClone() ?? model["settings"]?.DeepClone() ?? new JObject(),
                 ["native_selection"] = nativeSelection.DeepClone(),
@@ -62,10 +98,30 @@ namespace SpatialModeling
                 ["gesture_epoch"] = preview?.DirectEditing?.ContextEpoch ?? 0,
                 ["gesture_active"] = preview?.DirectEditing?.Gesturing == true || preview?.DirectEditing?.LiveBusy == true || drawing?.Session.ExternalEditBusy == true };
         }
+        bool SpatialSelectionAcknowledged(JObject spatial,JObject native,JObject model,string mode)
+        {
+            if(spatial==null||(string)spatial["component"]!=(string)native["component"]
+                ||(string)spatial["active_id"]!=(string)native["active_id"]
+                ||(string)spatial["topology_token"]!=((string)model["topology_token"]??""))return false;
+            if(mode=="OBJECT"&&(string)spatial["component"]!="object")return false;
+            if(mode=="EDIT_MESH"&&((string)native["active_id"]!=(string)model["active_object_id"]
+                ||(string)spatial["component"]=="object"))return false;
+            if(!(spatial["indices"] is JArray indices)||!(native["indices"] is JArray nativeIndices)
+                ||!JToken.DeepEquals(indices,nativeIndices))return false;
+            if(!(spatial["objects"] is JArray objects)||!(native["objects"] is JArray nativeObjects)||objects.Count!=nativeObjects.Count)return false;
+            if(mode=="EDIT_MESH"&&(objects.Count!=1||(string)objects[0]["id"]!=(string)model["active_object_id"]))return false;
+            for(int i=0;i<objects.Count;i++)
+            {
+                string id=(string)objects[i]["id"];
+                if(id!=(string)nativeObjects[i]["id"]||!host.TryGetGeneration(id,out long generation)
+                    ||(long?)objects[i]["generation"]!=generation||(long?)nativeObjects[i]["generation"]!=generation)return false;
+            }
+            return true;
+        }
         void TickAi()
         {
             if (aiQuestion != null && DateTime.UtcNow >= aiQuestionUntil) { aiQuestion = null; Note("AI question expired. Say the complete edit again."); }
-            if ((aiBusy || aiQuestion != null || aiRecipeRequest != null || aiReview != null)
+            if ((aiBusy || aiQuestion != null || aiRecipeRequest != null || aiReview != null || (host != null && host.IsCommandQueued(aiSubmittedCommand)))
                 && (!host.HasCurrentScene || CaptureAiContext().ToString(Formatting.None) != aiFingerprint))
             { InvalidateAi(); Note("Blender context changed. Say the complete edit again."); }
         }
@@ -76,7 +132,17 @@ namespace SpatialModeling
             return AiWords(text).All(word => words.Contains(word) || double.TryParse(word, out _));
         }
         static IEnumerable<string> AiWords(string text) => Regex.Matches((text ?? "").ToLowerInvariant(), @"[a-z]+|[-+]?(?:\d+(?:\.\d*)?|\.\d+)").Cast<Match>().Select(match => match.Value);
-        static bool Control(string text) => Regex.IsMatch(text.Trim(), @"^(undo|redo|cancel|cancel that|never mind|save|save file|save the file)$", RegexOptions.IgnoreCase);
+        static bool Control(string text)
+        {
+            string bounded=Regex.Replace((text??"").Trim(),@"[.!?]+$","").Trim();
+            if(Regex.IsMatch(bounded,@"^(never\s+mind|save(?:\s+(?:the\s+)?(?:file|project))?)$",RegexOptions.IgnoreCase))return true;
+            // Use the existing core parser for its full Undo/Redo/Cancel
+            // vocabulary (e.g. 'undo that' and 'redo that rotate'). The actual
+            // session still owns confidence, composition and command execution.
+            var core=new VoiceSession(new VoiceSessionOptions { AskHost=false },()=>DateTime.UtcNow);
+            var kind=core.Hear(new RecognitionResult(bounded,1)).Command?.Kind;
+            return kind==CommandKind.Undo||kind==CommandKind.Redo||kind==CommandKind.Cancel;
+        }
         void HearOrInterpret(RecognitionResult result, bool fromMic)
         {
             string text = fromMic ? RawAiTranscript() ?? result.Text : result.Text;
@@ -109,6 +175,8 @@ namespace SpatialModeling
         {
             aiSequence++; ai?.Cancel(); int sequence = aiSequence;
             var context = CaptureAiContext();
+            if (context["options"]?["native_context_fingerprint_unavailable"] != null)
+            { Note("The complete Blender context could not be captured. Narrow the visible scene and repeat the edit."); return; }
             if ((bool?)context["gesture_active"] == true || PreviewInteraction.Current?.Drawing?.Session.Busy == true)
             { Note("Finish or cancel the current controller edit before asking for an AI edit."); return; }
             aiExpectedContext = context; aiFingerprint = context.ToString(Formatting.None); aiBusy = true;
@@ -142,12 +210,35 @@ namespace SpatialModeling
             { session.Cancel(); aiQuestion = (string)payload["reason"] ?? "Which editing detail?"; aiQuestionUntil = DateTime.UtcNow.AddSeconds(30); return true; }
             if ((string)payload["decision"] == "run")
             {
-                if (!(payload["recipe_plan"] is JObject plan) || !(plan["steps"] is JArray steps) || steps.Count == 0)
+                if (string.IsNullOrEmpty((string)payload["resolution"]) || !(payload["recipe_plan"] is JObject plan) || !(plan["steps"] is JArray steps) || steps.Count == 0
+                    ||aiExpectedContext==null||!AiContextCurrent())
                 { session.Cancel(); InvalidateAi(); Note("The complete AI review was unavailable. Nothing was run."); return true; }
-                aiReview = (JArray)steps.DeepClone(); aiReviewPage = aiReviewedThrough = 0;
+                try
+                {
+                    var answer=VoiceCandidates.FromJson(payload.ToString(Formatting.None));
+                    if(answer.Candidates.Count!=1)throw new ArgumentException("Review requires one complete stored plan");
+                    var candidate=answer.Candidates[0];SceneObject exact=null;
+                    if(candidate.TargetId!=null||candidate.NeedsTarget)
+                    {
+                        var visible=new List<KeyValuePair<string,string>>();host.GetVisibleNativeObjects(visible);
+                        var target=visible.FirstOrDefault(obj=>obj.Key==candidate.TargetId);
+                        var captured=(aiExpectedContext["objects"] as JArray)?.OfType<JObject>().FirstOrDefault(obj=>(string)obj["id"]==candidate.TargetId);
+                        if(target.Key==null||!host.TryGetGeneration(target.Key,out long generation)||(long?)captured?["generation"]!=generation)
+                            throw new ArgumentException("The exact reviewed native target changed");
+                        exact=new SceneObject(target.Key,target.Value);
+                    }
+                    var command=VoiceCommand.ReviewedRecipeCandidate(answer.Resolution,candidate,exact);
+                    session.Cancel();aiReview=(JArray)steps.DeepClone();aiReviewPage=aiReviewedThrough=0;aiRunResolution=answer.Resolution;
+                    deleteWaiting=command;deleteExpiresAt=DateTime.UtcNow.AddSeconds(120);Enqueue(Prompt.ConfirmSequence,command.Say);
+                    return true;
+                }
+                catch(Exception error) when(error is ArgumentException||error is FormatException)
+                {session.Cancel();InvalidateAi();Note("The reviewed AI target is no longer available. Nothing was run; request a fresh plan.");return true;}
             }
             return false;
         }
+        bool AiConfirmationWaiting => deleteWaiting!=null&&deleteWaiting.Kind==CommandKind.Run
+            &&aiRunResolution!=null&&deleteWaiting.Resolution==aiRunResolution;
         bool ShowAiReview()
         {
             if (aiReview == null) return false;
@@ -157,7 +248,7 @@ namespace SpatialModeling
             {
                 var step=aiReview[i]; string target = (string)(step["target"] as JValue);
                 if (step["target"] is JObject reference) target = "output of " + (string)reference["step"];
-                var shown = new List<KeyValuePair<string,string>>(); host.GetShownObjects(shown);
+                var shown = new List<KeyValuePair<string,string>>(); host.GetVisibleNativeObjects(shown);
                 target = shown.FirstOrDefault(obj => obj.Key == target).Value ?? target ?? "new object";
                 string tool = ((string)step["tool"] ?? "Edit").Replace("mesh.","").Replace("object.","").Replace('_',' ');
                 lines.Add((i+1)+". "+tool+" · "+target);
@@ -183,6 +274,8 @@ namespace SpatialModeling
         }
         bool CanConfirmAiReview()
         {
+            if(aiReview!=null&&!AiContextCurrent())
+            {InvalidateAi();Note("Blender context changed. Nothing was run; say the complete edit again.");return false;}
             if (aiReview != null && aiReviewedThrough < (aiReview.Count-1)/3)
             { Note("Review every page of the AI plan first. Say next page."); return false; }
             aiReview = null; return true;
