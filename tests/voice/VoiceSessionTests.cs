@@ -322,6 +322,59 @@ namespace SpatialModeling.VoiceCore.Tests
         }
 
         [Fact]
+        public void DefaultThresholdAcceptsTwoWhichVoskCapsAtOneHalf()
+        {
+            // "two" and "to" sound the same, so Vosk splits the word's confidence between them: 0.50 for every voice.
+            var f = new Fixture(Cube);
+            Assert.Equal(-0.02, f.Say("move it minus two centimeters along y", 0.5f).Command.Meters.Value, 9);
+        }
+
+        [Theory]
+        [InlineData("move eight add y millimeters")] // Vosk on a real "move it up five millimeters" (#93, 0.56)
+        [InlineData("select the sphere and delete it")]
+        [InlineData("rotate it one hundred add eighty degrees around z")]
+        [InlineData("move it ten centimeters cancel")]
+        public void TwoDifferentVerbsAreAMishearing(string text)
+        {
+            var f = new Fixture(Cube, Sphere);
+            f.Select(Cube);
+            VoiceTurn turn = f.Say(text, 0.56f);
+            Assert.Null(turn.Command);
+            Assert.Equal(new[] { "low_confidence" }, Prompts(turn));
+
+            // Like low confidence, it leaves the pending command alone.
+            f.Say("rotate this ninety degrees");
+            Assert.Null(f.Say(text, 0.56f).Command);
+            Assert.Equal(CommandKind.Rotate, f.Session.Pending.Command.Kind);
+            Assert.Equal(MissingFields.Axis, f.Session.Pending.Missing);
+            Assert.NotNull(f.Say("z").Command);
+        }
+
+        [Theory]
+        [InlineData("undo the move", CommandKind.Undo)]
+        [InlineData("redo that rotate", CommandKind.Redo)]
+        [InlineData("apply the scale", CommandKind.Apply)]
+        [InlineData("cancel the add", CommandKind.Cancel)]
+        public void UndoRedoCancelAndApplyMayNameAnotherCommand(string text, CommandKind kind)
+        {
+            var f = new Fixture(Cube);
+            Assert.Equal(kind, f.Say(text).Command.Kind);
+
+            f.Say("rotate it ninety degrees");
+            Assert.Equal(new[] { "cancelled" }, Prompts(f.Say("cancel that rotate")));
+        }
+
+        [Fact]
+        public void ARepeatedVerbIsNotAConflict()
+        {
+            var f = new Fixture(Cube);
+            VoiceCommand command = f.Say("move move it up five millimeters").Command;
+            Assert.Equal(Axis.Z, command.Axis);
+            Assert.Equal(0.005, command.Meters.Value, 9);
+            Assert.Equal(CommandKind.Rotate, f.Say("rotate it ninety degrees turn around z").Command.Kind);
+        }
+
+        [Fact]
         public void CancelClearsThePendingCommand()
         {
             var f = new Fixture(Cube, Sphere);

@@ -33,6 +33,9 @@ namespace SpatialModeling.VoiceCore
         public static readonly Prompt AskFactor = new Prompt("ask_factor", "By how much? For example, two times or fifty percent.");
         public static readonly Prompt AskUnit = new Prompt("ask_unit", "In millimeters, centimeters or meters?");
 
+        /// <summary>The host wasn't sure what was meant: show <see cref="VoiceSession.Choice"/>'s options, numbered.</summary>
+        public static readonly Prompt AskChoice = new Prompt("ask_choice", "Which one did you mean? Say its number, or cancel.");
+
         // Notices. When a field is still missing, its question follows in the same turn.
         public static readonly Prompt LowConfidence = new Prompt("low_confidence", "Sorry, I didn't catch that. Please say it again.");
         public static readonly Prompt Unsupported = new Prompt("unsupported", "Sorry, I can't do that. Try: rotate this object ninety degrees around Z.");
@@ -65,7 +68,7 @@ namespace SpatialModeling.VoiceCore
         /// <summary>Every prompt, for generating or checking audio clips.</summary>
         public static IReadOnlyList<Prompt> All { get; } = new[]
         {
-            AskShape, AskTarget, AskAxis, AskDistance, AskAngle, AskFactor, AskUnit,
+            AskShape, AskTarget, AskAxis, AskDistance, AskAngle, AskFactor, AskUnit, AskChoice,
             LowConfidence, Unsupported, Cancelled, TimedOut, ReplacedPending, DocumentChanged, ConnectionLost, TargetDeleted,
             UnknownObject, AmbiguousName, WrongUnitDistance, WrongUnitAngle, WrongUnitFactor, OutOfRange,
             ConfirmDelete, NotConnected, Done, Locked, Changed, ReadOnly, Busy, NothingToUndo, NothingToRedo, Failed, OutcomeUnknown,

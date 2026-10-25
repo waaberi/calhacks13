@@ -62,7 +62,8 @@ class Editor:
     the open document.Document, told about saves (see Document.saved).
     """
 
-    def __init__(self, sync, undoable, document=None):
+    def __init__(self, sync, undoable, document=None, voice=None):
+        self.voice = voice  # voice_ops.Voice runs voice.run; without one it is refused
         self.sync = sync
         self.document = document
         commit = undoable(lambda done: done.summary)  # the Undo step is named after the edit
@@ -74,6 +75,7 @@ class Editor:
                 ("object.rotate", self._rotate),
                 ("object.scale", self._scale),
                 ("object.delete", self._delete),
+                ("voice.run", self._voice_run),
             )
         }
 
@@ -315,6 +317,11 @@ class Editor:
         if name in bpy.data.objects:
             raise RuntimeError(f"{name} is still there after deleting it")  # unknown outcome
         return Applied(f"Deleted {name}")
+
+    def _voice_run(self, obj, args):
+        if self.voice is None:
+            raise Refused("failed", "This host doesn't take voice commands.")
+        return self.voice.run(obj, args)  # voice_ops.py: selection kept, too heavy refused
 
     # History and file
 

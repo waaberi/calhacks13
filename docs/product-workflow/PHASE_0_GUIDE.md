@@ -14,7 +14,7 @@ P0 proves the team's tools can start together. It does not yet promise VR modeli
 
 Open `samples/mechanical/p0_reference_v2.blend` using **File > Open** in a separate Blender window after saving any personal work. Select `Cube_20mm`. Hover over the viewport, press **N**, and open **Item**. Dimensions should read **20, 20, 20 mm**. The cylinder should read **10, 10, 30 mm**. In **Scene Properties > Units**, confirm **Metric**, **Unit Scale 1.0**, **Millimeters**. Use **File > Save As** for a practice copy. Record whether these are useful engineering starter dimensions.
 
-Codex can create/check the file automatically. You decide whether it is the right reference and practice finding the numbers. The native measurement evidence is `acceptance/native-reference/p0-native-reference.json`.
+Codex can create/check the file automatically. You decide whether it is the right reference and practice finding the numbers. The native measurement evidence is `acceptance/native-reference/p0-native-reference-v2.json`.
 
 ## 2. Check physical hardware and network: P0-T-2
 

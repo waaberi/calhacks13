@@ -105,16 +105,19 @@ class ReadOnlyLink:
                                 # can send arbitrary text. Codes are sufficient for UI.
                                 code = body.get("code", "invalid_message")
                                 if code not in ("wrong_document", "unsupported_version", "permission_denied",
-                                                "invalid_message", "busy", "internal_error"):
+                                                "invalid_message", "busy", "internal_error", "failed"):
                                     code = "invalid_message"
                                 self._post("error", code)
                                 if code in ("wrong_document", "unsupported_version", "permission_denied"):
                                     self._stop.set()
                                     break
-                            elif kind in ("welcome", "scene.snapshot", "scene.update"):
+                            elif kind in ("welcome", "scene.snapshot", "scene.update",
+                                          "session.update", "activity"):
                                 self._post(kind, body)
                         if len(buffer) > protocol.MAX_LINE_BYTES:
                             raise protocol.ProtocolError("Host message exceeds size limit")
+            except lan.HandshakeError:  # a wrong token, or a host without TLS
+                self._post("disconnected", "TLS handshake failed — check the session token; retrying")
             except (OSError, ValueError, KeyError, TypeError, AttributeError, NotImplementedError):
                 # Never include credentials or received text in a diagnostic.
                 self._post("disconnected", "Disconnected — reconnecting; last scene is stale")
