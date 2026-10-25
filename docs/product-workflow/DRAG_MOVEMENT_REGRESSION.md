@@ -1,15 +1,18 @@
 # Far-ray dragging: failures, current fix and regression gates
 
-## Current pointer/depth correction, 2026-10-25
+## Current visual pointer/depth correction, 2026-10-25
 
-The wearer explicitly rejected pointer lag behind the tracked cylinders. UI hit
-testing and the visible ray now use the current same-device aim sample; the body,
-ray origin/direction and tip use that exact before-render sample. Read-only late
-intersections update the visual without dispatching another click or advancing a
-gesture. The existing Unity stabilization remains only on the held object's pose,
-with its aim-based position and preserved model orientation. Pickup initializes
-that independent filter at the current hit pose to avoid a jump. This supersedes
-the older statement below that hover and visual rays must be stabilized.
+The wearer rejected pointer lag behind the cylinders, then physically rejected
+the v10 raw-pointer replacement as very shaky/skipping while grabbed objects
+remained smooth. That raw visual behavior is a retained failure. The current
+correction uses the existing stabilized aim for logical UI hits and the displayed
+cylinder/ray together. After the unchanged held-object pose update, the pointer
+ends at the exact held local contact; unrelated surfaces cannot shorten or
+redirect it. The cylinder is derived from that same displayed ray after filtering,
+preventing a one-frame mismatch. Free pointers use stabilized nearest intersections
+with moved colliders synchronized. No extra world filter or object-motion change
+is introduced. The raw same-device sample remains the stabilizer input; pickup,
+origin conversion, aim-based position and preserved model orientation remain.
 
 Holding the depth stick integrates continuously in either direction without the
 old -0.5..2 metre offset cap. Dead zone and explicit surface-contact behavior

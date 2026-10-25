@@ -12,6 +12,9 @@ public static class RoomRecoveryChecks
     static void Check(bool value,string message) {if(!value) throw new Exception("Room recovery: "+message);}
     public static void Run()
     {
+        Check(SpatialModeling.Diagnostics.RoomRawCompletionObserver.ValidateNativeLayout()
+            && SpatialModeling.Diagnostics.RoomRawCompletionObserver.VerifyDecoder(),
+            "raw OpenXR observer ABI, request ownership, value-copy, duplicate rejection and bounded quota");
         var floor=Guid.NewGuid();var desk=Guid.NewGuid();
         var recorded=new WorkspaceSurfaces.RoomEvidence();
         recorded.anchors.Add(new WorkspaceSurfaces.AnchorEvidence {id=floor.ToString(),kind="Floor",

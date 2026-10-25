@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Unity.Collections;
 using UnityEngine;
 using UnityEngine.XR.OpenXR;
+using SpatialModeling.Diagnostics;
 
 namespace SpatialModeling
 {
@@ -25,6 +26,7 @@ namespace SpatialModeling
         RoomRecoveryIndex roomRecovery;
         bool roomRecoveryRead;
         int roomRecoveryDiagnosticLoads;
+        RoomRawCompletionObserver rawRoomCompletion;
         // The installed OpenXR shim converts SDK timeout zero to zero ns.
         // Always supply a real positive localization window. Keep the overall
         // parallel batch bounded, and never start a retry it cannot finish.
@@ -125,7 +127,12 @@ namespace SpatialModeling
                 bool diagnostic=roomRecoveryDiagnosticLoads++<2;
                 var preparations=new List<Task<RoomAnchor?>>();
                 int index=0;
-                if(diagnostic) OVRManager.SpaceSetComponentStatusComplete+=RoomEnableCompleteDiagnostic;
+                if(diagnostic)
+                {
+                    OVRManager.SpaceSetComponentStatusComplete+=RoomEnableCompleteDiagnostic;
+                    bool subscribed=RoomRawCompletionObserver.TryBegin(RoomRawEnableCompleteDiagnostic,out rawRoomCompletion,maximum:22);
+                    Debug.Log("WORKSPACE_ROOM_RECOVERY raw_openxr_observer="+subscribed+" maximum_events=22 own_requests_only=True");
+                }
                 try
                 {
                 foreach(var anchor in recovered)
@@ -143,7 +150,11 @@ namespace SpatialModeling
                 Debug.Log("WORKSPACE_ROOM_RECOVERY prepared="+next.Count+" matched_references="+
                     next.FindAll(item=>references.ContainsKey(item.Anchor.Uuid)).Count);
                 }
-                finally {if(diagnostic) OVRManager.SpaceSetComponentStatusComplete-=RoomEnableCompleteDiagnostic;}
+                finally
+                {
+                    if(diagnostic)
+                    {OVRManager.SpaceSetComponentStatusComplete-=RoomEnableCompleteDiagnostic;DisposeRoomRawCompletion();}
+                }
             }
         }
         async Task<RoomAnchor?> PrepareRecoveredRoomAnchor(OVRAnchor anchor,RoomRecoveryReference reference,
@@ -194,7 +205,7 @@ namespace SpatialModeling
             }
             finally {if(enablePending) enable.Dispose();}
         }
-        static OVRTask<bool> BeginRoomEnableDiagnostic(OVRAnchor anchor,OVRLocatable locatable,int index)
+        OVRTask<bool> BeginRoomEnableDiagnostic(OVRAnchor anchor,OVRLocatable locatable,int index)
         {
             try
             {
@@ -215,6 +226,7 @@ namespace SpatialModeling
             object[] arguments={handle,OVRPlugin.SpaceComponentType.Locatable,OVRPlugin.Bool.True,RoomLocalizationTimeoutSeconds,0UL};
             var result=(OVRPlugin.Result)set.Invoke(null,arguments);
             ulong request=(ulong)arguments[4];
+            if((int)result>=0) rawRoomCompletion?.TrackRequest(request);
             Debug.Log("WORKSPACE_ROOM_RECOVERY anchor="+index+" enable_native_result="+result+" code="+(int)result+
                 " request_nonzero="+(request!=0)+" timeout_seconds="+RoomLocalizationTimeoutSeconds);
             return (int)result<0 ? OVRTask.FromResult(false):(OVRTask<bool>)fromRequest.Invoke(null,new object[]{request});
@@ -224,6 +236,13 @@ namespace SpatialModeling
                 Debug.LogWarning("WORKSPACE_ROOM_RECOVERY native_enable_diagnostic_unavailable="+error.GetType().Name);
                 return locatable.SetEnabledAsync(true,timeout:RoomLocalizationTimeoutSeconds);
             }
+        }
+        void DisposeRoomRawCompletion()
+        {rawRoomCompletion?.Dispose();rawRoomCompletion=null;}
+        static void RoomRawEnableCompleteDiagnostic(RoomRawCompletionObserver.Sample sample)
+        {
+            Debug.Log("WORKSPACE_ROOM_RECOVERY raw_openxr_completion_code="+sample.Result+
+                " component="+sample.Component+" requested_enabled="+sample.Enabled+" own_request=True");
         }
         static int roomEnableDiagnosticEvents;
         static void RoomEnableCompleteDiagnostic(ulong request,bool success,OVRSpace space,Guid uuid,

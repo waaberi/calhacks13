@@ -180,8 +180,9 @@ namespace SpatialModeling
                 h.stableAim.SetPositionAndRotation(aim.position, aim.rotation);
                 h.aimInitialized = true;
             }
-            // Buttons and the visible pointer use the current device aim. The
-            // placement filter is independent and only smooths a held object.
+            // Hit the same stabilized ray the wearer sees. Raw input is retained
+            // only as the existing manipulation stabilizer's input.
+            aim = new Pose(h.stableAim.position, h.stableAim.rotation);
             var ray = new Ray(aim.position, aim.rotation * Vector3.forward);
             device.TryGetFeatureValue(UnityEngine.XR.CommonUsages.grip, out float grip);
             device.TryGetFeatureValue(UnityEngine.XR.CommonUsages.trigger, out float trigger);
@@ -433,7 +434,6 @@ namespace SpatialModeling
             }
             h.visual.SetActive(true);
             h.visual.transform.SetPositionAndRotation(hand.position, hand.rotation);
-            if(h.body!=null)h.body.SetPositionAndRotation(aim.position,aim.rotation);
             h.rawAim.SetPositionAndRotation(aim.position, aim.rotation);
             if (!h.aimInitialized)
             {
@@ -474,24 +474,37 @@ namespace SpatialModeling
                 h.part?.RememberArrangement();
                 if (h.timingSeconds >= 2) LogGrabTiming(h);
             }
-            // Refresh visual intersections from this exact before-render sample,
-            // without dispatching a second UI click or advancing a gesture.
+            // Derive all visuals AFTER the existing stabilizer and object update.
+            // A held point follows the actual smooth grab contact, never a second
+            // raw ray or a nearer unrelated surface that could make it skip.
             Physics.SyncTransforms(); // Menu, pair and held transforms may have moved since LateUpdate.
-            var currentRay = new Ray(aim.position, aim.rotation * Vector3.forward);
-            float pointerDistance = h.target != null
-                ? Mathf.Max(.15f, Vector3.Distance(aim.position, h.target.TransformPoint(h.localContact))) : 4f;
-            bool hit = false;
-            void Near(bool found, float d) { if (found && d >= 0 && d <= pointerDistance) { pointerDistance = d; hit = true; } }
-            var pointed = scene.PickObject(currentRay, out float objectDistance);
-            Near(pointed != null, objectDistance);
-            Near(screen.RaycastSurface(currentRay, out float screenDistance), screenDistance);
-            if (scene.Table != null) Near(scene.Table.RaycastControls(currentRay, out float menuDistance), menuDistance);
-            if (arrangement != null) Near(arrangement.Surfaces.RaycastLevel(currentRay, out float levelDistance) != null, levelDistance);
-            if (PreviewInteraction.Current != null) Near(PreviewInteraction.Current.RaycastVisual(currentRay, out float previewDistance), previewDistance);
+            var currentRay = new Ray(h.stableAim.position, h.stableAim.forward);
+            float pointerDistance = 4f;
+            bool hit = h.target != null;
+            Vector3 endpoint;
+            if(h.target!=null)
+            {
+                endpoint=h.target.TransformPoint(h.localContact);
+                pointerDistance=Vector3.Distance(currentRay.origin,endpoint);
+            }
+            else
+            {
+                void Near(bool found, float d) { if (found && d >= 0 && d <= pointerDistance) { pointerDistance = d; hit = true; } }
+                var pointed = scene.PickObject(currentRay, out float objectDistance);
+                Near(pointed != null, objectDistance);
+                Near(screen.RaycastSurface(currentRay, out float screenDistance), screenDistance);
+                if (scene.Table != null) Near(scene.Table.RaycastControls(currentRay, out float menuDistance), menuDistance);
+                if (arrangement != null) Near(arrangement.Surfaces.RaycastLevel(currentRay, out float levelDistance) != null, levelDistance);
+                if (PreviewInteraction.Current != null) Near(PreviewInteraction.Current.RaycastVisual(currentRay, out float previewDistance), previewDistance);
+                endpoint=currentRay.GetPoint(pointerDistance);
+            }
+            var visualForward=endpoint-currentRay.origin;
+            var visualRotation=visualForward.sqrMagnitude>.000001f
+                ? Quaternion.LookRotation(visualForward,h.stableAim.up):h.stableAim.rotation;
+            if(h.body!=null)h.body.SetPositionAndRotation(currentRay.origin,visualRotation);
             h.pointerDistance = pointerDistance;
             h.hasHit = hit;
             h.ray.SetPosition(0, currentRay.origin);
-            var endpoint = currentRay.GetPoint(pointerDistance);
             h.ray.SetPosition(1, endpoint);
             h.tip.position = endpoint;
             h.tip.gameObject.SetActive(h.hasHit || h.target != null);

@@ -108,6 +108,7 @@ namespace SpatialModeling
         void OnDestroy()
         {
             disposed = true; generation++;
+            DisposeRoomRawCompletion();
             ClearAnchors(); ClearLevels();
             foreach (var outline in outlines) if (outline != null) DestroyObject(outline.gameObject);
             if (levelMaterial != null) DestroyObject(levelMaterial);

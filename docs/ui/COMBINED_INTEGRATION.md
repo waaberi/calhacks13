@@ -15,9 +15,12 @@ docked size is one third of the previous menu; gripping it restores the existing
 full world-menu size. Returning to the hand shrinks it once, preserving fresh
 tracking requirements and the accessibility size multiplier.
 
-Logical UI hits and the visible body/pointer use current device aim. Held-object
-movement alone remains filtered. Late ray queries synchronize moved colliders
-without dispatching another click. Stick depth continues without the old cap.
+The v10 raw pointer was physically rejected as shaky/skipping while held objects
+were smooth. Logical UI hits and the visible cylinder/ray now share the existing
+stabilized aim. A held pointer ends at its actual smooth local contact and ignores
+unrelated nearer surfaces; cylinder direction is derived after that pose update.
+The object filter and manipulation path stay unchanged. Free-pointer queries
+synchronize moved colliders without another click. Stick depth keeps no old cap.
 
 Quick controls preserve native input ownership. Temporary pointer occlusion
 discards the gesture, resynchronizes the same authoritative window and confirms
