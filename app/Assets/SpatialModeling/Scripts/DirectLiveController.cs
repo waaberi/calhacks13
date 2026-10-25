@@ -259,6 +259,13 @@ namespace SpatialModeling
                 moveArrowLimit=nearest+.35f;
                 var blender=UnityEngine.Object.FindFirstObjectByType<BlenderScreen>();
                 if(blender!=null&&blender.RaycastSurface(ray,out float menuDistance))moveArrowLimit=Mathf.Min(moveArrowLimit,menuDistance);
+                foreach(var other in scene.ObjectViews)
+                {
+                    if(other==null||other==view||!other.gameObject.activeInHierarchy)continue;
+                    var collider=other.GetComponent<MeshCollider>();
+                    if(collider!=null&&collider.enabled&&collider.Raycast(ray,out var obstruction,moveArrowLimit))
+                        moveArrowLimit=Mathf.Min(moveArrowLimit,obstruction.distance);
+                }
             }
             bool handleHit=TryHandle(ray,nearest,out var handleAxis,out var constraint,out float handleDistance,moveArrowLimit);
             bool rotationRing=handleHit&&((string)Model?["tool"]??"").EndsWith(".rotate",StringComparison.Ordinal);
@@ -449,6 +456,7 @@ namespace SpatialModeling
             Vector3 native=primaryMap.inverse.MultiplyVector(displayDelta);
             if(tool.EndsWith(".translate",StringComparison.Ordinal)||tool=="mesh.extrude")
             {
+                snapPoint=null;
                 var value=new JObject { ["translation_m"]=DirectModelEditMath.ToWire(native) };
                 if(tool=="mesh.extrude")
                 {
@@ -861,9 +869,11 @@ namespace SpatialModeling
             if(tool=="mesh.extrude")
             {
                 bool individual=(string)(captured?frozenModel:Model)?["native_tool"]=="builtin.extrude_individual";
-                if(captured&&gestureNormalConstrained)return "Yellow normal: outward extends; inward reverses · frozen native normal";
+                if(captured&&gestureNormalConstrained)return individual?
+                    "Outward extends / inward reverses by the same native distance along each face's own normal":
+                    "Region follows grabbed face normal · outward extends / inward reverses · frozen native basis";
                 if(individual)return "Grab a yellow normal, or drag right to extend / left to reverse along each face normal";
-                return "Grab XYZ arrows for an axis; yellow face normal for normal movement; body drag moves freely";
+                return "XYZ arrows: axis movement · Region follows grabbed face normal · body drag moves freely";
             }
             if(tool.EndsWith(".scale",StringComparison.Ordinal))return "Cube end: outward grows, inward shrinks · body / plane: right or up grows";
             if(tool=="mesh.knife")return "Cyan path: controller stroke preview, not cut geometry · amounts below require Blender ACK";
@@ -882,8 +892,7 @@ namespace SpatialModeling
                 for(int i=0;i<path.Length;i++)normal+=Vector3.Cross(path[i]-origin,path[(i+1)%path.Length]-origin);
                 if(normal.sqrMagnitude>1e-16f)normals.Add((centre,normal.normalized*(mirrored?1:-1)));
             }
-            bool individual=(string)model["native_tool"]=="builtin.extrude_individual";
-            if(normals.Count==0||!individual&&normals.Any(value=>Vector3.Dot(value.normal,normals[0].normal)<.9999f))return false;
+            if(normals.Count==0)return false;
             bool found=false;
             foreach(var value in normals.Take(24))
             {
