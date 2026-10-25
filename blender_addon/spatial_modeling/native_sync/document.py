@@ -144,6 +144,10 @@ class NativeDocument:
     def busy(self):
         return self._transaction is not None or _active is not None
 
+    def can_capture(self):
+        """An author may checkpoint completed Edit Mode work without leaving Edit Mode."""
+        return not self.busy and not _modal_busy()
+
     @staticmethod
     def is_empty_session():
         """Initial replacement is allowed only before this separate session has user objects/file."""
@@ -157,7 +161,7 @@ class NativeDocument:
         return not any(obj.mode != "OBJECT" for obj in bpy.data.objects)
 
     def capture(self, path):
-        if self.busy or _modal_busy():
+        if not self.can_capture():
             raise NativeDocumentBusy("Finish the active native operation before sharing a checkpoint")
         if any(item.library is not None for item in _pointer_map().values()):
             raise NativeDocumentError("Make externally linked libraries local before sharing this document")
