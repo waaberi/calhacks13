@@ -16,7 +16,7 @@ through bpy.app.timers. Never execute received data as Python.
 
 import bpy
 
-from . import gate, host, lan, remote_client
+from . import blender_ui, gate, host, lan, remote_client, remote_test_ui
 
 
 def _sync_roles(self, context):
@@ -109,6 +109,7 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
         layout.prop(self, "role", expand=True)
         if self.role != "HOST":
             layout.label(text="Read-only mirror — use a separate empty, unsaved session")
+            layout.prop(self, "host_name")  # the name the host, VR and lease owners show
             layout.prop(self, "client_address")
             layout.prop(self, "client_port")
             layout.prop(self, "client_token")
@@ -175,6 +176,7 @@ class ConnectReadOnly(bpy.types.Operator):
         if prefs.role != "CLIENT":
             return {"CANCELLED"}
         try:
+            lan.normalize_token(prefs.client_token)  # a short token: say so, don't retry silently
             remote_client.connect(prefs.client_address, prefs.client_token, APP["version"],
                                   prefs.host_name or "Blender viewer", prefs.client_port,
                                   prefs.client_tls)
@@ -205,9 +207,17 @@ def register():
     host.register()
     gate.register()
     remote_client.register()
+    remote_test_ui.register()
+    from . import ownership
+    ownership.register()
+    blender_ui.register()
 
 
 def unregister():
+    from . import ownership
+    blender_ui.unregister()
+    ownership.unregister()
+    remote_test_ui.unregister()
     remote_client.unregister()
     gate.unregister()
     host.unregister()

@@ -131,6 +131,13 @@
             },
             "additionalProperties": false
           }
+        },
+        "editing_mode": {
+          "type": "string",
+          "enum": [
+            "shared",
+            "exclusive"
+          ]
         }
       },
       "additionalProperties": false

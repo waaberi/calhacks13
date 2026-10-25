@@ -22,7 +22,14 @@ namespace SpatialModeling
             || Array.IndexOf(Environment.GetCommandLineArgs(), "--p25") >= 0;
         public bool CapturesScroll { get; private set; }
         public bool OwnsControllerButtons => inputEnabled || focusRequested || windowResuming || endAfterRelease || NativeInputOwned;
+        const string PointerHandPreference = "SpatialModeling.PreviewPointerLeft";
         public XRNode PrimaryHand { get; private set; } = XRNode.RightHand;
+        public void SetPointerHand(XRNode hand)
+        {
+            if (hand != XRNode.LeftHand && hand != XRNode.RightHand) return;
+            Suspend(); PrimaryHand = hand; triggerWasDown = true;
+            PlayerPrefs.SetInt(PointerHandPreference, hand == XRNode.LeftHand ? 1 : 0); PlayerPrefs.Save();
+        }
         public string Notice { get; private set; } = "Focus Blender to enable native preview input";
         public PreviewSpatialDrawing Drawing { get; private set; }
         BlenderScreen screen;
@@ -79,6 +86,7 @@ namespace SpatialModeling
         void OnEnable()
         {
             if (!Requested) { enabled = false; return; }
+            PrimaryHand = PlayerPrefs.GetInt(PointerHandPreference, 0) == 1 ? XRNode.LeftHand : XRNode.RightHand;
             Current = this;
             scene = FindFirstObjectByType<HostScene>();
             Drawing = GetComponent<PreviewSpatialDrawing>() ?? gameObject.AddComponent<PreviewSpatialDrawing>();
@@ -180,8 +188,8 @@ namespace SpatialModeling
             { nextHeartbeat = Time.unscaledTime + .25f; Enqueue(new JObject { ["type"] = "heartbeat" }); }
             RefreshInputIndicator();
             if (feedback != null)
-                feedback.text = "Blender input: " + InputMode + (questControls ? " · Quest controls" : " · Mouse mode: " + mouseButton)
-                    + " · " + (PrimaryHand == XRNode.RightHand ? "Right" : "Left") + " pointer\n" + Notice
+                feedback.text = "Blender input: " + InputMode + (questControls ? " Ã‚Â· Quest controls" : " Ã‚Â· Mouse mode: " + mouseButton)
+                    + " Ã‚Â· " + (PrimaryHand == XRNode.RightHand ? "Right" : "Left") + " pointer\n" + Notice
                     + "\n" + (Drawing != null ? Drawing.StatusText : "Waiting for spatial bridge");
             if (Notice != lastLoggedNotice)
             { lastLoggedNotice = Notice; Debug.Log("P25_INPUT_NOTICE " + Notice); }
@@ -198,7 +206,7 @@ namespace SpatialModeling
             if (numbersShown) RefreshNumbers();
             if (windowsShown) RefreshWindows();
             RefreshControlFeedback();
-            if (shortcutsShown && shortcutFeedback != null) shortcutFeedback.text = "Page " + (shortcutPage + 1) + " / 2 · click the intended Blender editor before using these shortcuts\n" + Notice;
+            if (shortcutsShown && shortcutFeedback != null) shortcutFeedback.text = "Page " + (shortcutPage + 1) + " / 2 Ã‚Â· click the intended Blender editor before using these shortcuts\n" + Notice;
         }
 
         public void TrackingLost(XRNode hand)
@@ -351,8 +359,8 @@ namespace SpatialModeling
         void ToggleScreenLock()
         {
             ReleaseNative(); screen?.TogglePositionLock();
-            Notice = screen != null && screen.PositionLocked ? "Screen LOCKED · front: click · side: right-click · stick: scroll/zoom · hold stick + tilt: pan"
-                : "Screen UNLOCKED · side grip moves the screen";
+            Notice = screen != null && screen.PositionLocked ? "Screen LOCKED Ã‚Â· front: click Ã‚Â· side: right-click Ã‚Â· stick: scroll/zoom Ã‚Â· hold stick + tilt: pan"
+                : "Screen UNLOCKED Ã‚Â· side grip moves the screen";
         }
 
         void RefreshControlFeedback()
@@ -382,7 +390,7 @@ namespace SpatialModeling
                 if (stateful)
                 {
                     string label = b.name == "Lock screen position" ? (selected ? "Screen LOCKED" : "Lock screen position")
-                        : b.name == "Other hand" ? "Pointer: " + (selected ? "Left" : "Right") : b.name + (selected ? " · ON" : "");
+                        : b.name == "Other hand" ? "Pointer: " + (selected ? "Left" : "Right") : b.name + (selected ? " Ã‚Â· ON" : "");
                     b.GetComponentInChildren<Text>().text = label;
                 }
                 var c = b.colors;
@@ -391,8 +399,8 @@ namespace SpatialModeling
                 c.highlightedColor = c.selectedColor = c.normalColor; b.colors = c;
             }
             if (actionFeedback != null)
-                actionFeedback.text = lastControlAction + "\n" + (screen != null && screen.PositionLocked ? "Screen LOCKED · front: click · side: right-click · stick: scroll/zoom · hold stick + tilt: pan"
-                    : "Screen UNLOCKED · side grip moves screen; lock it for right-click") + "\n"
+                actionFeedback.text = lastControlAction + "\n" + (screen != null && screen.PositionLocked ? "Screen LOCKED Ã‚Â· front: click Ã‚Â· side: right-click Ã‚Â· stick: scroll/zoom Ã‚Â· hold stick + tilt: pan"
+                    : "Screen UNLOCKED Ã‚Â· side grip moves screen; lock it for right-click") + "\n"
                     + (Drawing != null && (Drawing.EnabledForInput || spatialRequested) && (string)Drawing.NativeState["mode"] != "OBJECT"
                         ? "Direct VR drawing needs Blender Object Mode; use its top-left mode dropdown" : Notice);
         }
@@ -416,9 +424,9 @@ namespace SpatialModeling
         {
             if (focusButton == null) return;
             string mode = InputMode;
-            focusButton.GetComponentInChildren<Text>().text = mode == "On" ? "Input ON · turn off"
-                : mode == "Off" ? "Input OFF · enable" : mode == "Blocked" ? "Input blocked · retry"
-                : mode == "Releasing" ? "Releasing input…" : "Enabling… · cancel";
+            focusButton.GetComponentInChildren<Text>().text = mode == "On" ? "Input ON Ã‚Â· turn off"
+                : mode == "Off" ? "Input OFF Ã‚Â· enable" : mode == "Blocked" ? "Input blocked Ã‚Â· retry"
+                : mode == "Releasing" ? "Releasing inputÃ¢â‚¬Â¦" : "EnablingÃ¢â‚¬Â¦ Ã‚Â· cancel";
             focusButton.interactable = !endAfterRelease;
             var colors = focusButton.colors;
             colors.normalColor = mode == "On" ? new Color(.12f, .65f, .28f)
@@ -509,7 +517,7 @@ namespace SpatialModeling
             if (Drawing.NativeModalActive && id != "cancel" && id != "confirm")
             { Notice = "Confirm or cancel the running Blender operation first"; return; }
             if (!QueueChord(shortcut.BuildEvents(), shortcut.RequiresEditorContext)) return;
-            Notice = shortcut.Label + (shortcut.OpensModal ? " · continue in Blender; Enter confirms, Escape cancels" : " · sent to the chosen native editor");
+            Notice = shortcut.Label + (shortcut.OpensModal ? " Ã‚Â· continue in Blender; Enter confirms, Escape cancels" : " Ã‚Â· sent to the chosen native editor");
         }
         bool QueueChord(IReadOnlyList<JObject> chord, bool returnToEditor)
         {
@@ -760,8 +768,8 @@ namespace SpatialModeling
                         if (Ready())
                         {
                             windowResuming = false; inputEnabled = true; awaitedWindow = 0;
-                            Notice = inputResync ? "Blender input ready · previous gesture discarded; use a new gesture"
-                                : "Blender dialog/window ready · old input released";
+                            Notice = inputResync ? "Blender input ready Ã‚Â· previous gesture discarded; use a new gesture"
+                                : "Blender dialog/window ready Ã‚Â· old input released";
                             inputResync = false;
                         }
                     }
@@ -770,7 +778,7 @@ namespace SpatialModeling
                         // The helper acknowledged exact-window foreground after
                         // verification. A later event still rechecks it natively.
                         if (state != null) state["focused"] = true;
-                        Notice = "Blender focused · trigger: mouse · stick: scroll · grip: move preview";
+                        Notice = "Blender focused Ã‚Â· trigger: mouse Ã‚Â· stick: scroll Ã‚Â· grip: move preview";
                     }
                 }
                 sendingEvent = false;
@@ -797,36 +805,19 @@ namespace SpatialModeling
             AddButton(panel, "Disable input", 1, 0, Suspend);
             AddButton(panel, "Keyboard", 2, 0, () => { if (keyboardShown) keyboardShown = false; else OpenKeyboard(false); });
             AddButton(panel, "Lock screen position", 3, 0, ToggleScreenLock);
-            AddButton(panel, "Controller controls", 4, 0, () => { ReleaseNative(); questControls = true; mouseOptionsShown = false; Notice = "Front: click · side: right-click with screen locked · stick: scroll/zoom · hold stick + tilt: pan"; });
+            AddButton(panel, "Controller controls", 4, 0, () => { ReleaseNative(); questControls = true; mouseOptionsShown = false; Notice = "Front: click Ã‚Â· side: right-click with screen locked Ã‚Â· stick: scroll/zoom Ã‚Â· hold stick + tilt: pan"; });
             AddButton(panel, "Mouse options", 5, 0, () =>
             {
                 mouseOptionsShown = !mouseOptionsShown;
                 if (mouseOptionsShown) keyboardShown = numbersShown = shortcutsShown = windowsShown = modelToolsShown = false;
             });
-            AddButton(panel, "Other hand", 6, 0, () => { Suspend(); PrimaryHand = PrimaryHand == XRNode.RightHand ? XRNode.LeftHand : XRNode.RightHand; triggerWasDown = true; });
+            AddButton(panel, "Windows / dialogs", 6, 0, OpenWindows);
             AddButton(panel, "Escape / cancel", 0, 1, () => { Drawing.Cancel(); Key("ESC"); });
             AddButton(panel, "Enter", 1, 1, () => Key("ENTER"));
-            AddButton(panel, "Undo", 2, 1, () => { if (Drawing.EnabledForInput || Drawing.ObjectToolsEnabled) Drawing.Undo(); else Shortcut("Z"); });
-            AddButton(panel, "Redo", 3, 1, () => { if (Drawing.EnabledForInput || Drawing.ObjectToolsEnabled) Drawing.Redo(); else Shortcut("Z", true); });
-            AddButton(panel, "Save", 4, 1, () => { if (Drawing.EnabledForInput || Drawing.ObjectToolsEnabled) Drawing.Save(); else Shortcut("S"); });
-            AddButton(panel, "Search F3", 5, 1, () => Key("F3"));
-            AddButton(panel, "Next window", 6, 1, NextWindow);
-            AddButton(panel, "Draw in VR", 0, 2, BeginSpatial);
-            AddButton(panel, "Line", 1, 2, () => Drawing.SelectTool("line"));
-            AddButton(panel, "Rectangle", 2, 2, () => Drawing.SelectTool("rectangle"));
-            AddButton(panel, "Circle", 3, 2, () => Drawing.SelectTool("circle"));
-            AddButton(panel, "New XY sketch", 4, 2, () => Drawing.CreateSketch("XY"));
-            AddButton(panel, "New XZ sketch", 5, 2, () => Drawing.CreateSketch("XZ"));
-            AddButton(panel, "New YZ sketch", 6, 2, () => Drawing.CreateSketch("YZ"));
-            AddButton(panel, "Model tools", 0, 3, BeginObjects);
-            AddButton(panel, "Preview tools", 1, 3, () => {
-                if (!inputEnabled || !Ready()) { Notice = "Focus Blender, then click the intended native editor first"; return; }
-                numbersShown = modelToolsShown = keyboardShown = windowsShown = false; shortcutsShown = true;
-            });
-            AddButton(panel, "Full keyboard", 2, 3, () => OpenKeyboard(true));
-            AddButton(panel, "Windows / dialogs", 3, 3, OpenWindows);
-            AddButton(panel, "Copy Ctrl+C", 4, 3, () => Shortcut("C"));
-            AddButton(panel, "Paste Ctrl+V", 5, 3, () => Shortcut("V"));
+            // Blender owns modeling, tools, dimensions, history and file actions.
+            AddButton(panel, "Draw in VR", 2, 1, BeginSpatial);
+            AddButton(panel, "Full keyboard", 3, 1, () => OpenKeyboard(true));
+            AddButton(panel, "Next window", 4, 1, NextWindow);
             feedback = MakeText(panel, new Vector2(0, -155), new Vector2(1780, 160), "", 25);
             actionFeedback = MakeText(panel, new Vector2(0, 355), new Vector2(1780, 160), "", 28);
             actionFeedback.gameObject.AddComponent<Outline>().effectColor = Color.black;
@@ -875,8 +866,8 @@ namespace SpatialModeling
             fullKeys.Add(AddButton(keyboard, "Letters", 0, 5, () => SetKeyboardPage(false)));
             fullKeys.Add(AddButton(keyboard, "Close full keyboard", 1, 5, () => keyboardShown = false));
             SetKeyboardPage(false); keyboard.gameObject.SetActive(false);
-            BuildModelTools();
-            BuildCommonControls();
+            // Historical palette builders remain for backend regression evidence,
+            // but have no production entry point or constructed controls.
             BuildWindowControls();
         }
 
@@ -959,7 +950,7 @@ namespace SpatialModeling
             var values = Drawing.Numeric;
             bool current = values.IsCurrent;
             for (int i = 0; i < numberFields.Count; i++) numberFields[i].GetComponentInChildren<Text>().text = (values.Axis == i ? "> " : "") + "XYZ"[i] + ": " + values.Value(i);
-            if (numberFeedback != null) numberFeedback.text = values.Mode + " · " + values.Unit + "\n" + (current ? "Local values · Apply explicitly changes Blender" : "Draft needs reload") + "\n" + values.Notice;
+            if (numberFeedback != null) numberFeedback.text = values.Mode + " Ã‚Â· " + values.Unit + "\n" + (current ? "Local values Ã‚Â· Apply explicitly changes Blender" : "Draft needs reload") + "\n" + values.Notice;
         }
         void ObjectButton(string label, string action, int col, int row) =>
             AddButton(modelToolsPanel, label, col, row, () => Drawing.ApplyObjectAction(action));
@@ -970,7 +961,7 @@ namespace SpatialModeling
             if (moveStepButton != null) moveStepButton.GetComponentInChildren<Text>().text = "Move: " + (tools.MoveStepMeters * 1000).ToString("0") + " mm";
             if (turnStepButton != null) turnStepButton.GetComponentInChildren<Text>().text = "Turn: " + tools.TurnDegrees + " deg";
             if (primitiveSizeButton != null) primitiveSizeButton.GetComponentInChildren<Text>().text = "Size: " + (tools.PrimitiveSizeMeters * 1000).ToString("0") + " mm";
-            if (objectTargetText != null) objectTargetText.text = "Model target: " + tools.TargetLabel + "\nBlender world XYZ · primitives at world origin · Undo restores edits";
+            if (objectTargetText != null) objectTargetText.text = "Model target: " + tools.TargetLabel + "\nBlender world XYZ Ã‚Â· primitives at world origin Ã‚Â· Undo restores edits";
         }
 
         void NextWindow()
@@ -1025,12 +1016,12 @@ namespace SpatialModeling
                 var button = AddButton(windowPanel, "Window " + hwnd, 0, 1 + i % 6, () => ChooseWindow(hwnd), 1780, 1);
                 var label = button.GetComponentInChildren<Text>(); label.supportRichText = false;
                 string title = (string)item["title"] ?? "Untitled Blender window";
-                if (title.Length > 110) title = title.Substring(0, 110) + "…";
-                label.text = ((string)item["kind"] ?? "blender") + " · " + title;
+                if (title.Length > 110) title = title.Substring(0, 110) + "Ã¢â‚¬Â¦";
+                label.text = ((string)item["kind"] ?? "blender") + " Ã‚Â· " + title;
                 windowButtons.Add(button);
             }
             windowFeedback.text = count == 0 ? "Waiting for a verified Blender window list. Focus Blender or refresh the helper selection."
-                : "Page " + (windowPage + 1) + " / " + pages + " · owned dialogs follow automatically; choose a window to recover or switch";
+                : "Page " + (windowPage + 1) + " / " + pages + " Ã‚Â· owned dialogs follow automatically; choose a window to recover or switch";
         }
         void ReturnToBlender()
         {

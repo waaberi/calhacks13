@@ -19,8 +19,8 @@ namespace SpatialModeling
         public float Distance { get; private set; } = 1.1f;
         public float Size { get; private set; } = 1f;
         public bool IsActualSize => Mathf.Approximately(Size, 1f);
-        public string ScaleLabel => IsActualSize ? "Actual size · 1:1"
-            : $"Inspection size · {Size.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}×";
+        public string ScaleLabel => IsActualSize ? "Actual size Â· 1:1"
+            : $"Inspection size Â· {Size.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}Ã—";
         public float Yaw { get; private set; }
         public Transform Display => display;
         public Transform Menu => panel;
@@ -61,7 +61,7 @@ namespace SpatialModeling
             material = new Material(previewMaterial);
             material.color = new Color(0.15f, 0.65f, 0.85f, 1);
             var table = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            table.name = "Table preview — local inspection only";
+            table.name = "Table preview â€” local inspection only";
             preview = table.transform;
             preview.GetComponent<Renderer>().sharedMaterial = material;
             preview.GetComponent<Collider>().enabled = false;
@@ -241,9 +241,9 @@ namespace SpatialModeling
             if (panel == null) CreatePanel();
             var connection = GetComponent<HostScene>();
             var arrangement=GetComponent<WorkspaceArrangement>() ?? FindFirstObjectByType<WorkspaceArrangement>();
-            title.text = arrangement!=null ? MenuHeading(arrangement) : $"{(IsPlaced ? "Inspect table" : State == PlacementState.ConfirmTrackingReset ? "Tracking reset — confirm placement" : "Choose table position")}" +
-                $" · {(MenuDocked ? "left hand" : "in space")}\nGrip menu, move, release to place" +
-                $"\nHeight {Height:F2} m · {ScaleLabel} · {connection.ConnectionText}";
+            title.text = arrangement!=null ? MenuHeading(arrangement) : $"{(IsPlaced ? "Inspect table" : State == PlacementState.ConfirmTrackingReset ? "Tracking reset â€” confirm placement" : "Choose table position")}" +
+                $" Â· {(MenuDocked ? "left hand" : "in space")}\nGrip menu, move, release to place" +
+                $"\nHeight {Height:F2} m Â· {ScaleLabel} Â· {connection.ConnectionText}";
             var keyboard = Keyboard.current;
             if (keyboard != null && !PreviewInteraction.BlocksDesktopShortcuts)
             {
@@ -354,7 +354,7 @@ namespace SpatialModeling
                 ("Place Table", Place), ("Move Table", BeginMove),
                 ("Point to position", () => { if (IsPlaced) BeginMove(); pointing = true; }),
                 ("Cancel move", CancelMove), ("Height +", () => adjust(.05f,0,0,0)),
-                ("Height −", () => adjust(-.05f,0,0,0)), ("Farther", () => adjust(0,.1f,0,0)),
+                ("Height âˆ’", () => adjust(-.05f,0,0,0)), ("Farther", () => adjust(0,.1f,0,0)),
                 ("Closer", () => adjust(0,-.1f,0,0)), ("Larger", () => adjust(0,0,.1f,0)),
                 ("Smaller", () => adjust(0,0,-.1f,0)), ("Rotate left", () => adjust(0,0,0,-15)),
                 ("Rotate right", () => adjust(0,0,0,15)), ("Recenter / confirm", () => GetComponent<HostScene>()?.RequestRecenter()),
@@ -375,6 +375,11 @@ namespace SpatialModeling
                 ("Surface help on/off",arrangement.ToggleAssist), ("Actual size",RestoreActualSize),
                 (FindFirstObjectByType<BlenderScreen>()?.PositionLocked == true ? "Unlock Blender screen" : "Lock Blender screen",
                     ()=>{ FindFirstObjectByType<BlenderScreen>()?.TogglePositionLock(); RefreshMenu(); }),
+                ("Pointer left / right",()=>{
+                    var preview=PreviewInteraction.Current;
+                    if(preview!=null) preview.SetPointerHand(preview.PrimaryHand==UnityEngine.XR.XRNode.RightHand?UnityEngine.XR.XRNode.LeftHand:UnityEngine.XR.XRNode.RightHand);
+                    RefreshMenu();
+                }),
                 ("Back to arrange",()=>ChangeMenu(MenuPage.Arrange))
             };
             if(compact && menuPage==MenuPage.Environment) actions=new (string,Action)[] {
@@ -422,10 +427,10 @@ namespace SpatialModeling
         {
             if(menuPage==MenuPage.Environment) return roomSetup.Heading;
             if(menuPage==MenuPage.Settings) return "Settings\nRoom geometry: "+(arrangement.Surfaces.ShowDetected?"shown":"hidden")+
-                " · auto surfaces: "+(arrangement.Surfaces.AutomaticEnabled?"on":"off")+
+                " Â· auto surfaces: "+(arrangement.Surfaces.AutomaticEnabled?"on":"off")+
                 "\nSurface help: "+(arrangement.AssistEnabled?"on":"off")+"\n"+ScaleLabel;
-            if(menuPage==MenuPage.Planes) return "Horizontal / vertical planes\n"+(string.IsNullOrEmpty(planeNotice)?"Manual corrections stay independent":planeNotice)+"\nPage "+(planePage+1)+" · "+arrangement.Surfaces.PlaneTargets.Count+" planes";
-            return $"Arrange space · {(MenuDocked ? "left hand" : "in space")}\n{arrangement.SurfaceState}\n{ScaleLabel}\nGrip menu to place it";
+            if(menuPage==MenuPage.Planes) return "Horizontal / vertical planes\n"+(string.IsNullOrEmpty(planeNotice)?"Manual corrections stay independent":planeNotice)+"\nPage "+(planePage+1)+" Â· "+arrangement.Surfaces.PlaneTargets.Count+" planes";
+            return $"Arrange space Â· {(MenuDocked ? "left hand" : "in space")}\n{arrangement.SurfaceState}\n{ScaleLabel}\nGrip menu to place it";
         }
 
         (string,Action)[] PlaneActions(WorkspaceSurfaces surfaces)
@@ -438,7 +443,7 @@ namespace SpatialModeling
             for(int i=planePage*perPage;i<Mathf.Min(planes.Count,(planePage+1)*perPage);i++)
             {
                 var target=planes[i]; var label=surfaces.PlaneLabel(target);
-                result.Add(("Align "+label,()=>{planeNotice=surfaces.AlignPlaneToDetected(target)?"Aligned once · future grabs stay free":"No matching detected surface nearby";RefreshMenu();}));
+                result.Add(("Align "+label,()=>{planeNotice=surfaces.AlignPlaneToDetected(target)?"Aligned once Â· future grabs stay free":"No matching detected surface nearby";RefreshMenu();}));
                 result.Add(("Delete "+label,()=>{surfaces.DeletePlane(target);planeNotice="Deleted "+label;RefreshMenu();}));
             }
             if(pages>1) {
