@@ -117,6 +117,13 @@
       "host_source": "2e1f699275c868300b48b9afdc791569e986c49f",
       "native_g_r_s_and_history_keymaps": true,
       "all44_host_package_hashes_unchanged": true
+    },
+    "real_maincloud_native": {
+      "passed": true,
+      "groups": 12,
+      "host_source": "unchanged v6",
+      "cloud_host_slot_claimed": false,
+      "native_and_history_keymaps": true
     }
   },
   "evidence_sha256": {
@@ -136,7 +143,8 @@
     "simple-native-v6-host-b/host-source.json": "ecce03f7be88652489a5dbe92e68025258473d24f72ec0985902cdc997182388",
     "vm-simple-native-b/direct-client-result.json": "a93c5616626eec44e75963b90acfccd86bb1e07e8b33795c03a7984474cad5eb",
     "vm-simple-native-b/relay-client-result.json": "a93c5616626eec44e75963b90acfccd86bb1e07e8b33795c03a7984474cad5eb",
-    "vm-simple-gui/RESULT.json": "765c94a4034aa7fd87f36949cf4bd182922131fcefc846e53cc49699dc38d989"
+    "vm-simple-gui/RESULT.json": "765c94a4034aa7fd87f36949cf4bd182922131fcefc846e53cc49699dc38d989",
+    "maincloud-native-20261025T1357-b/client-result.json": "642e762ed88ce1625b10cbd3eb037a980816977f70da6a8fc5572f016abe1e8f"
   },
   "remaining": [
     "Human connects second physical PC using existing Host LAN/edit preferences and installed Client ZIP; settings restart connection and remain coordinated with sole runtime owner",
@@ -165,5 +173,7 @@
   },
   "new_host_upgrade_required": false,
   "new_vr_player_required": false,
-  "optional_vr_ui_gate": "DEFERRED_NOT_REQUIRED_FOR_BASIC_BLENDER_SHARING"
+  "optional_vr_ui_gate": "DEFERRED_NOT_REQUIRED_FOR_BASIC_BLENDER_SHARING",
+  "default_connection": "Maincloud host/join bridge",
+  "requirements_clarification": "Waaberi unrestricted native editing implementation versus local full Blender tool availability pending"
 }
