@@ -758,8 +758,9 @@ class MirroredStore(SessionStore):
                                           "ttl_ms": LEASE_TTL_MS})
         except SessionError as e:
             if e.code != "lease_conflict":
-                self._decided.append((done, None, e))
-                return
+                # SpacetimeDB's copy is out of step with memory (say another host Blender on
+                # this PC cleared it): memory decides, and the next pass copies it there again.
+                raise StoreUnavailable(f"SpacetimeDB is out of step with this host: {e}") from None
             blocking_id = e.message.strip()
             self._write("note_refusal", {"actor_id": owner_id, "blocking_lease_id": blocking_id,
                                          "targets": targets})

@@ -439,7 +439,8 @@ class FakeRemote:
             raise StoreUnavailable("down")
         self.calls.append((reducer, args))
         if reducer in self.reject:
-            raise SessionError("lease_conflict", self.reject[reducer])
+            code, _, text = self.reject[reducer].rpartition(":")
+            raise SessionError(code or "lease_conflict", text)
 
     def select(self, sql):
         if self.down:
@@ -742,3 +743,23 @@ def test_spacetimedb_decides_against_a_real_server(spacetime_token):
     finally:
         store.close()
         store._thread.join(5)
+
+
+def test_memory_decides_when_spacetimedb_is_out_of_step():
+    remote = FakeRemote(reject={"acquire": "not_found:no participant"})
+    store = mirrored(remote)
+    try:
+        a = actor("Talia")
+        store.join(a)
+        assert store.wait_idle(5)
+        done = Decisions()
+        store.acquire_async(a["actor_id"], "exclusive", [], done)
+        deadline = time.monotonic() + 5
+        while not done.got and time.monotonic() < deadline:
+            time.sleep(0.01)
+            store.poll()
+        [(lease, error)] = done.got  # granted by memory, not refused with not_found
+        assert error is None and store.leases() == [lease]
+        assert "out of step" in store.status
+    finally:
+        store.close()
