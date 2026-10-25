@@ -13,7 +13,8 @@ namespace SpatialModeling
 {
     // Connects VoiceCore to HostScene: mic -> recognizer -> VoiceSession -> command -> host, plus prompts and feedback.
     // Voice off (no model/mic) never blocks controller or menu editing.
-    public class VoiceUiAdapter : MonoBehaviour
+    [DefaultExecutionOrder(200)]
+    public partial class VoiceUiAdapter : MonoBehaviour
     {
         public HostScene host;
         [Tooltip("Microphone to use, matched by name (case-insensitive, part of the name is enough). Empty: the default " +
@@ -196,14 +197,24 @@ namespace SpatialModeling
 
         void Start()
         {
+            BindHost();
+            StartCoroutine(PlayLoop());
+            StartVoice();
+            OnScene();
+            OVRManager.VrFocusLost += SuspendObjectTargeting;
+            OVRManager.HMDUnmounted += SuspendObjectTargeting;
+        }
+
+        void BindHost()
+        {
             host.SceneChanged += OnScene;
-            host.ConnectionLost += () => { DropDelete(Prompt.ConnectionLost); Handle(session.ConnectionLost()); };
+            host.ConnectionLost += () => { ResetObjectTargeting(); DropDelete(Prompt.ConnectionLost); Handle(session.ConnectionLost()); };
             host.DocumentChanged += () =>
             {
                 // contracts/README.md, Wrong document: drop everything held for the old document. Object IDs survive
                 // a reopen, so a waiting delete would otherwise hit the same object in the reopened file.
                 DropDelete(Prompt.DocumentChanged);
-                pointerId = null;   // the session forgets its pointer; report it again even if the gaze stays put
+                ResetObjectTargeting();
                 Handle(session.DocumentChanged());
             };
             host.CommandAnswered += OnAnswered;
@@ -226,9 +237,6 @@ namespace SpatialModeling
                 if (re == grammarQuery) { if (code == "unknown_type") session.HostHasNoVoice(); }
                 else Handle(session.HostError(re, code));
             };
-            StartCoroutine(PlayLoop());
-            StartVoice();
-            OnScene();
         }
 
         void StartVoice()
@@ -264,6 +272,7 @@ namespace SpatialModeling
 
         void OnDestroy()
         {
+            DisposeObjectTargeting();
             talk?.Dispose(); confirm?.Dispose(); cancel?.Dispose(); leftGrip?.Dispose();
             if (mic != null) Microphone.End(micDevice);
             input?.Dispose();
@@ -330,7 +339,6 @@ namespace SpatialModeling
                     ? ": " + f.LastOutcome + (f.Slow is WhisperServerRecognizer ws ? " whisper '" + ws.LastTranscript + "'" : "") : ""));
             }
             Handle(session.Tick());
-            UpdatePointer();
 
             if (deleteWaiting != null && DateTime.UtcNow >= deleteExpiresAt) DropDelete(Prompt.TimedOut);
             PendingCommand pending = session.Pending;
@@ -349,7 +357,7 @@ namespace SpatialModeling
         void PlaceStatus()
         {
             var cam = Camera.main;
-            string text = micLine + (heardLine.Length > 0 ? "\n" + heardLine : "") +
+            string text = micLine + "\n" + ObjectTargetLabel + (heardLine.Length > 0 ? "\n" + heardLine : "") +
                           (session.WaitingForHost ? "\nthinking..." : resultLine.Length > 0 ? "\n" + resultLine : "");
             status.gameObject.SetActive(cam != null);
             if (!status.gameObject.activeSelf) return;
@@ -404,20 +412,6 @@ namespace SpatialModeling
             }
         }
 
-        void UpdatePointer()
-        {
-            var cam = Camera.main;
-            if (cam == null) return;
-            var ray = new Ray(cam.transform.position, cam.transform.forward);
-            var shown = new List<KeyValuePair<string, string>>();
-            host.GetShownObjects(shown);
-            string best = null; float bestDist = float.MaxValue;
-            foreach (var o in shown)
-                if (host.TryGetBounds(o.Key, out Bounds b) && b.IntersectRay(ray, out float d) && d < bestDist)
-                { best = o.Key; bestDist = d; }
-            if (best != pointerId) { pointerId = best; Handle(session.SetPointerTarget(best)); }
-        }
-
         // Mac testing without a mic: type a phrase (e.g. "rotate this ninety degrees around z") and press Enter.
         void OnGUI()
         {
@@ -444,6 +438,12 @@ namespace SpatialModeling
 
         void OnScene()
         {
+            if (!host.HasCurrentScene)
+            {
+                ResetObjectTargeting();
+                Handle(session.SetObjects(Array.Empty<SceneObject>()));
+                return;
+            }
             var shown = new List<KeyValuePair<string, string>>();
             host.GetShownObjects(shown);
             var list = new List<SceneObject>();
@@ -457,6 +457,8 @@ namespace SpatialModeling
             }
             if (deleteWaiting != null && !deleteTargetShown) DropDelete(Prompt.TargetDeleted);
             Handle(session.SetObjects(list));
+            if (SelectedObjectId != null && !list.Exists(o => o.Id == SelectedObjectId)) ClearObjectSelection();
+            if (pointerId != null && !list.Exists(o => o.Id == pointerId)) SetControllerPointer(null);
             // Only when the names change (voice/README.md): a host drag sends up to 20 updates a second, and every
             // new grammar makes Vosk build a new recognizer.
             string key = string.Join("\n", names);
@@ -494,7 +496,7 @@ namespace SpatialModeling
             if (command == null)
             {
                 if (vc.Kind == CommandKind.Select && vc.TargetId != null)
-                    Handle(session.SetSelection(new[] { vc.TargetId }));
+                    SelectObject(vc.TargetId);
                 else if (vc.Kind == CommandKind.Cancel)
                     CancelPressed();
                 else if (vc.Kind != CommandKind.Select)
@@ -545,7 +547,7 @@ namespace SpatialModeling
             }
             voiceRequests.Add(id);
             Debug.Log($"VOICE command {c.Op} target {c.TargetId ?? "-"} args {JObject.FromObject(c.Args).ToString(Newtonsoft.Json.Formatting.None)} sent {id} after {Since()} ms");
-            session.SetSelection(Array.Empty<string>());   // "this" goes back to the gaze target after a command
+            // Explicit selection stays latched until cleared, replaced, deleted or the document/session changes.
         }
 
         void OnAnswered(CommandAnswer a)

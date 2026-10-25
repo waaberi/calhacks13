@@ -381,6 +381,14 @@ namespace SpatialModeling
                 ("Back to Settings",()=>ChangeMenu(MenuPage.Settings))
             };
             if(compact && menuPage==MenuPage.Planes) actions=PlaneActions(arrangement.Surfaces);
+            var voice = GetComponent<VoiceUiAdapter>() ?? FindFirstObjectByType<VoiceUiAdapter>();
+            if (compact && menuPage == MenuPage.Arrange && voice != null)
+            {
+                var selectionActions = new List<(string, Action)>(actions) {
+                    ("Select object", voice.BeginObjectSelection), ("Clear selection", voice.ClearObjectSelection)
+                };
+                actions = selectionActions.ToArray();
+            }
             if(compact) title.text=MenuHeading(arrangement);
             for (int i = 0; i < actions.Length; i++)
             {

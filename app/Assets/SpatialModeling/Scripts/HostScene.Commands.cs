@@ -134,6 +134,7 @@ namespace SpatialModeling
 
         // The object is in the current scene (its generation is known, so a command can target it).
         public bool HasObject(string id) => id != null && generations.ContainsKey(id);
+        public bool HasCurrentScene => connected && status == Status.Connected;
 
         // (object ID, name) of every object that is shown with a mesh: what the voice grammar may refer to.
         public void GetShownObjects(List<KeyValuePair<string, string>> into)

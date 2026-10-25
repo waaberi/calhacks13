@@ -22,6 +22,8 @@ namespace SpatialModeling
         HostScene scene;
         BlenderScreen screen;
         WorkspaceArrangement arrangement;
+        VoiceUiAdapter voice;
+        public string PointedObjectId => right?.pointed?.ObjectId ?? left?.pointed?.ObjectId;
         Transform pairTarget;
         Vector3 pairVector, pairMidpoint, pairScale, pairOffset;
         Quaternion pairFrame, pairRotation;
@@ -44,6 +46,7 @@ namespace SpatialModeling
             public bool gripDown, triggerDown, armed;
             public Transform target;
             public WorkspaceObjectView part;
+            public WorkspaceObjectView pointed;
             public Pose rayRelative;
             public Transform rawAim, stableAim;
             public bool aimInitialized;
@@ -78,6 +81,7 @@ namespace SpatialModeling
             scene = FindFirstObjectByType<HostScene>();
             screen = FindFirstObjectByType<BlenderScreen>();
             arrangement = FindFirstObjectByType<WorkspaceArrangement>();
+            voice = FindFirstObjectByType<VoiceUiAdapter>();
             renderedFrame = -1;
             Application.onBeforeRender += BeforeRender;
         }
@@ -141,6 +145,9 @@ namespace SpatialModeling
             if (right?.visual != null) Destroy(right.visual);
             if (material != null) Destroy(material);
             HasTrackedHands = false;
+            if (left != null) left.pointed = null;
+            if (right != null) right.pointed = null;
+            voice?.SetControllerPointer(null);
         }
 
         void LateUpdate()
@@ -153,6 +160,8 @@ namespace SpatialModeling
             Physics.SyncTransforms();
             Instruction = arrangement!=null ? arrangement.Instruction : "Point at screen or build · grip: move · trigger: select";
             HasTrackedHands = UpdateHand(left, right) | UpdateHand(right, left);
+            if (voice == null) voice = FindFirstObjectByType<VoiceUiAdapter>();
+            voice?.SetControllerPointer(PointedObjectId);
             if(!IsHolding) arrangement?.HideGuide();
             if (HasTrackedHands != loggedTracking)
             {
@@ -172,6 +181,7 @@ namespace SpatialModeling
                 h.armed = false;
                 h.gripDown = h.triggerDown = false;
                 h.aimInitialized = false;
+                h.pointed = null;
                 return false;
             }
             if (!h.aimInitialized)
@@ -192,6 +202,14 @@ namespace SpatialModeling
             h.gripDown = gripNow; h.triggerDown = triggerNow;
             device.TryGetFeatureValue(UnityEngine.XR.CommonUsages.primary2DAxisClick,out bool stickNow);
             bool stickPressed=stickNow&&!h.stickDown; h.stickDown=stickNow;
+            return RouteHand(h, other, aim, ray, gripNow, triggerNow, gripPressed, triggerPressed, axis, stickPressed);
+        }
+
+        // One ray/input owner: tests exercise this same routing used by both live hands.
+        bool RouteHand(Hand h, Hand other, Pose aim, Ray ray, bool gripNow, bool triggerNow,
+            bool gripPressed, bool triggerPressed, Vector2 axis, bool stickPressed)
+        {
+            h.pointed = null;
             float distance = 4f;
             var hitPart = scene.PickObject(ray, out float partDistance);
             bool hitScreen = screen.RaycastSurface(ray, out float screenDistance);
@@ -265,13 +283,26 @@ namespace SpatialModeling
             }
             else if (hitPart != null)
             {
+                if (!gripNow && !IsHolding)
+                {
+                    h.pointed = hitPart;
+                    if (voice == null) voice = FindFirstObjectByType<VoiceUiAdapter>();
+                    if (triggerPressed) voice?.SelectControllerObject(hitPart.ObjectId);
+                }
                 var target = MoveIndividualParts ? hitPart.transform : scene.Placement;
-                Instruction = MoveIndividualParts ? "Grip: arrange " + hitPart.name + " in your view" : "Grip: move the whole build";
+                Instruction = "Trigger: select " + hitPart.name + " without moving · " +
+                    (MoveIndividualParts ? "grip: arrange part" : "grip: move whole build");
                 if (gripPressed && (other?.target==target || !Conflicts(other?.target, target))) Begin(h, target, MoveIndividualParts ? hitPart : null, aim, ray.GetPoint(distance));
             }
             h.hasHit = levelFirst || tableFirst || hitScreen || hitPart != null;
             h.pointerDistance = distance;
             return true;
+        }
+
+        public void ForgetVoicePointer()
+        {
+            foreach (var h in new[] { left, right })
+                if (h != null) { h.pointed = null; h.armed = false; }
         }
 
         // Read position, orientation and validity from one Input System pose state.
