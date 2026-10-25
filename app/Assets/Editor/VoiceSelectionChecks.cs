@@ -126,6 +126,15 @@ public static class VoiceSelectionChecks
             Check(voice.SelectedObjectId==null && interaction.PointedObjectId==null,"nearer visible screen prevents selection through it");
             panel.SetActive(false);
 
+            var selectedBeforeReceipt = views[1].transform.position;
+            var sequenceRequest = Guid.NewGuid().ToString("N");
+            ((HashSet<string>)Get(voice,"voiceRequests")).Add(sequenceRequest);
+            typeof(VoiceUiAdapter).GetMethod("OnAnswered",Private).Invoke(voice,new object[]{new CommandAnswer {
+                RequestId=sequenceRequest,Op="voice.run",Outcome="applied",SelectionSpecified=true,SelectedId=views[1].ObjectId }});
+            Check(voice.SelectedObjectId==views[1].ObjectId && views[1].transform.position==selectedBeforeReceipt,
+                "applied chain receipt selects the exact final object without dragging it");
+            voice.ClearObjectSelection();
+
             var now=DateTime.UtcNow;
             core=new VoiceSession(new VoiceSessionOptions { AskHost=false, PointerDwell=TimeSpan.FromSeconds(.5) },()=>now);
             Set(voice,"session",core); Invoke(voice,"OnScene");

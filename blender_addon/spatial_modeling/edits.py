@@ -63,6 +63,8 @@ class Editor:
     """
 
     def __init__(self, sync, undoable, document=None, voice=None):
+        if voice is not None:
+            voice.editor = self
         self.voice = voice  # voice_ops.Voice runs voice.run; without one it is refused
         self.sync = sync
         self.document = document
@@ -78,6 +80,9 @@ class Editor:
                 ("voice.run", self._voice_run),
             )
         }
+
+    def command_targets(self, op, args, conn):
+        return self.voice.command_targets(args, conn) if op == "voice.run" and self.voice else {}
 
     def flush(self):
         return self.sync.flush()
@@ -182,7 +187,7 @@ class Editor:
 
     # Objects
 
-    def _add(self, _obj, args):
+    def _add(self, _obj, args, stage=False):
         unit = _unit()
         kind = args["primitive"]
         size = [v / unit for v in args["dimensions"]]
@@ -216,8 +221,13 @@ class Editor:
             bpy.data.objects.remove(obj)
             bpy.data.meshes.remove(mesh)
             raise Refused("failed", f"Blender didn't make the {kind} as asked. Nothing changed.")
-        self._edited()  # before object_id()'s flush
-        object_id = self.sync.object_id(obj)  # given now, inside this Undo step
+        if not stage:
+            self._edited()  # before object_id()'s flush
+        if stage:
+            from .sync import stage_object_id
+            object_id = stage_object_id(obj)
+        else:
+            object_id = self.sync.object_id(obj)  # given now, inside this Undo step
         return Applied(f"Added {obj.name} ({_mm3(args['dimensions'])} mm)", created=[object_id])
 
     def _move(self, obj, args):

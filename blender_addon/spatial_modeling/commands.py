@@ -116,6 +116,7 @@ class Applied:
     summary: str
     created: list = field(default_factory=list)
     revision: int = 0
+    selection: dict | None = None
 
 
 # Step 1: the schema, by hand.
@@ -531,12 +532,25 @@ class Commands:
         if op in HISTORY_OPS and p["base_revision"] != revision:
             return rejected("stale_revision", "The document changed since you last saw it. "
                             "Look again, then retry.", {"revision": revision})
+        extra_targets = {}
+        if hasattr(self.editor, "command_targets"):
+            try:
+                extra_targets = self.editor.command_targets(op, p["args"], conn)
+            except Refused as exc:
+                return rejected(exc.code, exc.message, exc.details)
+            for oid, expected_generation in extra_targets.items():
+                if self.editor.generation(oid) != expected_generation:
+                    return rejected("stale_revision", "A sequence target changed. Repeat the full sequence.")
         # 6. Leases, immediately before the write
         if self.leases is not None:
             refusal = self.leases.check(actor["actor_id"], op, target and target["id"],
                                         p.get("lease"))
             if refusal is not None:
                 return rejected(*refusal)
+            for oid in extra_targets:
+                refusal = self.leases.check(actor["actor_id"], op, oid, p.get("lease"))
+                if refusal is not None:
+                    return rejected(*refusal)
         elif "lease" in p:
             return rejected("not_found", "That lease doesn't exist.")
         # 7. Apply, read back, publish (scene.update) and commit as one Undo step
@@ -549,7 +563,7 @@ class Commands:
             log.exception("%s failed halfway", op)
             return self._unknown(conn, rid, p, e)
         return self._receipt(conn, rid, p, "applied", done.revision, summary=done.summary,
-                             created=done.created)
+                             created=done.created, selection=done.selection)
 
     def _unknown(self, conn, rid, p, exc):
         """Blender may or may not have changed: stop writes until _reconcile() succeeds."""
@@ -587,12 +601,14 @@ class Commands:
             log.exception("could not read the document's revision")
             return 0
 
-    def _receipt(self, conn, rid, p, outcome, revision, summary=None, created=None, error=None):
+    def _receipt(self, conn, rid, p, outcome, revision, summary=None, created=None, error=None, selection=None):
         receipt = {"request_id": rid, "op": p["op"]}
         if "target" in p:
             receipt["target"] = p["target"]["id"]
         actor = self.session.participants[conn]  # server.py hands over joined connections only
         receipt.update(actor=dict(actor), source=p["source"], outcome=outcome, revision=revision)
+        if selection is not None:
+            receipt["selection"] = dict(selection)
         if created:
             receipt["created"] = list(created)
         if summary:

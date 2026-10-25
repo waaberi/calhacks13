@@ -9,6 +9,8 @@ namespace SpatialModeling
     {
         public string RequestId, Op, Outcome, ErrorCode, Message;
         public long? Revision;
+        public bool SelectionSpecified;
+        public string SelectedId;
     }
 
     // #96: what the voice and menu code needs from the host connection.
@@ -69,7 +71,7 @@ namespace SpatialModeling
                     SceneChanged?.Invoke();
                     break;
                 case HostEventKind.Result:
-                    Answer(e.Re, e.Op, e.Outcome, e.Code, e.Text, e.Revision);
+                    Answer(e.Re, e.Op, e.Outcome, e.Code, e.Text, e.Revision, e.SelectionSpecified, e.SelectedId);
                     break;
                 case HostEventKind.Error:
                     if (e.Re.Length > 0) { Answer(e.Re, null, "rejected", e.Code, e.Text, null); RequestFailed?.Invoke(e.Re, e.Code); }
@@ -77,7 +79,7 @@ namespace SpatialModeling
             }
         }
 
-        void Answer(string re, string op, string outcome, string code, string text, long? rev)
+        void Answer(string re, string op, string outcome, string code, string text, long? rev, bool selectionSpecified = false, string selectedId = null)
         {
             if (string.IsNullOrEmpty(re) || !pendingOps.TryGetValue(re, out var sentOp)) return;
             pendingOps.Remove(re);
@@ -88,6 +90,8 @@ namespace SpatialModeling
                 Outcome = outcome,
                 ErrorCode = code,
                 Message = text,
+                SelectionSpecified = selectionSpecified,
+                SelectedId = selectedId,
                 Revision = rev
             });
         }

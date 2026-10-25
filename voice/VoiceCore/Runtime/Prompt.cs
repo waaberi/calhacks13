@@ -36,6 +36,9 @@ namespace SpatialModeling.VoiceCore
         /// <summary>The host wasn't sure what was meant: show <see cref="VoiceSession.Choice"/>'s options, numbered.</summary>
         public static readonly Prompt AskChoice = new Prompt("ask_choice", "Which one did you mean? Say its number, or cancel.");
 
+        public static readonly Prompt AskDetails = new Prompt("ask_details", "Please supply the missing detail shown in the voice panel, or cancel.");
+        public static readonly Prompt ConfirmSequence = new Prompt("confirm_sequence", "This sequence includes deletion. Review the sequence and confirm on your controller, or cancel.");
+
         // Notices. When a field is still missing, its question follows in the same turn.
         public static readonly Prompt LowConfidence = new Prompt("low_confidence", "Sorry, I didn't catch that. Please say it again.");
         public static readonly Prompt Unsupported = new Prompt("unsupported", "Sorry, I can't do that. Try: rotate this object ninety degrees around Z.");
@@ -68,7 +71,7 @@ namespace SpatialModeling.VoiceCore
         /// <summary>Every prompt, for generating or checking audio clips.</summary>
         public static IReadOnlyList<Prompt> All { get; } = new[]
         {
-            AskShape, AskTarget, AskAxis, AskDistance, AskAngle, AskFactor, AskUnit, AskChoice,
+            AskShape, AskTarget, AskAxis, AskDistance, AskAngle, AskFactor, AskUnit, AskChoice, AskDetails, ConfirmSequence,
             LowConfidence, Unsupported, Cancelled, TimedOut, ReplacedPending, DocumentChanged, ConnectionLost, TargetDeleted,
             UnknownObject, AmbiguousName, WrongUnitDistance, WrongUnitAngle, WrongUnitFactor, OutOfRange,
             ConfirmDelete, NotConnected, Done, Locked, Changed, ReadOnly, Busy, NothingToUndo, NothingToRedo, Failed, OutcomeUnknown,

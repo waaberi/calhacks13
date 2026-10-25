@@ -15,6 +15,7 @@ namespace SpatialModeling
 
         TextMesh text;
         PendingCommand pending;
+        string composition;
         string deleting;                             // a Delete waiting for the controller confirmation
         PendingChoice choice;                        // the host's "which one?" (#146)
         DateTime expiresAt;                          // UTC, like the session clock
@@ -30,19 +31,19 @@ namespace SpatialModeling
             Hide();
         }
 
-        public bool Visible => pending != null || deleting != null || choice != null;
+        public bool Visible => pending != null || deleting != null || choice != null || composition != null;
 
         // The host's question: up to 3 numbered options and Cancel. Answered by voice ("two", "cancel") or Esc.
         public void ShowChoice(PendingChoice c)
         {
-            choice = c; pending = null; deleting = null; expiresAt = c.ExpiresAt;
+            composition = null; choice = c; pending = null; deleting = null; expiresAt = c.ExpiresAt;
             gameObject.SetActive(true);
             Refresh();
         }
 
         public void Show(PendingCommand p)
         {
-            pending = p; deleting = null; choice = null; expiresAt = p.ExpiresAt;
+            composition = null; pending = p; deleting = null; choice = null; expiresAt = p.ExpiresAt;
             gameObject.SetActive(true);
             Refresh();
         }
@@ -50,17 +51,25 @@ namespace SpatialModeling
         // The confirmation stays visible for as long as the trigger would still delete.
         public void ShowDelete(string command, DateTime expiresAtUtc)
         {
-            pending = null; deleting = command; choice = null; expiresAt = expiresAtUtc;
+            composition = null; pending = null; deleting = command; choice = null; expiresAt = expiresAtUtc;
             gameObject.SetActive(true);
             Refresh();
         }
 
-        public void Hide() { pending = null; deleting = null; choice = null; gameObject.SetActive(false); }
+        public void Hide() { composition = null; pending = null; deleting = null; choice = null; gameObject.SetActive(false); }
+
+        public void ShowComposition(string question, DateTime expiresAtUtc)
+        {
+            composition = question; pending = null; deleting = null; choice = null; expiresAt = expiresAtUtc;
+            gameObject.SetActive(true); Refresh();
+        }
 
         void Refresh()
         {
             string left = Math.Max(0, (expiresAt - DateTime.UtcNow).TotalSeconds).ToString("0") + "s";
-            if (choice != null)
+            if (composition != null)
+                text.text = composition + "\nNothing has run. Supply the missing detail or say cancel (Esc) (" + left + ")";
+            else if (choice != null)
             {
                 var lines = new System.Text.StringBuilder("Which one? Say its number" + (choice.Reason != null ? " (" + choice.Reason + ")" : "") + "\n");
                 for (int i = 0; i < choice.Candidates.Count && i < 3; i++) lines.Append(choice.Candidates[i]).Append('\n');

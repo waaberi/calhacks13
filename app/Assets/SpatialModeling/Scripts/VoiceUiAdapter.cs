@@ -222,6 +222,7 @@ namespace SpatialModeling
             host.VoiceGrammarReceived += (re, json) =>
             {
                 session.SetHostGrammar(VoiceGrammar.FromJson(json));
+                session.EnableComposition((bool?)JObject.Parse(json)["composition"] == true);
                 input?.SetGrammar(session.GrammarPhrases());
                 Debug.Log("VOICE grammar: " + session.GrammarPhrases().Count + " phrases with the host's");
             };
@@ -345,6 +346,7 @@ namespace SpatialModeling
             PendingChoice choice = session.Choice;
             if (choice != null) panel.ShowChoice(choice);
             else if (pending != null) panel.Show(pending);
+            else if (session.CompositionQuestion != null) panel.ShowComposition(session.CompositionQuestion, session.CompositionExpiresAt);
             else if (deleteWaiting != null) panel.ShowDelete(deleteWaiting.ToString(), deleteExpiresAt);
             else if (panel.Visible) panel.Hide();
 
@@ -455,7 +457,7 @@ namespace SpatialModeling
                 names.Add(o.Value);
                 if (deleteWaiting != null && o.Key == deleteWaiting.TargetId) deleteTargetShown = true;
             }
-            if (deleteWaiting != null && !deleteTargetShown) DropDelete(Prompt.TargetDeleted);
+            if (deleteWaiting?.TargetId != null && !deleteTargetShown) DropDelete(Prompt.TargetDeleted);
             Handle(session.SetObjects(list));
             if (SelectedObjectId != null && !list.Exists(o => o.Id == SelectedObjectId)) ClearObjectSelection();
             if (pointerId != null && !list.Exists(o => o.Id == pointerId)) SetControllerPointer(null);
@@ -507,7 +509,7 @@ namespace SpatialModeling
             {
                 deleteWaiting = vc;
                 deleteExpiresAt = DateTime.UtcNow.AddSeconds(15);
-                Enqueue(Prompt.ConfirmDelete, null);
+                Enqueue(vc.Kind == CommandKind.Run ? Prompt.ConfirmSequence : Prompt.ConfirmDelete, vc.Say);
                 return;
             }
             Send(command);
@@ -553,6 +555,10 @@ namespace SpatialModeling
         void OnAnswered(CommandAnswer a)
         {
             if (!voiceRequests.Remove(a.RequestId)) return;   // controller/menu commands speak for themselves
+            if (a.Outcome == "applied" && a.SelectionSpecified)
+            {
+                if (a.SelectedId == null || !SelectObject(a.SelectedId)) ClearObjectSelection();
+            }
             Debug.Log($"VOICE result {a.Op} {a.Outcome} \"{a.Message}\" {a.ErrorCode} release_to_applied_ms={Since()}");
             resultLine = a.Outcome + ": " + (string.IsNullOrEmpty(a.Message) ? a.Op : a.Message);
             Enqueue(HostCommand.PromptFor(a.Op, a.Outcome, a.ErrorCode), a.Message);

@@ -440,6 +440,12 @@ def find_object(object_id):
     return match
 
 
+def stage_object_id(obj):
+    """Assign an ID without publishing intermediate state inside an atomic voice plan."""
+    taken = {o.get(ID_PROPERTY) for o in bpy.context.view_layer.objects if o != obj}
+    return _valid_id(obj.get(ID_PROPERTY)) or _give_id(obj, taken)
+
+
 def object_id(obj):
     """The object's ID, given now (with a flush) if it has none yet."""
     uid = obj.session_uid

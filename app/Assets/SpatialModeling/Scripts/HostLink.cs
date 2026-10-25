@@ -222,6 +222,7 @@ namespace SpatialModeling
                 Text = (string)p["summary"] ?? ""
             };
             if (p["revision"] != null && p["revision"].Type == JTokenType.Integer) e.Revision = (long)p["revision"];
+            if (p["selection"] is JObject selection) { e.SelectionSpecified = true; e.SelectedId = (string)selection["id"]; }
             var err = p["error"];
             if (err is JObject eo)
             {
@@ -385,6 +386,8 @@ namespace SpatialModeling
         public long? Revision;
         public string Re = "", Op = "", Outcome = "";                                    // Result, Error
         public string SessionId = "", HostEpoch = "", ActorId = "";   // Welcome (DocumentId and OpenEpoch above)
+        public bool SelectionSpecified;
+        public string SelectedId;
         public bool CanEdit;                                                              // Welcome
         public readonly List<string> Removed = new List<string>();
         public readonly List<ObjectRecord> Objects = new List<ObjectRecord>();
