@@ -17,14 +17,14 @@ available.
 | Move | Red X, green Y and blue Z arrows; grab an arrow to move on its frozen native axis. Body free Move and plane handles remain. |
 | Rotate | Coloured rings and arrowheads; sweep the grabbed ring around its captured pivot. |
 | Scale | Coloured cube-ended axes and plane handles. Outward axis movement enlarges; inward movement reduces. The native multiplier uses Blender's acknowledged factor. Free body scaling retains its existing gesture. |
-| Extrude | Actual selected face boundaries and normal arrows identify the captured faces. The action label distinguishes region movement from individual normal extrusion and any explicitly grabbed normal constraint. A line labelled a reference does not silently change native constraints. |
-| Inset | Actual selected boundaries and boundary reference points, with the native thickness after acknowledgement. Native individual/outset/boundary/even/relative options remain in Blender. |
-| Bevel | Native selected vertices/edges and reference points, with acknowledged amount/segments. Native Affect, profile, overlap and offset choices remain authoritative. |
+| Extrude | Actual selected face boundaries and normal arrows identify the captured faces. The native tool/options determine region or individual extrusion; a deliberately grabbed normal handle constrains the gesture. |
+| Inset | Actual selected boundaries and boundary reference points. Native thickness and individual/outset/boundary/even/relative options remain in Blender. |
+| Bevel | Native selected vertices/edges and reference points. Native amount, segments, Affect, profile, overlap and offset choices remain authoritative in Blender. |
 | Loop Cut | Preview follows actual opposite edges through compatible visible quads. The slide arrow indicates increasing interpolation along the captured seed edge. Exactly one seed edge is required; invalid/conflicting rings are refused rather than guessed. |
-| Knife | Actual sampled surface path with start/end points while held. Cut-through and selected-only choices are shown. The path is projected from the captured view; it is not an unrestricted 3D boolean. An overlong stroke is refused and cancelled rather than silently replacing its final path detail. |
-| Merge | Captured variant and selected count. First/Last destinations are shown only with complete native selection order; By Distance shows its captured metric threshold. An unavailable cursor position is never invented. |
-| Dissolve | Captured variant and selected count; Limited shows its angle. This is a discrete operation, with no pretend continuous deformation. |
-| Delete | Captured component/domain and selected count before the deliberate gesture. A tap does not delete. Live deletion remains cancellable until release/commit. |
+| Knife | Actual sampled surface path with start/end points while held. Native cut-through and selected-only choices remain in Blender. The path is projected from the captured view; an overlong stroke is refused and cancelled rather than silently replacing its final path detail. |
+| Merge | Selection points and the native destination when known. First/Last destinations require complete native selection order. The variant and By Distance threshold remain in Blender; an unavailable cursor position is never invented. |
+| Dissolve | Selection points identify the affected geometry. The native variant and Limited angle remain in Blender. This is a discrete operation, with no pretend continuous deformation. |
+| Delete | Selected component points/outlines before the deliberate gesture. A tap does not delete. Live deletion remains cancellable until release/commit. |
 
 Component points and outlines use native IDs, not render-triangle indices.
 Visual pools are bounded; this does not truncate the native selection submitted
@@ -32,15 +32,18 @@ to Blender. Transform, normal and cut guides retain their captured mapping durin
 the gesture, including reflected/nonuniform display arrangements.
 
 Cyan snap targets identify the actual candidate in its displayed position.
-Proportional editing shows the captured native radius/falloff where a truthful
-spatial guide is available. Projected proportional mode uses Blender's native
-view footprint, which is not exported; the label identifies this limitation
-instead of presenting a headset-plane circle as the native influence region.
+Proportional editing shows the captured native radius where a truthful spatial
+guide is available. Projected proportional mode uses Blender's native view
+footprint, which is not exported; no headset-plane circle stands in for it.
+The deliberate left-hand Guide explains these limits and native options.
 
-Acknowledged readouts describe the parameters Blender accepted. Controller paths
-and previews may be ahead of the latest acknowledgement and are identified as
-pending. A quaternion's shortest rotation angle is labelled as such; it does not
-claim to measure accumulated controller travel.
+Automatic tool instructions, hover commentary and parameter paragraphs are
+hidden. The requested scale multiplier is retained as one concise line:
+`Scale ×… · pending/Blender` for native edits, or `Display scale ×… · VR view`
+for arrangement. The Blender-labelled factor comes from its acknowledgement;
+pending controller feedback does not claim native acceptance. Detailed written
+steps are available on demand in the left-hand Guide. Genuine editing refusal
+and unsupported-feature popups remain available.
 
 Unsupported direct features show **This feature isn't available yet in 3D** when
 an edit is attempted. Supported tools with the wrong mode, selection, model or

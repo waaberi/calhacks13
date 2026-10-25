@@ -4,7 +4,6 @@ using System.Globalization;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 using UnityEngine.Rendering;
-using UnityEngine.UI;
 
 namespace SpatialModeling
 {
@@ -53,7 +52,7 @@ namespace SpatialModeling
         static readonly Color[] Colours={new Color(1,.43f,.05f),new Color(1,.85f,.16f),new Color(.15f,.95f,1),new Color(1,.2f,.7f)};
         readonly List<LineRenderer> lines=new List<LineRenderer>(),dots=new List<LineRenderer>();
         readonly Material[] materials=new Material[4];
-        GameObject root,labelRoot;Text label;
+        GameObject root;
         public Snapshot Last {get;private set;}
         public bool Visible=>root!=null&&root.activeSelf;
 
@@ -269,9 +268,6 @@ namespace SpatialModeling
             int index=0;foreach(var segment in Last.Segments){var line=Acquire(lines,index++,"Native tool guide");line.sharedMaterial=materials[segment.Colour];line.startWidth=line.endWidth=width;line.positionCount=2;line.SetPosition(0,segment.A);line.SetPosition(1,segment.B);line.gameObject.SetActive(true);}for(;index<lines.Count;index++)lines[index].gameObject.SetActive(false);
             Vector3 right=camera!=null?camera.transform.right:Vector3.right,up=camera!=null?camera.transform.up:Vector3.up;index=0;
             foreach(var point in Last.Points){var dot=Acquire(dots,index++,"Native component point");dot.sharedMaterial=materials[point.Colour];dot.startWidth=dot.endWidth=width;dot.positionCount=13;for(int i=0;i<=12;i++)dot.SetPosition(i,point.Position+radius*(right*Mathf.Cos(i*Mathf.PI/6)+up*Mathf.Sin(i*Mathf.PI/6)));dot.gameObject.SetActive(true);}for(;index<dots.Count;index++)dots[index].gameObject.SetActive(false);
-            label.text=Last.Label;labelRoot.transform.position=pivot+up*.17f;
-            if(camera!=null)labelRoot.transform.rotation=Quaternion.LookRotation(labelRoot.transform.position-camera.transform.position,camera.transform.up);
-            labelRoot.transform.localScale=Vector3.one*Mathf.Clamp(distance*.0007f,.0007f,.0016f);
         }
         LineRenderer Acquire(List<LineRenderer> pool,int index,string name)
         {
@@ -281,12 +277,11 @@ namespace SpatialModeling
         {
             if(root!=null)return;root=new GameObject("Native Blender contextual guides");var shader=Shader.Find("UI/Default")??Shader.Find("Unlit/Color");
             for(int i=0;i<materials.Length;i++){var material=new Material(shader){name="Native guide "+i,renderQueue=4000};material.color=Colours[i];if(material.HasProperty("_BaseColor"))material.SetColor("_BaseColor",Colours[i]);material.SetInt("unity_GUIZTestMode",(int)CompareFunction.Always);if(material.HasProperty("_ZTest"))material.SetInt("_ZTest",(int)CompareFunction.Always);if(material.HasProperty("_ZWrite"))material.SetInt("_ZWrite",0);materials[i]=material;}
-            labelRoot=new GameObject("Native tool action and accepted amount",typeof(RectTransform),typeof(Canvas));labelRoot.transform.SetParent(root.transform,false);var canvas=labelRoot.GetComponent<Canvas>();canvas.renderMode=RenderMode.WorldSpace;canvas.overrideSorting=true;canvas.sortingOrder=360;labelRoot.GetComponent<RectTransform>().sizeDelta=new Vector2(1000,230);
-            var content=new GameObject("Read-only tool instructions",typeof(RectTransform),typeof(Text));content.transform.SetParent(labelRoot.transform,false);var rect=content.GetComponent<RectTransform>();rect.anchorMin=Vector2.zero;rect.anchorMax=Vector2.one;rect.offsetMin=rect.offsetMax=Vector2.zero;
-            label=content.GetComponent<Text>();label.font=Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");label.fontSize=27;label.fontStyle=FontStyle.Bold;label.color=Color.white;label.alignment=TextAnchor.MiddleCenter;label.raycastTarget=false;label.horizontalOverflow=HorizontalWrapMode.Wrap;content.AddComponent<Outline>().effectColor=new Color(0,0,0,.95f);
+            // Contextual geometry stays visible without automatic instructional
+            // writing. Detailed steps live in the deliberately opened Guide.
         }
         public void Hide(){if(root!=null)root.SetActive(false);}
-        public void Dispose(){if(root!=null)Release(root);foreach(var material in materials)if(material!=null)Release(material);root=labelRoot=null;label=null;lines.Clear();dots.Clear();Last=null;}
+        public void Dispose(){if(root!=null)Release(root);foreach(var material in materials)if(material!=null)Release(material);root=null;lines.Clear();dots.Clear();Last=null;}
         static void Release(UnityEngine.Object value){if(Application.isPlaying)UnityEngine.Object.Destroy(value);else UnityEngine.Object.DestroyImmediate(value);}
     }
 }

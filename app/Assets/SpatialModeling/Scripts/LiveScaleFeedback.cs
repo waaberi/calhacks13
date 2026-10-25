@@ -11,11 +11,12 @@ namespace SpatialModeling
     {
         GameObject root;
         Text text;
+        bool displayOnly;
         public bool Visible { get; private set; }
         public string Label { get; private set; }="";
         public Vector3 Factors { get; private set; }=Vector3.one;
         public bool Acknowledged { get; private set; }
-        public void Begin(){Visible=true;Acknowledged=false;Factors=Vector3.one;Label="Scale ×1.00 · Waiting for Blender";}
+        public void Begin(){Visible=true;Acknowledged=false;displayOnly=false;Factors=Vector3.one;Label="Scale ×1.00 · Waiting for Blender";}
         public void Accept(JObject parameters)
         {
             if(!Visible||!(parameters?["scale"] is JArray scale)||scale.Count!=3)return;
@@ -23,22 +24,26 @@ namespace SpatialModeling
             Factors=new Vector3((float)scale[0],(float)scale[1],(float)scale[2]);Acknowledged=true;Label="Scale "+Format(Factors);
         }
         public void ShowDisplayScale(Vector3 factors)
-        {Visible=true;Acknowledged=true;Factors=factors;Label="Display scale "+Format(factors).Replace("Blender applied","VR view only");}
+        {Visible=true;Acknowledged=true;displayOnly=true;Factors=factors;Label="Display scale "+Format(factors).Replace("Blender applied","VR view only");}
         static string Factor(float value)=>value.ToString("0.00####",CultureInfo.InvariantCulture);
-        public static string Format(Vector3 factors)
+        static string Multiplier(Vector3 factors)
         {
             bool uniform=Mathf.Abs(factors.x-factors.y)<.000001f&&Mathf.Abs(factors.x-factors.z)<.000001f;
+            return uniform?"×"+Factor(factors.x):"X ×"+Factor(factors.x)+"   Y ×"+Factor(factors.y)+"   Z ×"+Factor(factors.z);
+        }
+        public static string Format(Vector3 factors)
+        {
             string direction;
             if(factors.x<0||factors.y<0||factors.z<0)direction="mirrored";
             else if(factors.x>1.000001f||factors.y>1.000001f||factors.z>1.000001f)
                 direction=factors.x<.999999f||factors.y<.999999f||factors.z<.999999f?"axis scale":"larger";
             else direction=factors.x<.999999f||factors.y<.999999f||factors.z<.999999f?"smaller":"original size";
-            return (uniform?"×"+Factor(factors.x):"X ×"+Factor(factors.x)+"   Y ×"+Factor(factors.y)+"   Z ×"+Factor(factors.z))
-                +"\n"+direction+" · Blender applied";
+            return Multiplier(factors)+"\n"+direction+" · Blender applied";
         }
         public void Draw(Vector3 contact,Camera camera)
         {
-            if(!Visible)return;Ensure();root.SetActive(true);text.text=Label;
+            if(!Visible)return;Ensure();root.SetActive(true);
+            text.text=(displayOnly?"Display scale ":"Scale ")+Multiplier(Factors)+(displayOnly?" · VR view":Acknowledged?" · Blender":" · pending");
             Vector3 up=camera!=null?camera.transform.up:Vector3.up;
             Vector3 right=camera!=null?camera.transform.right:Vector3.right;
             root.transform.position=contact+up*.10f+right*.10f;
@@ -58,7 +63,7 @@ namespace SpatialModeling
             text.alignment=TextAnchor.MiddleCenter;text.color=Color.white;text.raycastTarget=false;text.horizontalOverflow=HorizontalWrapMode.Overflow;
             content.AddComponent<Outline>().effectColor=new Color(0,0,0,.95f);
         }
-        public void Hide(){Visible=false;Acknowledged=false;Factors=Vector3.one;Label="";if(root!=null)root.SetActive(false);}
+        public void Hide(){Visible=false;Acknowledged=false;displayOnly=false;Factors=Vector3.one;Label="";if(root!=null)root.SetActive(false);}
         public void Dispose(){Hide();if(root!=null){if(Application.isPlaying)UnityEngine.Object.Destroy(root);else UnityEngine.Object.DestroyImmediate(root);}root=null;}
     }
 }

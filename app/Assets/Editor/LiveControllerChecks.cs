@@ -21,6 +21,7 @@ public static class LiveControllerChecks
         Selection();Presentation();GestureMath();LiveRoute();SelectionSync();SelectionRecovery();ToolGestures();RotationRingRoute();RotationBoundsFenceRoute();SelectionAndCancellation();SelectionOutlineBound();
         DirectRotationHandlesChecks.Run();
         DirectManipulationFeedbackChecks.Run();
+        NativeSelectionRecoveryChecks.Run();
         DirectToolGuidesChecks.Run();DirectToolUsabilityChecks.Run();
         SurfaceScaleChecks.Run();SurfaceScaleRoute();SurfaceScaleCancellation();
         Debug.Log("LIVE_CONTROLLER_CHECK PASS actual held native-update route/one commit/cancel/selection-only no-geometry/SHIFT multi-selection+input-off/epoch/native Inset+Bevel+LoopCut+surface Knife/native axis handle+settings cancellation/own-echo identity+sequence/affine M0 mirrored nonuniform live+commit+reset+restore; physical acceptance pending");

@@ -43,9 +43,18 @@ namespace SpatialModeling
             bool found=false;float best=float.PositiveInfinity;
             for(int i=0;i<3;i++)
             {
-                // Retain the free-move center when an axis points along the ray.
                 bool endOn=Mathf.Abs(Vector3.Dot(frame.Axis(i),ray.direction.normalized))>.96f;
-                if(endOn)continue;
+                if(endOn)
+                {
+                    // An end-on cone is still a real visible handle. Use its
+                    // rendered eight-sided mesh and narrow shaft volume here,
+                    // rather than extending the broad lateral aim tolerance
+                    // across the model's free-move body area.
+                    if(RenderedHit(frame,i,ray,nearest,out float strictDepth)
+                        &&(!found||best>.02f||strictDepth<hit.Distance))
+                    {found=true;best=0;hit=new Hit{Axis=i,Distance=strictDepth};}
+                    continue;
+                }
                 Vector3 start=frame.Start(i);
                 if(!Closest(ray,start,frame.Tip(i),out float depth,out float miss)||depth>nearest)continue;
                 float nearTip=Vector3.Distance(ray.GetPoint(depth),frame.Tip(i));
@@ -56,6 +65,43 @@ namespace SpatialModeling
                 found=true;best=score;hit=new Hit{Axis=i,Distance=depth};
             }
             return found;
+        }
+        static bool RenderedHit(Frame frame,int axis,Ray ray,float nearest,out float distance)
+        {
+            distance=nearest;float closest=nearest;bool found=false;
+            var direction=frame.Axis(axis);var tip=frame.Tip(axis);var shoulder=frame.Shoulder(axis);
+            var rotation=Quaternion.LookRotation(direction);
+            for(int i=0;i<8;i++)
+            {
+                float first=i*Mathf.PI/4,second=(i+1)%8*Mathf.PI/4;
+                var a=tip+rotation*new Vector3(Mathf.Cos(first)*frame.HeadRadius,Mathf.Sin(first)*frame.HeadRadius,-frame.HeadLength);
+                var b=tip+rotation*new Vector3(Mathf.Cos(second)*frame.HeadRadius,Mathf.Sin(second)*frame.HeadRadius,-frame.HeadLength);
+                if(Triangle(ray,tip,a,b,out float side)&&side<=closest){closest=side;found=true;}
+                if(Triangle(ray,shoulder,b,a,out float cap)&&cap<=closest){closest=cap;found=true;}
+            }
+            var start=frame.Start(axis);float length=Vector3.Dot(shoulder-start,direction),radius=frame.Width*.5f;
+            if(length<=0){distance=closest;return found;}
+            var offset=ray.origin-start;float u=Vector3.Dot(offset,direction),v=Vector3.Dot(ray.direction,direction);
+            var radial=offset-direction*u;var step=ray.direction-direction*v;
+            float aa=step.sqrMagnitude,bb=2*Vector3.Dot(radial,step),cc=radial.sqrMagnitude-radius*radius;
+            void Candidate(float t)
+            {if(t>0&&t<=closest&&u+v*t>=-.00001f&&u+v*t<=length+.00001f){closest=t;found=true;}}
+            if(aa>1e-12f)
+            {
+                float discriminant=bb*bb-4*aa*cc;
+                if(discriminant>=0){float root=Mathf.Sqrt(discriminant);Candidate((-bb-root)/(2*aa));Candidate((-bb+root)/(2*aa));}
+            }
+            if(Mathf.Abs(v)>1e-8f)foreach(float end in new[]{0f,length})
+            {float t=(end-u)/v;if((radial+step*t).sqrMagnitude<=radius*radius)Candidate(t);}
+            distance=closest;return found;
+        }
+        static bool Triangle(Ray ray,Vector3 a,Vector3 b,Vector3 c,out float depth)
+        {
+            depth=0;var first=b-a;var second=c-a;var cross=Vector3.Cross(ray.direction,second);float determinant=Vector3.Dot(first,cross);
+            if(Mathf.Abs(determinant)<1e-10f)return false;
+            float inverse=1/determinant;var offset=ray.origin-a;float u=Vector3.Dot(offset,cross)*inverse;
+            if(u<-.00001f||u>1.00001f)return false;var perpendicular=Vector3.Cross(offset,first);float v=Vector3.Dot(ray.direction,perpendicular)*inverse;
+            if(v<-.00001f||u+v>1.00001f)return false;depth=Vector3.Dot(second,perpendicular)*inverse;return depth>0;
         }
         static bool Closest(Ray ray,Vector3 a,Vector3 b,out float depth,out float miss)
         {

@@ -270,6 +270,19 @@ namespace SpatialModeling
         // geometry as input. This query cannot click, release or alter a draft.
         public bool RaycastVisual(Ray ray, out float distance)
         {
+            bool found=RaycastUiOnly(ray,out distance);
+            if (Drawing != null && Drawing.TryVisualAim(ray, out var drawPoint))
+            {
+                float drawingDistance = Vector3.Distance(ray.origin, drawPoint);
+                if (drawingDistance <= distance) { distance = drawingDistance; found = true; }
+            }
+            if (DirectEditing != null && DirectEditing.TryVisualAim(ray, out float directDistance) && directDistance <= distance)
+            { distance = directDistance; found = true; }
+            return found;
+        }
+        // Read-only UI fence, without recursively querying direct tool handles.
+        public bool RaycastUiOnly(Ray ray,out float distance)
+        {
             distance = 4f; bool found = false;
             foreach (var button in buttons)
                 if (button != null && button.gameObject.activeInHierarchy
@@ -280,13 +293,6 @@ namespace SpatialModeling
                 { distance = d; found = true; }
             if (screen != null && screen.TryPreviewPoint(ray, out _, out float imageDistance) && imageDistance <= distance)
             { distance = imageDistance; found = true; }
-            if (Drawing != null && Drawing.TryVisualAim(ray, out var drawPoint))
-            {
-                float drawingDistance = Vector3.Distance(ray.origin, drawPoint);
-                if (drawingDistance <= distance) { distance = drawingDistance; found = true; }
-            }
-            if (DirectEditing != null && DirectEditing.TryVisualAim(ray, out float directDistance) && directDistance <= distance)
-            { distance = directDistance; found = true; }
             return found;
         }
         bool RoutePointer(XRNode hand, Ray ray, bool trigger, bool grip, Vector2 axis, float nearest, out float distance, bool controller, bool stick)

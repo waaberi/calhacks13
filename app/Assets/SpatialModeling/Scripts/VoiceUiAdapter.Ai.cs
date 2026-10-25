@@ -19,6 +19,9 @@ namespace SpatialModeling
         GeminiVoiceInterpreter ai;
         JArray aiTools = new JArray(), aiReview;
         JObject aiPendingDraft, aiExpectedContext;
+        JArray aiQuestionMissing;
+        string aiIntentTarget;
+        string aiReviewIntentNote;
         string aiRecipeRequest, aiOriginal, aiQuestion, aiFingerprint, aiRunResolution, aiSubmittedCommand;
         DateTime aiQuestionUntil;
         int aiSequence;
@@ -40,6 +43,8 @@ namespace SpatialModeling
             if (owned) session?.Cancel();
             aiSequence++; ai?.Cancel(); aiBusy = false; aiQuestion = aiRecipeRequest = null;
             aiPendingDraft = aiExpectedContext = null; aiReview = null;
+            aiQuestionMissing = null; aiIntentTarget = null;
+            aiReviewIntentNote = null;
             aiRunResolution = null;
             return alreadySent;
         }
@@ -56,7 +61,7 @@ namespace SpatialModeling
         void CompleteAiCommand(string id)
         {if(id==aiSubmittedCommand){aiSubmittedCommand=null;aiRunResolution=null;}}
         bool AiContextCurrent() => host != null && host.HasCurrentScene && aiFingerprint != null
-            && CaptureAiContext().ToString(Formatting.None)==aiFingerprint;
+            && SelectedObjectId == aiIntentTarget && CaptureAiContext().ToString(Formatting.None)==aiFingerprint;
         JObject CaptureAiContext()
         {
             var preview = PreviewInteraction.Current; var drawing = preview?.Drawing;
@@ -121,9 +126,17 @@ namespace SpatialModeling
         void TickAi()
         {
             if (aiQuestion != null && DateTime.UtcNow >= aiQuestionUntil) { aiQuestion = null; Note("AI question expired. Say the complete edit again."); }
-            if ((aiBusy || aiQuestion != null || aiRecipeRequest != null || aiReview != null || (host != null && host.IsCommandQueued(aiSubmittedCommand)))
-                && (!host.HasCurrentScene || CaptureAiContext().ToString(Formatting.None) != aiFingerprint))
-            { InvalidateAi(); Note("Blender context changed. Say the complete edit again."); }
+            if (!(aiBusy || aiQuestion != null || aiRecipeRequest != null || aiReview != null || (host != null && host.IsCommandQueued(aiSubmittedCommand)))) return;
+            var current = host.HasCurrentScene ? CaptureAiContext() : null;
+            if (current == null || current.ToString(Formatting.None) != aiFingerprint || SelectedObjectId != aiIntentTarget)
+            {
+                if (aiQuestion != null && VoiceIntentContext.CanRebindTarget(aiExpectedContext,current,aiQuestionMissing))
+                {
+                    aiExpectedContext=current; aiFingerprint=current.ToString(Formatting.None); aiIntentTarget=SelectedObjectId;
+                    Debug.Log("VOICE AI target answer updated; original request retained");
+                }
+                else { InvalidateAi(); Note("Blender context changed. Say the complete edit again."); }
+            }
         }
         bool KnownBasic(string text)
         {
@@ -161,7 +174,7 @@ namespace SpatialModeling
                 Handle(session.Hear(new RecognitionResult(creation,result.Confidence))); return;
             }
             bool newTool = Regex.IsMatch(text, @"\b(extrude|inset|knife|loop\s*cut|dissolve|proportional|snapping)\b|\b(bevel|merge|delete)\b.*\b(vertices|edges|faces|selected)\b", RegexOptions.IgnoreCase);
-            if (!aiMode || !AiAvailable || (aiQuestion == null && !mesh && !newTool && KnownBasic(text)))
+            if (!aiMode || !AiAvailable || (aiQuestion == null && !mesh && !newTool && !VoiceIntentContext.NeedsInterpretation(text) && KnownBasic(text)))
             { Handle(session.Hear(result)); return; }
             if (result.Confidence < .5f) { Enqueue(Prompt.LowConfidence,null); return; }
             string request;
@@ -192,6 +205,7 @@ namespace SpatialModeling
             if ((bool?)context["gesture_active"] == true || PreviewInteraction.Current?.Drawing?.Session.Busy == true)
             { Note("Finish or cancel the current controller edit before asking for an AI edit."); return; }
             aiExpectedContext = context; aiFingerprint = context.ToString(Formatting.None); aiBusy = true;
+            aiIntentTarget = SelectedObjectId;
             resultLine = "Preparing the complete AI editing plan";
             StartCoroutine(AwaitAiRecipe(sequence,text,context));
         }
@@ -210,7 +224,8 @@ namespace SpatialModeling
         {
             GeminiVoiceInterpreter.Answer answer = null;
             yield return ai.Interpret(text,context,aiTools,() => sequence == aiSequence && aiBusy && host.HasCurrentScene
-                && CaptureAiContext().ToString(Formatting.None) == aiFingerprint, value => answer = value);
+                && SelectedObjectId == aiIntentTarget && CaptureAiContext().ToString(Formatting.None) == aiFingerprint, value => answer = value,
+                VoiceIntentContext.SelectedObject(context,aiIntentTarget));
             if (sequence != aiSequence) yield break;
             aiBusy = false;
             if (answer?.Draft == null || answer.Error != null)
@@ -219,11 +234,12 @@ namespace SpatialModeling
             string decision = (string)answer.Draft["decision"];
             if (decision != "propose" || (answer.Draft["missing"] as JArray)?.Count > 0)
             {
-                if (decision == "clarify") { aiQuestion = (string)answer.Draft["reason"] ?? "Which editing detail?"; aiQuestionUntil = DateTime.UtcNow.AddSeconds(30); }
+                if (decision == "clarify") { aiQuestionMissing=(JArray)answer.Draft["missing"]?.DeepClone(); aiQuestion = (string)answer.Draft["reason"] ?? "Which editing detail?"; aiQuestionUntil = DateTime.UtcNow.AddSeconds(120); }
                 else Note((string)answer.Draft["reason"] ?? "This whole edit could not be expressed; nothing was run.");
                 yield break;
             }
             aiPendingDraft = answer.Draft; aiExpectedContext = context;
+            aiReviewIntentNote = (string)answer.Draft["reason"];
             Handle(session.ResolveRecipe(aiOriginal));
         }
         bool AcceptAiCandidates(string request, JObject payload)
@@ -232,7 +248,7 @@ namespace SpatialModeling
             Debug.Log("VOICE AI native review " + (string)payload["decision"] + ": " + (string)payload["reason"]);
             aiRecipeRequest = null;
             if ((string)payload["decision"] == "clarify")
-            { session.Cancel(); aiQuestion = (string)payload["reason"] ?? "Which editing detail?"; aiQuestionUntil = DateTime.UtcNow.AddSeconds(30); return true; }
+            { session.Cancel(); aiQuestionMissing=new JArray((string)payload["missing"]??"detail"); aiQuestion = (string)payload["reason"] ?? "Which editing detail?"; aiQuestionUntil = DateTime.UtcNow.AddSeconds(120); return true; }
             if ((string)payload["decision"] == "run")
             {
                 if (string.IsNullOrEmpty((string)payload["resolution"]) || !(payload["recipe_plan"] is JObject plan) || !(plan["steps"] is JArray steps) || steps.Count == 0
@@ -269,6 +285,7 @@ namespace SpatialModeling
         {
             if (aiReview == null) return false;
             var lines = new List<string> { "Review AI edit · nothing has run" };
+            if (!string.IsNullOrWhiteSpace(aiReviewIntentNote)) lines.Add("Interpretation: " + aiReviewIntentNote);
             for(int i=0;i<aiReview.Count;i++)
             {
                 var step=aiReview[i]; string target = (string)(step["target"] as JValue);

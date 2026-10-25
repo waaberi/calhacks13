@@ -7,5 +7,6 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <Compile Include="../../app/Assets/SpatialModeling/Scripts/GeminiVoiceInterpreter.cs" Link="Production/GeminiVoiceInterpreter.cs" />
     <Compile Include="../../app/Assets/SpatialModeling/Scripts/VoiceDialogPages.cs" Link="Production/VoiceDialogPages.cs" />
+    <Compile Include="../../app/Assets/SpatialModeling/Scripts/VoiceIntentContext.cs" Link="Production/VoiceIntentContext.cs" />
   </ItemGroup>
 </Project>
