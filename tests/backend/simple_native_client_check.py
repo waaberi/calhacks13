@@ -236,7 +236,11 @@ def seq():
     assert result()["command_count"] == count
     checks.append("explicit disconnect/reconnect loads authoritative snapshot without repeating prior edits")
     yield action("flag_off")
-    yield lambda: rc.state.current and not rc.controlled_edit_enabled()
+    # Socket health can turn false on the receive thread before the main-thread
+    # mirror tick has applied the permission transition. Await the actual UI
+    # state as well, rather than mistaking that intermediate frame for readiness.
+    yield lambda: (rc.state.current and not rc.controlled_edit_enabled()
+                   and not rc._mirror.editable and obj().hide_select)
     assert obj().hide_select
     yield action("probe")
     assert result()["command_count"] == count
