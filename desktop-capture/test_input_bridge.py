@@ -4,6 +4,7 @@ import ctypes as C
 import http.client
 import json
 import os
+import sys
 import threading
 import time
 import unittest
@@ -538,7 +539,8 @@ class CaptureGeometryTests(unittest.TestCase):
                 time.sleep(0.005)
             self.assertTrue(predicate())
 
-        with patch("windows_capture.WindowsCapture", FakeCapture):
+        # The real binding is Windows-only; graphics_capture_loop imports it lazily.
+        with patch.dict(sys.modules, {"windows_capture": SimpleNamespace(WindowsCapture=FakeCapture)}):
             worker = threading.Thread(target=graphics_capture_loop,
                                       args=(api, latest, stop, 60), daemon=True)
             worker.start()
