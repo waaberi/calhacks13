@@ -108,8 +108,15 @@ def tick():
                 "cube_id": cube_id, "native": native()}), encoding="utf-8")
         action_file = folder / "action.json"
         if action_file.exists():
-            action = json.loads(action_file.read_text())
-            action_file.unlink()
+            try:
+                action = json.loads(action_file.read_text())
+                action_file.unlink()
+            except (PermissionError, json.JSONDecodeError):
+                # Windows can briefly lock a just-published fixture message.
+                # Keep servicing the real server; the overall deadline remains bounded.
+                if time.monotonic() - started > 150:
+                    raise
+                return .01
             name = action["action"]
             if name == "flag_on":
                 sess.client_can_edit = True

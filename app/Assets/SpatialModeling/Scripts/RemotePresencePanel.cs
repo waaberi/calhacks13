@@ -52,9 +52,11 @@ namespace SpatialModeling
 
         void OnDestroy()
         {
-            if (host == null) return;
-            host.ActivityReceived -= OnActivity;
-            host.SessionChanged -= OnSession;
+            if (host != null)
+            {
+                host.ActivityReceived -= OnActivity;
+                host.SessionChanged -= OnSession;
+            }
             foreach (var tag in tags.Values) if (tag != null) Destroy(tag.gameObject);
             tags.Clear();
         }
