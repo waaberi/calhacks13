@@ -39,8 +39,9 @@ def checks():
     bc.install()
     addon_utils.enable(bc.MODULE, default_set=True)
     host, sync = bc.mod("host"), bc.mod("sync")
-    host.SPACETIME_DATABASE = DATABASE
-    bpy.context.preferences.addons[bc.MODULE].preferences.spacetime_url = URL  # restarts
+    prefs = bpy.context.preferences.addons[bc.MODULE].preferences
+    prefs.spacetime_database = DATABASE
+    prefs.spacetime_url = URL  # restarts
     store = host._session.store
     yield from bc.wait(lambda: store.deciding, "SpacetimeDB to take over the leases", 20)
     bc.log(store.status)

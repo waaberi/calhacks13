@@ -104,9 +104,17 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
         description=(
             "Server that gets a copy of the participants and leases, for the Unity app to "
             "subscribe to. Run it on this PC with `spacetime start --listen-addr "
-            "127.0.0.1:3000`. Blank: don't use SpacetimeDB"
+            "127.0.0.1:3000`, or use https://maincloud.spacetimedb.com for people on other "
+            "networks (spacetime/README.md). Blank: don't use SpacetimeDB"
         ),
         default="http://127.0.0.1:3000",
+        update=_restart,
+    )
+
+    spacetime_database: bpy.props.StringProperty(
+        name="Database",
+        description="The SpacetimeDB database the module is published as",
+        default="spatial-modeling",
         update=_restart,
     )
 
@@ -136,6 +144,7 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
         for actor in host.participants():
             layout.label(text=f"Connected: {actor['name']} ({actor['role']})", icon="USER")
         layout.prop(self, "spacetime_url")
+        layout.prop(self, "spacetime_database")
         layout.label(text=host.spacetime_status())
         box = layout.box()
         box.prop(self, "lan_enabled")

@@ -60,7 +60,6 @@ _session_id = None  # used only while the add-on preferences aren't available
 _starting = False
 status = "Stopped"  # shown in the add-on preferences; never contains the token
 lan_status = "Off"
-SPACETIME_DATABASE = "spatial-modeling"  # spacetime/spacetime.json
 
 
 def undoable(label):
@@ -257,8 +256,12 @@ def _store(prefs):
         return None  # session.Session's own MemoryStore
     folder = bpy.utils.user_resource("CONFIG", path=__package__, create=True)
     token = os.path.join(folder, "spacetime-host-token")
+    database = prefs.spacetime_database.strip() or "spatial-modeling"  # spacetime/spacetime.json
+    # A call to Maincloud takes about 300 ms (a new TLS connection each time); it runs on the
+    # mirror thread, so a longer timeout never holds up Blender.
+    local = url.startswith(("http://127.", "http://localhost"))
     connect = functools.partial(session_store.SpacetimeStore, token, url=url,
-                                database=SPACETIME_DATABASE)
+                                database=database, timeout=1.0 if local else 5.0)
     return session_store.MirroredStore(connect)
 
 
