@@ -76,6 +76,14 @@ namespace SpatialModeling
         void BlockedAttempt(string reason)=>ShowAvailability(false,CurrentNativeTool,reason);
         void ShowAvailability(bool unsupported,string nativeTool,string reason)
         {
+            // Private bounded diagnostics describe actual refusals, rather than
+            // mistaking an idle native status label for a controller attempt.
+            string Safe(string value,int limit)
+            {value=(value??"").Replace('\r',' ').Replace('\n',' ');return value.Length>limit?value.Substring(0,limit):value;}
+            var selected=SelectionSnapshot["objects"] as JArray;
+            Debug.Log("P25_DIRECT_REFUSAL unsupported="+unsupported+" tool="+Safe(nativeTool,64)
+                +" mode="+Safe((string)drawing?.NativeState["model_edit"]?["mode"],24)
+                +" selection_count="+(selected?.Count??0));
             AvailabilityPopup??=new ToolAvailabilityPopup(transform);
             AvailabilityPopup.Show(unsupported,nativeTool,reason,Camera.main,Time.unscaledTime);
         }
