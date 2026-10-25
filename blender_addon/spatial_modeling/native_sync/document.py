@@ -8,6 +8,7 @@ script auto-execution preferences.
 import hashlib
 import re
 import uuid
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -135,6 +136,7 @@ def _validate_file(path):
 class NativeDocument:
     def __init__(self, schedule=None):
         self._transaction = None
+        self._identities = {}
         self._schedule = schedule or (lambda callback, delay: bpy.app.timers.register(
             callback, first_interval=delay))
 
@@ -175,18 +177,32 @@ class NativeDocument:
         seen = set()
         original_path = bpy.data.filepath
         try:
-            for group, items in _ids().items():
-                for item in items:
+            records = [(group, item) for group, items in _ids().items() for item in items]
+            counts = Counter(item.get(UUID_PROPERTY) for _, item in records
+                             if isinstance(item.get(UUID_PROPERTY), str))
+            reserved = {self._identities[(group, item.session_uid)] for group, item in records
+                        if (group, item.session_uid) in self._identities}
+            # Native Duplicate copies ID properties. Previously known session IDs
+            # keep their UUID even when a new copy sorts before them by name.
+            records.sort(key=lambda pair: (pair[0], pair[1].session_uid) not in self._identities)
+            for group, item in records:
+                key = (group, item.session_uid)
+                identity = self._identities.get(key)
+                if identity is None:
                     identity = item.get(UUID_PROPERTY)
-                    if not isinstance(identity, str) or not _UUID.fullmatch(identity) or identity in seen:
-                        identity = uuid.uuid4().hex
-                        item[UUID_PROPERTY] = identity
-                    seen.add(identity)
-                    manifest[identity] = {"group": group, "name": item.name}
-                    if item.users == 0 and not item.use_fake_user:
-                        item[_KEEPALIVE] = False
-                        item.use_fake_user = True
-                        keepalive.append(item)
+                    if isinstance(identity, str) and counts.get(identity, 0) > 1 and identity not in reserved:
+                        identity = None
+                if not isinstance(identity, str) or not _UUID.fullmatch(identity) or identity in seen:
+                    identity = uuid.uuid4().hex
+                if item.get(UUID_PROPERTY) != identity:
+                    item[UUID_PROPERTY] = identity
+                self._identities[key] = identity
+                seen.add(identity)
+                manifest[identity] = {"group": group, "name": item.name}
+                if item.users == 0 and not item.use_fake_user:
+                    item[_KEEPALIVE] = False
+                    item.use_fake_user = True
+                    keepalive.append(item)
             active_scene_uuid = bpy.context.scene.get(UUID_PROPERTY)
             result = bpy.ops.wm.save_as_mainfile(filepath=str(path), copy=True, compress=False,
                                                 relative_remap=False)
@@ -233,6 +249,8 @@ class NativeDocument:
             _validate_script_drivers(transaction["new"].values())
             actual_groups = {item.as_pointer(): group for group, items in _ids().items() for item in items}
             found = {item.get(UUID_PROPERTY): item for item in transaction["new"].values()}
+            if len(found) != len(transaction["new"]) or None in found:
+                raise NativeDocumentError("Checkpoint contains duplicate or missing native identities")
             missing = set(manifest) - found.keys()
             if missing:
                 raise NativeDocumentError("Checkpoint did not restore every original native datablock")
@@ -274,6 +292,9 @@ class NativeDocument:
                 if _KEEPALIVE in item:
                     item.use_fake_user = bool(item[_KEEPALIVE])
                     del item[_KEEPALIVE]
+            for group, items in _ids().items():
+                for item in items:
+                    self._identities[(group, item.session_uid)] = item.get(UUID_PROPERTY)
             bpy.context.view_layer.update()
             bpy.ops.ed.undo_push(message="Shared native checkpoint")
             report = {"datablocks": len(manifest),

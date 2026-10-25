@@ -52,6 +52,23 @@ try:
     report["checks"].append("native math driver allowed; arbitrary Python driver rejected without changing trust preferences")
     bpy.data.materials.remove(material)
     checkpoint = document.capture(out / "valid.blend")
+    original_identity = cube_identity = bpy.data.objects["Cube"]["spatial_native_uuid"]
+    bpy.ops.ed.undo_push(message="Before native duplicate identity test")
+    copied = bpy.data.objects["Cube"].copy()
+    copied.name = "AAA NativeSync copied Cube"
+    bpy.context.collection.objects.link(copied)
+    document.capture(out / "duplicated.blend")
+    assert bpy.data.objects["Cube"]["spatial_native_uuid"] == original_identity
+    assert copied["spatial_native_uuid"] != original_identity
+    copied_identity = copied["spatial_native_uuid"]
+    bpy.ops.ed.undo_push(message="After native duplicate identity test")
+    bpy.ops.ed.undo()
+    assert bpy.data.objects["Cube"]["spatial_native_uuid"] == cube_identity
+    bpy.ops.ed.redo()
+    document.capture(out / "duplicated-redo.blend")
+    assert bpy.data.objects["Cube"]["spatial_native_uuid"] == original_identity
+    assert bpy.data.objects["AAA NativeSync copied Cube"]["spatial_native_uuid"] == copied_identity
+    report["checks"].append("native Duplicate renamed before original preserves original UUID and new copy UUID across Undo/Redo")
     invalid = {identity: dict(entry) for identity, entry in checkpoint.manifest.items()}
     next(iter(invalid.values()))["group"] = "screens"
     try:
