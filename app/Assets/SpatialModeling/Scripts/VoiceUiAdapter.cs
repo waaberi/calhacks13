@@ -138,6 +138,21 @@ namespace SpatialModeling
         float resultDeadline;
         InputAction talk, confirm, cancel, leftGrip;
 
+        // ---- AI voice mode (optional, Gemini). Off without a key; basic voice never depends on it. ----
+        [Header("AI voice mode (optional)")]
+        [Tooltip("Understand free speech with Gemini: it turns the words into one of VoiceCore's command phrases, which then go " +
+                 "through the normal path. Needs gemini_key.txt (next to the exe, or in app/) or the variable GEMINI_API_KEY. " +
+                 "F9 turns it on and off; the command line -noAi starts with it off.")]
+        public bool aiMode = true;
+        [Tooltip("Send every utterance through Gemini, even exact command phrases. Off: phrases VoiceCore already knows stay on the fast local path.")]
+        public bool aiForEveryUtterance = false;
+        [Tooltip("Gemini model code. Empty: gemini-3.5-flash-lite. The variable GEMINI_MODEL overrides it.")]
+        public string geminiModel = "";
+        GeminiVoiceInterpreter ai;
+        IReadOnlyList<string> hostPhrases = new string[0];   // the host's voice.grammar, for Gemini's list of commands
+        int aiSeq;                                           // the newest utterance; an older AI answer is dropped
+        InputAction toggleAi;
+
         void Awake()
         {
             if (host == null) host = FindAnyObjectByType<HostScene>();
@@ -192,6 +207,14 @@ namespace SpatialModeling
             confirm.started += _ => { if (!leftGrip.IsPressed()) ConfirmDelete(); };
             cancel.started += _ => CancelPressed();
             talk.Enable(); confirm.Enable(); cancel.Enable(); leftGrip.Enable();
+
+            toggleAi = new InputAction("ToggleAi", InputActionType.Button);
+            toggleAi.AddBinding("<Keyboard>/f9");
+            toggleAi.started += _ => SetAi(!aiMode, true);
+            toggleAi.Enable();
+            ai = new GeminiVoiceInterpreter(geminiModel);
+            Debug.Log("VOICE ai: " + (ai.Available ? "key from " + ai.KeySource + ", model " + ai.Model : "no Gemini key (AI voice off)"));
+            SetAi(aiMode && !HasFlag("-noAi"), true);
         }
 
         void Start()
@@ -210,7 +233,9 @@ namespace SpatialModeling
             host.Welcomed += () => grammarQuery = host.SendVoice(VoiceGrammar.QueryType, new JObject());
             host.VoiceGrammarReceived += (re, json) =>
             {
-                session.SetHostGrammar(VoiceGrammar.FromJson(json));
+                IReadOnlyList<string> phrases = VoiceGrammar.FromJson(json);
+                hostPhrases = phrases;
+                session.SetHostGrammar(phrases);
                 input?.SetGrammar(session.GrammarPhrases());
                 Debug.Log("VOICE grammar: " + session.GrammarPhrases().Count + " phrases with the host's");
             };
@@ -264,7 +289,7 @@ namespace SpatialModeling
 
         void OnDestroy()
         {
-            talk?.Dispose(); confirm?.Dispose(); cancel?.Dispose(); leftGrip?.Dispose();
+            talk?.Dispose(); confirm?.Dispose(); cancel?.Dispose(); leftGrip?.Dispose(); toggleAi?.Dispose();
             if (mic != null) Microphone.End(micDevice);
             input?.Dispose();
         }
@@ -301,7 +326,7 @@ namespace SpatialModeling
                     }
                     heardLine = $"Heard: \"{result.Text}\" ({result.Confidence:0.00})";
                     if (prompts.Count == 0 && !playing) Note("Heard: " + result.Text);   // don't cover a prompt that is playing
-                    Handle(session.Hear(result));
+                    HearOrInterpret(result, true);
                 }
                 // A press that gave no result at all (#146): silence, or speech that matched no phrase.
                 while (input.TryGetNoResult(out NoResultReason why))
@@ -313,6 +338,7 @@ namespace SpatialModeling
                     // Silence says nothing (VoiceSession), so show why; speech that matched nothing says "Sorry, I
                     // didn't catch that" (Prompt.LowConfidence), which the prompt loop shows.
                     if (why == NoResultReason.Silence) Note(DidntHear);
+                    if (why != NoResultReason.Silence && TryInterpretUnmatched(why)) continue;
                     Handle(session.NothingRecognized(why));
                 }
             }
@@ -430,11 +456,159 @@ namespace SpatialModeling
                 string phrase = typed;
                 typed = "";
                 e.Use();
-                Handle(session.Hear(new RecognitionResult(phrase, 1f)));
+                HearOrInterpret(new RecognitionResult(phrase, 1f), false);
                 return;
             }
             GUI.SetNextControlName("voicebox");
             typed = GUI.TextField(new Rect(Screen.width - 430, Screen.height - 36, 420, 26), typed);
+        }
+
+        // ---------- AI mode (optional, Gemini) ----------
+
+        static bool HasFlag(string name) => Array.IndexOf(Environment.GetCommandLineArgs(), name) >= 0;
+
+        void SetAi(bool on, bool announce)
+        {
+            aiSeq++;   // an answer still on its way is dropped
+            if (on && !ai.Available)
+            {
+                aiMode = false;
+                if (announce) Note("AI voice off: no Gemini key (gemini_key.txt or GEMINI_API_KEY)");
+                return;
+            }
+            aiMode = on;
+            if (announce) Note(on ? "AI voice on (" + ai.Model + "). F9 turns it off." : "AI voice off. Basic voice commands only.");
+        }
+
+        // Words from the recognizer. With AI mode on, a NEW command goes through Gemini first; answers to a question
+        // that is open, commands VoiceCore already knows, and everything while AI is off or fails stay on the basic path.
+        void HearOrInterpret(RecognitionResult result, bool fromMic)
+        {
+            aiSeq++;   // newer words: an older AI answer is dropped
+            string raw = fromMic ? RawTranscript() : null;
+            if (!UseAi(result.Text, raw, false)) { Handle(session.Hear(result)); return; }
+            StartAi(result, raw, () => Handle(session.Hear(result)));
+        }
+
+        // Speech the recognizer could not match to a phrase: Whisper's own words may still be a command in other words.
+        bool TryInterpretUnmatched(NoResultReason why)
+        {
+            string raw = RawTranscript();
+            if (string.IsNullOrWhiteSpace(raw) || !UseAi("", raw, true)) return false;
+            aiSeq++;
+            StartAi(new RecognitionResult(raw.Trim(), 1f), raw, () => Handle(session.NothingRecognized(why)));
+            return true;
+        }
+
+        // Whisper's own words for the last press, before VoiceCore snaps them onto grammar phrases; null if there are none
+        // (Vosk answered alone, or another recognizer).
+        string RawTranscript()
+        {
+            object r = activeRecognizer;
+            if (r is FastPathRecognizer fp)
+            {
+                if (!fp.LastOutcome.ToString().StartsWith("Slow")) return null;
+                r = fp.Slow;
+            }
+            if (!(r is WhisperServerRecognizer w)) return null;
+            string text = w.LastTranscript?.ToString();
+            return string.IsNullOrWhiteSpace(text) ? null : text;
+        }
+
+        bool UseAi(string recognized, string raw, bool unmatched)
+        {
+            if (!aiMode || ai == null || !ai.Available) return false;
+            // An answer to a question ("z", "two", "cancel") stays local.
+            if (session.Pending != null || session.Choice != null || session.WaitingForHost) return false;
+            string said = string.IsNullOrWhiteSpace(raw) ? recognized : raw;
+            if (string.IsNullOrWhiteSpace(said)) return false;
+            if (unmatched || aiForEveryUtterance) return true;
+            return !IsKnownPhrase(said);
+        }
+
+        // A command VoiceCore or the host's grammar already knows: an exact phrase, or only core words, numbers and names
+        // of objects in the scene ("rotate this ninety degrees around z"). No reason to wait for Gemini.
+        bool IsKnownPhrase(string said)
+        {
+            string norm = Normalize(said);
+            if (norm.Length == 0) return true;
+            foreach (string phrase in session.GrammarPhrases())
+                if (Normalize(phrase) == norm) return true;
+            var names = new HashSet<string>();
+            var shown = new List<KeyValuePair<string, string>>();
+            host.GetShownObjects(shown);
+            foreach (var o in shown)
+                foreach (string word in Normalize(o.Value).Split(' ')) names.Add(word);
+            foreach (string word in norm.Split(' '))
+                if (!CoreWords.Contains(word) && !IsNumber(word) && !names.Contains(word)) return false;
+            return true;
+        }
+
+        static readonly HashSet<string> CoreWords = new HashSet<string>(
+            ("add create move rotate scale delete undo redo cancel apply select this that it the a an object one " +
+             "cube sphere cylinder x y z axis around along by to please okay and point minus negative up down " +
+             "millimeter millimeters centimeter centimeters meter meters degree degrees percent times " +
+             "zero two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen " +
+             "eighteen nineteen twenty thirty forty fifty sixty seventy eighty ninety hundred thousand").Split(' '));
+
+        static bool IsNumber(string word) =>
+            double.TryParse(word, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _);
+
+        // Lower case, letters and digits only (a dot stays between digits), single spaces.
+        static string Normalize(string text)
+        {
+            string t = (text ?? "").ToLowerInvariant();
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < t.Length; i++)
+            {
+                char c = t[i];
+                if (char.IsLetterOrDigit(c)) sb.Append(c);
+                else if (c == '.' && i > 0 && i + 1 < t.Length && char.IsDigit(t[i - 1]) && char.IsDigit(t[i + 1])) sb.Append(c);
+                else if (sb.Length > 0 && sb[sb.Length - 1] != ' ') sb.Append(' ');
+            }
+            return sb.ToString().Trim();
+        }
+
+        void StartAi(RecognitionResult result, string raw, Action fallback)
+        {
+            var request = new GeminiVoiceInterpreter.Request
+            {
+                Heard = string.IsNullOrWhiteSpace(raw) ? result.Text : raw.Trim(),
+                Recognized = result.Text,
+                Pointed = pointerId != null ? host.ObjectName(pointerId) : null,
+                HostPhrases = hostPhrases,
+            };
+            var shown = new List<KeyValuePair<string, string>>();
+            host.GetShownObjects(shown);
+            foreach (var o in shown)
+                if (request.Objects.Count < 40) request.Objects.Add(o.Value);
+            resultLine = "Asking Gemini...";
+            StartCoroutine(RunAi(aiSeq, request, fallback));
+        }
+
+        IEnumerator RunAi(int seq, GeminiVoiceInterpreter.Request request, Action fallback)
+        {
+            GeminiVoiceInterpreter.Answer answer = null;
+            yield return StartCoroutine(ai.Interpret(request, a => answer = a));
+            if (seq != aiSeq) yield break;   // newer words came in, or AI was turned off
+            if (answer == null || answer.Error != null)
+            {
+                Debug.LogWarning("VOICE ai failed: " + (answer?.Error ?? "no answer") + " (basic voice instead)");
+                resultLine = "AI unavailable: basic voice";
+                fallback();
+                yield break;
+            }
+            Debug.Log("VOICE ai '" + request.Heard + "' -> '" + answer.Phrase + "'" +
+                      (answer.Reason.Length > 0 ? " (" + answer.Reason + ")" : "") + " in " + answer.Ms + " ms");
+            heardLine = "Heard: \"" + request.Heard + "\"";
+            if (answer.Phrase.Length == 0)
+            {
+                resultLine = "AI: " + (answer.Reason.Length > 0 ? answer.Reason : "no matching command");
+                Enqueue(Prompt.Unsupported, answer.Reason.Length > 0 ? answer.Reason : null);
+                yield break;
+            }
+            resultLine = "AI: " + answer.Phrase;
+            Handle(session.Hear(new RecognitionResult(answer.Phrase, 1f)));   // as if it had been said
         }
 
         // ---------- scene ----------
