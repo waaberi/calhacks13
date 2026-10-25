@@ -49,6 +49,19 @@ def choose():
 
 def native(op, **kwargs):
     choose()
+    if config.get("keyboard_events"):
+        keys = {"translate": [("G", ""), ("X", ""), ("ZERO", "0"),
+                              ("PERIOD", "."), ("ZERO", "0"), ("ONE", "1"), ("FIVE", "5")],
+                "rotate": [("R", ""), ("Z", ""), ("FOUR", "4"), ("FIVE", "5")],
+                "resize": [("S", ""), ("ONE", "1"), ("PERIOD", "."), ("FIVE", "5")]}
+        region = bpy.context.region
+        x, y = region.x + region.width // 2, region.y + region.height // 2
+        window = bpy.context.window
+        window.event_simulate(type="MOUSEMOVE", value="NOTHING", x=x, y=y)
+        for key, char in [*keys[op], ("RET", "")]:
+            window.event_simulate(type=key, value="PRESS", unicode=char, x=x, y=y)
+            window.event_simulate(type=key, value="RELEASE", x=x, y=y)
+        return
     assert getattr(bpy.ops.transform, op)(**kwargs) == {"FINISHED"}
     bpy.context.view_layer.update()
 
@@ -130,20 +143,20 @@ def seq():
     yield lambda: rc.controlled_edit_enabled() and rc._mirror.editable
     assert not obj().hide_select
     native("translate", value=(.015, 0, 0))
-    yield lambda: location(.025) and idle()
+    yield lambda: location(.025) and idle() and len(rc.requests.requests) >= 1
     yield action("probe")
     assert result()["command_count"] == 1 and abs(result()["x_meters"] - .025) < 1e-6
     assert result()["commands"][-1]["payload"]["op"] == "object.move"
     checks.append("native transform.translate (G/gizmo operator) reaches original host exactly once")
     native("rotate", value=math.pi / 4, orient_axis="Z")
-    yield idle
+    yield lambda: idle() and len(rc.requests.requests) >= 2
     yield action("probe")
     assert result()["command_count"] == 2
     assert result()["commands"][-1]["payload"]["op"] == "object.rotate"
     assert abs(result()["commands"][-1]["payload"]["args"]["to"][0] - math.cos(math.pi/8)) < 1e-5
     checks.append("native transform.rotate reaches host quaternion exactly once")
     native("resize", value=(1.5, 1.5, 1.5))
-    yield idle
+    yield lambda: idle() and len(rc.requests.requests) >= 3
     yield action("probe")
     assert result()["command_count"] == 3 and all(abs(v-1.5)<1e-5 for v in result()["object_scale"])
     checks.append("native transform.resize reaches host scale exactly once")
@@ -177,7 +190,9 @@ def seq():
     checks.append("host change during real modal G is held; native ESC restores latest host state without resend")
     yield action("ownership_on")
     yield lambda: bool(rc.ownership_state()[0])
-    native("translate", value=(.04, 0, 0))
+    choose()
+    assert bpy.ops.transform.translate(value=(.04, 0, 0)) == {"FINISHED"}
+    bpy.context.view_layer.update()
     yield lambda: bool(rc.live.error) and location(.025, .06) and idle()
     yield action("probe")
     rejected_count = result()["command_count"]
@@ -232,6 +247,7 @@ def seq():
                              for p in (ROOT / "blender_addon/spatial_modeling").rglob("*.py")}
     (folder / "client-result.json").write_text(json.dumps({"passed": True, "checks": checks,
         "actual_modal_operator_ids": modal_evidence, "source_hashes": source_hashes, "physical_mouse_keyboard": False, "simulated_ctrl_z_keymap": bool(config.get("keyboard_events")),
+        "simulated_native_g_r_s_keymaps": bool(config.get("keyboard_events")),
         "headset": False, "full_native_data_sync": False}, indent=2))
 
 
