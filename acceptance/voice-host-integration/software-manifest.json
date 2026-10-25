@@ -1,0 +1,90 @@
+{
+  "schema": 1,
+  "at": "2026-10-25T17:18:50.964052+00:00",
+  "state": "COMPLETE_UNLAUNCHED_PACKAGE_WITH_FULL_VOICE_SUITE_DISCOVERY_BLOCK",
+  "branch": "codex/talia-voice-host-integration",
+  "application_source": "ae84c9e70d3e28f5f7002b5fd84891f37fcf05e1",
+  "backend_source": "ae84c9e70d3e28f5f7002b5fd84891f37fcf05e1",
+  "composed_sources": {
+    "main": "bafe8c9d1aad51e96279d6740ef12c30c48b38c8",
+    "full_native_host": "f2557163a1e94b885b028ca9c77aca7cf1b86dd1",
+    "voice_regression": "8e2376bc4323be8ce33db3857e176e61f0cb3f8c"
+  },
+  "package": "artifacts/live-modeling-v10-voice-host-a",
+  "package_files": 2868,
+  "package_bytes": 2644157331,
+  "assembly_sha256": "71ffafdf5a3208e902cc937d484f6de8e4bf43aec5b14125cbe77074593bbf21",
+  "manifest_sha256": "0046eacc88e7e27f841825817894ee13f4fd53a36dc305f0f3b675f91f2c7baa",
+  "matching_native_zip_sha256": "1625fc4eebe363c7bc3d3e02bd9808716995e5f14c7e88c8b07bb85c8731cd69",
+  "checks": {
+    "unity_mandatory": 90,
+    "frozen_xr_flags": 34,
+    "http_fresh_cases": [
+      9,
+      2,
+      9
+    ],
+    "backend": {
+      "passed": 1720,
+      "skipped": 40
+    },
+    "native_background": {
+      "processes": 8,
+      "checks": 107
+    },
+    "managed_ai_passed": 90,
+    "managed_voice_focused": {
+      "passed": 46,
+      "fresh": true,
+      "exact_scope": "Before final four exact composition suffix cases; final source compilation succeeded but full discovery blocked",
+      "trx": "managed/review-fixes-b/voice-routing.trx"
+    },
+    "managed_voice_full": {
+      "executed": 0,
+      "failure": "Windows Application Control0x800711C7 discovery block; exact no-build retry same block",
+      "trx": [
+        "voice.trx",
+        "voice-retry.trx"
+      ]
+    },
+    "provider": {
+      "new_calls": 0,
+      "cached_cases_replayed_through_current_production": 6,
+      "passed": true,
+      "prior_source": "8e2376bc4323be8ce33db3857e176e61f0cb3f8c",
+      "admission_ledger": "30/30; no further calls made",
+      "request_and_response_drafts_unchanged": true
+    },
+    "bridge": {
+      "offline_typecheck_emit_pass": true,
+      "compiled_bridge_files_byte_equal": 28,
+      "optional_manifest_files_verified": 739,
+      "services_cloud_calls": 0
+    },
+    "source_inputs_audited": 244,
+    "frozen_build_inputs_verified": 583,
+    "package_validation_exit": 0
+  },
+  "preserved": [
+    "Latest UI and Blender-view tool menu",
+    "Native 2D controller editing and direct 3D/controller input barriers",
+    "Main frame-change playback/deformation streaming",
+    "Existing explicit controller selection/deselection and v9 partial locks",
+    "Document identity, authority, leases, native generations, full-sequence validation/review and atomic Undo/Redo",
+    "Live Player/native/capture/bridge lifetimes plus all eleven retained Blender sessions"
+  ],
+  "remaining": [
+    "Full current managed VoiceCore discovery blocked by Windows Application Control 0x800711C7; no tests executed in full attempt or exact bounded retry; no security settings changed",
+    "Headset/microphone axis, chain, review and native-input regression acceptance",
+    "GUI modal/native event-loop checks deferred under no-visible-test-window instruction",
+    "Full-native two-PC/edit-turn/history acceptance",
+    "Room localization recurrence and physical room fit",
+    "Current transient Host 0.2 installation and future runtime switch require existing runtime owner; no restart or upgrade performed"
+  ],
+  "runtime_launched": false,
+  "physical_acceptance": false,
+  "live_runtime_changed": false,
+  "new_provider_calls": 0,
+  "new_pr_push_main_fps_actions": false,
+  "evidence": "evidence/voice-host-integration"
+}
