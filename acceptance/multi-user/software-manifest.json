@@ -64,6 +64,11 @@
     "native_file_roundtrip_windows_linux_windows": {
       "passed": true,
       "scope": "native Edit Mode vertices/modifier/nodes via file exchange; not automatic synchronization"
+    },
+    "linux_vm_gui": {
+      "native_window_and_edit_mode_initialized": true,
+      "visual_usability_verified": false,
+      "reason": "Both screenshots all black, including explicit redraw; no fully usable GUI claim"
     }
   },
   "evidence_sha256": {

@@ -10,6 +10,8 @@ Real Windows host to Ubuntu 24.04/QEMU Client tests passed six production reques
 
 Separate disposable feasibility checks preserve original quads, UVs, modifiers, shape keys and material nodes through a native copy and local atomic replacement with one Undo/Redo. A Windows to Linux native editing to Windows file round trip also preserves the tested data. These experiments are outside the production Client; they do not establish full data-type coverage, linked/external asset transfer or automatic synchronization. Initial replacement failures and Blender crash reports are retained. Corrected enumeration excludes aggregate bpy.data.all_ids so excluded UI/window data cannot re-enter the deletion set through it.
 
+The Linux VM initialized a full native window and entered Edit Mode, but both graphical screenshots were entirely black, including a forced redraw attempt. Interactive visual usability has not been verified on this software-emulated VM. Background/native operator checks must not be presented as a usable graphical Client pass.
+
 Remaining work: a reviewed Host/Client full-native state contract, acknowledged ownership and base-state fences, automatic original-data synchronization, conflict/stale/disconnect recovery, native history and asset fidelity tests. Unlocking the evaluated mirror would produce unsynchronized local edits. Existing component ownership is retained in #176/#106/#87/#115. Root retains sole final Unity/package/runtime ownership.
 
 ## Start with one user
