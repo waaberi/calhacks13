@@ -148,6 +148,23 @@ def test_missing_native_id_type_is_not_guessed_from_matching_field_name():
         MODULE.document_fingerprint(native(schema=schema))
 
 
+@pytest.mark.parametrize("schema", [dna().replace(b"ids[2]", b"ids[x]"),
+                                   dna().replace(b"Object\0", b"Objec\xff\0"),
+                                   dna() + b"\0"])
+def test_unsupported_schema_declarations_fail_closed(schema):
+    with pytest.raises(MODULE.FingerprintError):
+        MODULE.document_fingerprint(native(schema=schema))
+
+
+def test_duplicate_structure_declaration_is_not_silently_overwritten():
+    schema = bytearray(dna())
+    start = schema.index(b"STRC") + 4
+    struct.pack_into("<I", schema, start, 5)
+    schema.extend(schema[start + 4:start + 20])
+    with pytest.raises(MODULE.FingerprintError):
+        MODULE.document_fingerprint(native(schema=bytes(schema)))
+
+
 @pytest.mark.parametrize("arguments", [{"block_schema": 60000}, {"count": 999999}])
 def test_unknown_block_schema_or_oversized_id_array_fails_closed(arguments):
     with pytest.raises(MODULE.FingerprintError):
