@@ -2,7 +2,7 @@
 
 The SpacetimeDB spike (issue #16, [PHASE_PLAN.md › SpacetimeDB session state](../PHASE_PLAN.md#spacetimedb-session-state)). Owner: Waaberi.
 
-The module holds the session state the host shares: **participants**, **object leases**, the **receipt log**, object **labels** and lease **refusals**. Its `acquire` reducer decides who may edit what. It also relays the host connection between PCs on different networks ([below](#across-the-internet)), as TLS ciphertext it can't read; it never stores geometry, snapshots or commands as such. The wire format in [contracts/README.md](../contracts/README.md) doesn't change: the host builds `session.update`, `lease.granted` and `receipts` from these tables, or from memory if SpacetimeDB isn't used.
+The module holds the session state the host shares: **participants**, **object leases**, the **receipt log**, object **labels** and lease **refusals**. Its `acquire` reducer decides who may edit what. It also relays the host connection between PCs on different networks ([below](#across-the-internet)), as TLS ciphertext it can't read; it never stores geometry, snapshots or commands as such. The wire format in [contracts/README.md](../contracts/README.md) doesn't change: the host builds `session.update`, `lease.granted` and `receipts` from these tables, and falls back to its in-memory copy only while the server is unreachable.
 
 | File | What it is |
 | --- | --- |

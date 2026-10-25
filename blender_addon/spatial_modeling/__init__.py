@@ -116,9 +116,9 @@ class SpatialModelingPreferences(bpy.types.AddonPreferences):
     spacetime_url: bpy.props.StringProperty(
         name="Server",
         description=(
-            "Server that gets a copy of the participants and leases, for the Unity app to "
-            "subscribe to. Run it on this PC with `spacetime start --listen-addr "
-            "127.0.0.1:3000`. Blank: don't use SpacetimeDB"
+            "SpacetimeDB server that decides leases and holds the session state. Run it "
+            "on this PC with `spacetime start --listen-addr 127.0.0.1:3000`. Blank: "
+            "Blender decides leases in memory"
         ),
         default="http://127.0.0.1:3000",
         update=_restart,
