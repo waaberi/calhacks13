@@ -15,3 +15,14 @@ To regenerate in PowerShell, run from the repository root and choose a new outpu
 ```
 
 The generator defaults to v2 and refuses to overwrite any existing output. Choose another unused filename if regenerating. This creates a separate background process and preserves any open Blender window and unsaved work. Run the v2 native verification command in `acceptance/native-reference/README.md` after generation. The 100 x 60 mm constrained rectangle belongs to P3C; the primitive fixture does not claim a working CAD solver.
+
+For easier interactive testing, `create_test_reference.py` creates a separate copy with a 200 mm cube and a cylinder 100 mm in diameter and 300 mm high. Mesh geometry and object locations are 10 times larger, with applied object scale still 1 and truthful millimeter metadata. The saved viewport is framed for the larger models. This disposable test copy preserves the original P0 v2 dimensional-acceptance fixture.
+
+Choose a new output outside the repository, then independently reopen it to verify physical dimensions, locations, units, framing, provenance and the unchanged source hash:
+
+```powershell
+& 'C:\Program Files\Blender Foundation\Blender 5.2\blender.exe' --background --factory-startup --python-exit-code 1 --python samples/mechanical/create_test_reference.py -- --output C:/Temp/reference-large.blend
+& 'C:\Program Files\Blender Foundation\Blender 5.2\blender.exe' --background --factory-startup --python-exit-code 1 --python samples/mechanical/create_test_reference.py -- --output C:/Temp/reference-large.blend --verify
+```
+
+The first command refuses an existing `.blend` output. Verification writes a fresh adjacent JSON evidence file and refuses to replace existing evidence. Neither command controls an open Blender session.

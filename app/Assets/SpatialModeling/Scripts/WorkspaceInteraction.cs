@@ -180,7 +180,8 @@ namespace SpatialModeling
                 h.stableAim.SetPositionAndRotation(aim.position, aim.rotation);
                 h.aimInitialized = true;
             }
-            aim = new Pose(h.stableAim.position, h.stableAim.rotation);
+            // Buttons and the visible pointer use the current device aim. The
+            // placement filter is independent and only smooths a held object.
             var ray = new Ray(aim.position, aim.rotation * Vector3.forward);
             device.TryGetFeatureValue(UnityEngine.XR.CommonUsages.grip, out float grip);
             device.TryGetFeatureValue(UnityEngine.XR.CommonUsages.trigger, out float trigger);
@@ -248,10 +249,10 @@ namespace SpatialModeling
                         h.turnLatched=true;
                         h.rotationOffset=Quaternion.AngleAxis(Mathf.Sign(axis.x)*15,h.rotationAxis)*h.rotationOffset;
                     }
-                    if (Mathf.Abs(axis.y) > 0.2f) h.depth = Mathf.Clamp(h.depth + axis.y * Time.unscaledDeltaTime, -0.5f, 2f);
+                    h.depth = AdvanceDepth(h.depth, axis.y, Time.unscaledDeltaTime);
                     if (arrangement==null && h.target == screen.Placement && Mathf.Abs(axis.x) > 0.2f)
                         screen.Resize(Mathf.Exp(axis.x * Time.unscaledDeltaTime * 0.65f));
-                    distance = Mathf.Clamp(Vector3.Distance(aim.position, h.target.position), 0.15f, 4f);
+                    distance = Mathf.Max(Vector3.Distance(aim.position, h.target.position), 0.15f);
                     Instruction = h.part != null ? "Aim to move " + h.part.name + " · release grip: place"
                         : table != null && h.target == table.Menu ? "Aim to move menu · stick: distance · release grip: place"
                         : h.target == screen.Placement ? "Aim to move screen · stick: distance / size · release grip: place"
@@ -473,14 +474,24 @@ namespace SpatialModeling
                 h.part?.RememberArrangement();
                 if (h.timingSeconds >= 2) LogGrabTiming(h);
             }
-            aim = new Pose(h.stableAim.position, h.stableAim.rotation);
-            h.ray.SetPosition(0, aim.position);
-            // Keep the pointer fixed to the filtered grab contact, rather than
-            // drawing an independently jittering endpoint across the held item.
-            var endpoint = h.target != null ? h.target.TransformPoint(h.localContact)
-                : aim.position + aim.rotation * Vector3.forward * h.pointerDistance;
-            // Controller body uses current same-device aim; the accepted ray/grab
-            // filter remains independent of decorative geometry and held contact.
+            // Refresh visual intersections from this exact before-render sample,
+            // without dispatching a second UI click or advancing a gesture.
+            Physics.SyncTransforms(); // Menu, pair and held transforms may have moved since LateUpdate.
+            var currentRay = new Ray(aim.position, aim.rotation * Vector3.forward);
+            float pointerDistance = h.target != null
+                ? Mathf.Max(.15f, Vector3.Distance(aim.position, h.target.TransformPoint(h.localContact))) : 4f;
+            bool hit = false;
+            void Near(bool found, float d) { if (found && d >= 0 && d <= pointerDistance) { pointerDistance = d; hit = true; } }
+            var pointed = scene.PickObject(currentRay, out float objectDistance);
+            Near(pointed != null, objectDistance);
+            Near(screen.RaycastSurface(currentRay, out float screenDistance), screenDistance);
+            if (scene.Table != null) Near(scene.Table.RaycastControls(currentRay, out float menuDistance), menuDistance);
+            if (arrangement != null) Near(arrangement.Surfaces.RaycastLevel(currentRay, out float levelDistance) != null, levelDistance);
+            if (PreviewInteraction.Current != null) Near(PreviewInteraction.Current.RaycastVisual(currentRay, out float previewDistance), previewDistance);
+            h.pointerDistance = pointerDistance;
+            h.hasHit = hit;
+            h.ray.SetPosition(0, currentRay.origin);
+            var endpoint = currentRay.GetPoint(pointerDistance);
             h.ray.SetPosition(1, endpoint);
             h.tip.position = endpoint;
             h.tip.gameObject.SetActive(h.hasHit || h.target != null);
@@ -505,6 +516,9 @@ namespace SpatialModeling
             hand.rotationAxis=Vector3.up;
             hand.freePlacement=hand.alignRequested=hand.turnLatched=false;
             hand.rayRelative = RelativeRayPose(pose, new Pose(target.position, target.rotation));
+            // Raw hit testing must not inherit the previous frame's filtered aim
+            // at pickup. Start manipulation at the displayed contact with no snap.
+            if (hand.stableAim != null) hand.stableAim.SetPositionAndRotation(pose.position, pose.rotation);
             hand.localContact = target.InverseTransformPoint(contact);
             hand.timingFrames = hand.slowFrames = 0;
             hand.poseControlSwitches = 0;
@@ -606,6 +620,8 @@ namespace SpatialModeling
             Quaternion.Inverse(aim.rotation) * (target.position - aim.position), Quaternion.Inverse(aim.rotation) * target.rotation);
         public static Pose FollowRay(Pose aim, Pose relative, float depth) => new Pose(
             aim.position + aim.rotation * (relative.position + Vector3.forward * depth), aim.rotation * relative.rotation);
+        public static float AdvanceDepth(float depth, float axis, float elapsed) =>
+            Mathf.Abs(axis) > .2f ? depth + axis * elapsed : depth;
         public static Pose FollowPlacementRay(Pose aim,Pose relative,float depth,bool preserveRotation,
             Quaternion placementRotation,Quaternion explicitRotation)
         {

@@ -105,7 +105,22 @@ cannot initiate that scan. On the PC, **Spatial Data over Meta Horizon Link** mu
 be enabled in the Link app's Developer settings. The app does not change this
 privacy setting. Empty results can mean missing scan OR unavailable spatial-data
 access, so never diagnose them as proof of no scan. Reload retries after setup;
-focus/wear transitions also retry, with bounded retries when no surfaces localize.
+focus/wear transitions also retry when no surfaces localize.
+Reload is transactional: a temporary empty Link response cannot clear the current
+saved anchors or their actual geometry. A replacement for an existing room must
+first localize a fresh SDK floor polygon around the worn, focused headset. Partial
+replies retain other still-tracked anchors in that room. Recovery continues at a
+bounded 15–60 second interval, including after the first three attempts.
+
+The app privately retains only saved anchor UUIDs and room membership, so a new
+session can retry those references when component enumeration temporarily returns
+zero. Every recovered anchor still requires fresh SDK localization; the current
+headset must be inside its actual current floor boundary. Saved world coordinates,
+old polygons and old reconstruction meshes are never rendered as a recovery
+fallback. An optional local migration can import UUIDs from a previous single-room
+diagnostic through `CALHACKS_ROOM_RECOVERY_EVIDENCE`; that diagnostic stays private
+and is never packaged or committed. Zero SDK results remain an availability issue,
+not evidence that the user's saved scan was deleted.
 See Meta's [scene-anchor flow](https://developers.meta.com/vr/documentation/unity/unity-scene-ovranchor/)
 and [Link spatial-data permission](https://developers.meta.com/vr/documentation/unity/unity-spatial-data-perm/).
 

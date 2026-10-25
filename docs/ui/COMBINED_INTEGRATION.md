@@ -1,5 +1,33 @@
 # Combined glass integration
 
+## Current wearer-requested corrections
+
+Input controls are a compact, captions-only two-row panel sharing the native
+image's exact cylindrical surface. Undo placement, Recover workspace, Reset view,
+Hide Blender and the BLENDER heading are removed from the surrounding frame;
+Arrange/Settings recovery remains accessible. A nearby position-lock button keeps
+the screen fixed and enables the side-grip native mouse action. The grip-menu
+placement instruction is removed.
+
+Logical UI hits and the visible body/pointer use current device aim. Held-object
+movement alone remains filtered. Late ray queries synchronize moved colliders
+without dispatching another click. Stick depth continues without the old cap.
+
+Quick controls preserve native input ownership. Temporary pointer occlusion
+discards the gesture, resynchronizes the same authoritative window and confirms
+release before new input. Rejected actions are never replayed. VR drawing is a
+separate mode, clearly labelled ON; native preview input yields its reservation.
+
+Voice transcription and Selection popups are separate saved Settings toggles,
+both OFF on first use. Actionable questions, confirmations and errors stay visible.
+The separate larger sample has a 200mm cube and 100mm by 300mm cylinder; original
+engineering fixture and accepted rollback are preserved.
+
+Room reloads stage replacement data and retain valid anchors on empty replies.
+Continued retries and private UUID references request fresh SDK localization;
+old world poses are never replayed. Software checks, actual final room readback
+and physical room fit remain separate evidence gates.
+
 Human requested the completed glass appearance on the current combined P2/P2.5/P3 application, preserving its controls and functionality. Base: f59f7ae7f6b0d59fd485f694c59ee94048174ae5. Appearance source: local 62dc3269e385c7480e0be0471564611bd73ba48d (compiled glass source 06c136a). Branch: codex/talia-combined-glass-ui.
 
 Shared rounded glass panels, action states, typography, accessibility, curved screen/keyboard geometry and matching hit mapping are ported selectively. The native working image remains untinted. The private factory Blender companion theme changes supported widget colors and roundness without saving preferences or altering documents. Current window/dialog navigation, controller/mouse modes, screen lock, pointer choice, full keyboard, drawing, room/plane controls, object selection, native authority/history and release protections are preserved. All twelve preview actions are retained in a centered six-by-two grid; basic keyboard rows use one consistent thirteen-column grid with inset text.

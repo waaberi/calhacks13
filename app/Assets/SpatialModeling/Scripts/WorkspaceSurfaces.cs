@@ -133,11 +133,12 @@ namespace SpatialModeling
         { if (focus && Application.isPlaying && AutomaticEnabled) { attempts = 0; Reload(); } }
         void Update()
         {
-            var headset = InputDevices.GetDeviceAtXRNode(XRNode.Head);
-            headset.TryGetFeatureValue(CommonUsages.userPresence, out bool present);
+            // Link can lose its scene service while the headset remains mounted.
+            // Retry after full VR readiness returns, not only desktop focus/presence.
+            bool present=RoomHeadReady();
             if (present && !wasPresent && AutomaticEnabled) { attempts = 0; Reload(); }
             wasPresent = present;
-            if (present && AutomaticEnabled && detected.Count == 0 && !loading && attempts < 3
+            if (present && AutomaticEnabled && detected.Count == 0 && !loading
                 && Time.realtimeSinceStartup >= retryAt) Reload();
         }
         public void ToggleAutomatic()
@@ -169,9 +170,11 @@ namespace SpatialModeling
             if (loading) { reloadPending = true; return; }
             if (!OVRPlugin.initialized || !OpenXRRuntime.IsExtensionEnabled("XR_FB_scene"))
             { message = "Room data unavailable · use a level"; retryAt = Time.realtimeSinceStartup + 15; attempts++; return; }
-            loading = true; reloadPending = false; attempts++; retryAt = Time.realtimeSinceStartup + 15;
+            loading = true; reloadPending = false; attempts++;
+            retryAt = Time.realtimeSinceStartup + RoomRetryDelay(attempts);
             int version = ++generation;
-            ClearAnchors(); roomCount = 0;
+            // Stage a replacement. Empty queries are a demonstrated Link session
+            // failure, not proof that the user's saved room was deleted.
             var owned = new List<OVRAnchor>();
             var rooms = new List<OVRAnchor>();
             var next = new List<RoomAnchor>();
@@ -196,7 +199,6 @@ namespace SpatialModeling
                     if (!Current()) return;
                     Debug.Log("WORKSPACE_SURFACES compatibility rooms="+rooms.Count+" success="+legacy);
                 }
-                roomCount = rooms.Count;
                 if (rooms.Count == 0)
                 {
                     // Some runtimes expose labelled elements without a RoomLayout root.
@@ -226,9 +228,11 @@ namespace SpatialModeling
                             next.Add(new RoomAnchor { Anchor=anchor,Locatable=locatable });
                     }
                     if (!Current()) return;
-                    anchors.AddRange(next);
-                    ReadScanGeometry();
-                    message = anchors.Count > 0 ? "Saved surfaces loaded" : "No room data received · adjust/add a level";
+                    await RecoverSavedRoomAnchors(next,owned,Current);
+                    if (!Current()) return;
+                    await WaitForRoomReplacement(next,Current);
+                    if (!Current()) return;
+                    ApplyRoomLoad(next,rooms);
                     return;
                 }
                 foreach (var room in rooms)
@@ -299,10 +303,11 @@ namespace SpatialModeling
                 }
                 catch(Exception error) {Debug.LogWarning("WORKSPACE_SCAN optional mesh query unavailable " + error.GetType().Name);}
                 if (!Current()) return;
-                anchors.AddRange(next);
-                foreach(var room in rooms) knownRooms.Add(room.Uuid);
-                ReadScanGeometry();
-                message = anchors.Count == 0 ? "Room found · surfaces unavailable · use a level" : "Saved room loaded";
+                if(next.Count==0) await RecoverSavedRoomAnchors(next,owned,Current);
+                if (!Current()) return;
+                await WaitForRoomReplacement(next,Current);
+                if (!Current()) return;
+                ApplyRoomLoad(next,rooms);
             }
             catch (Exception error)
             {

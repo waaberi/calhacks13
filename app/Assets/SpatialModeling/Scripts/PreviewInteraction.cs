@@ -47,9 +47,9 @@ namespace SpatialModeling
         long awaitedWindow;
         float windowResumeUntil;
         Text numberFeedback, shortcutFeedback;
-        Text feedback, objectTargetText, actionFeedback;
+        Text objectTargetText;
         bool questControls = true, mouseOptionsShown, sideWasDown, stickWasDown, panShift;
-        string heldMouseButton = "left", lastControlAction = "";
+        string heldMouseButton = "left";
         Vector2 panPoint;
         Button pulsedButton;
         float pulseUntil;
@@ -176,7 +176,10 @@ namespace SpatialModeling
                 }
             }
             if (spatialRequested && !endAfterRelease && Drawing != null && !Drawing.IsNativeUiOwned && !Drawing.NativeUiTransitionPending)
-            { spatialRequested = false; modelToolsShown = false; Drawing.SetEnabled(true); }
+            {
+                spatialRequested = false; modelToolsShown = false; Drawing.SetEnabled(true);
+                Notice = "VR drawing ON · choose a native CAD sketch and Line, Circle or Corner Rectangle in Blender";
+            }
             if (objectsRequested && !endAfterRelease && Drawing != null && !Drawing.IsNativeUiOwned && !Drawing.NativeUiTransitionPending)
             {
                 if (Drawing.SetObjectToolsEnabled(true))
@@ -187,10 +190,6 @@ namespace SpatialModeling
             if (inputEnabled && Time.unscaledTime >= nextHeartbeat)
             { nextHeartbeat = Time.unscaledTime + .25f; Enqueue(new JObject { ["type"] = "heartbeat" }); }
             RefreshInputIndicator();
-            if (feedback != null)
-                feedback.text = "Blender input: " + InputMode + (questControls ? " · Quest controls" : " · Mouse mode: " + mouseButton)
-                    + " · " + (PrimaryHand == XRNode.RightHand ? "Right" : "Left") + " pointer\n" + Notice
-                    + "\n" + (Drawing != null ? Drawing.StatusText : "Waiting for spatial bridge");
             if (Notice != lastLoggedNotice)
             { lastLoggedNotice = Notice; Debug.Log("P25_INPUT_NOTICE " + Notice); }
             string gates = "requested=" + (focusRequested || inputEnabled || windowResuming) + " owned=" + NativeInputOwned
@@ -231,6 +230,27 @@ namespace SpatialModeling
             => RoutePointer(hand, ray, trigger, grip, axis, nearest, out distance, false, false);
         public bool RouteControllerHand(XRNode hand, Ray ray, bool trigger, bool grip, Vector2 axis, float nearest, out float distance, bool stick)
             => RoutePointer(hand, ray, trigger, grip, axis, nearest, out distance, true, stick);
+        // The late-render pointer uses the same current ray and curved hit
+        // geometry as input. This query cannot click, release or alter a draft.
+        public bool RaycastVisual(Ray ray, out float distance)
+        {
+            distance = 4f; bool found = false;
+            foreach (var button in buttons)
+                if (button != null && button.gameObject.activeInHierarchy
+                    && Hit(button.GetComponent<RectTransform>(), ray, out float d) && d <= distance)
+                { distance = d; found = true; }
+            foreach (var overlay in new[] { panel, keyboard, modelToolsPanel, shortcutPanel, numberPanel, windowPanel, mouseOptionsPanel })
+                if (overlay != null && overlay.gameObject.activeInHierarchy && Hit(overlay, ray, out float d) && d <= distance)
+                { distance = d; found = true; }
+            if (screen != null && screen.TryPreviewPoint(ray, out _, out float imageDistance) && imageDistance <= distance)
+            { distance = imageDistance; found = true; }
+            if (Drawing != null && Drawing.TryVisualAim(ray, out var drawPoint))
+            {
+                float drawingDistance = Vector3.Distance(ray.origin, drawPoint);
+                if (drawingDistance <= distance) { distance = drawingDistance; found = true; }
+            }
+            return found;
+        }
         bool RoutePointer(XRNode hand, Ray ray, bool trigger, bool grip, Vector2 axis, float nearest, out float distance, bool controller, bool stick)
         {
             distance = 0;
@@ -355,6 +375,8 @@ namespace SpatialModeling
             }
         }
 
+        public void ToggleScreenPositionLock() => ToggleScreenLock();
+
         void ToggleScreenLock()
         {
             ReleaseNative(); screen?.TogglePositionLock();
@@ -394,11 +416,6 @@ namespace SpatialModeling
                 }
                 GlassTheme.State(b,selected);
             }
-            if (actionFeedback != null)
-                actionFeedback.text = lastControlAction + "\n" + (screen != null && screen.PositionLocked ? "Screen LOCKED · front: click · side: right-click · stick: scroll/zoom · hold stick + tilt: pan"
-                    : "Screen UNLOCKED · side grip moves screen; lock it for right-click") + "\n"
-                    + (Drawing != null && (Drawing.EnabledForInput || spatialRequested) && (string)Drawing.NativeState["mode"] != "OBJECT"
-                        ? "Direct VR drawing needs Blender Object Mode; use its top-left mode dropdown" : Notice);
         }
 
         bool NativeInputOwned => scene != null && scene.IsCurrent && Drawing != null && (Drawing.IsNativeUiOwned
@@ -415,6 +432,7 @@ namespace SpatialModeling
             && !string.IsNullOrEmpty(screen.DisplayedCaptureGeometry)
             && screen.DisplayedCaptureGeometry == (string)state["capture_geometry"];
         string InputMode => endAfterRelease ? "Releasing" : lastInputFailure.Length != 0 ? "Blocked"
+            : spatialRequested ? "Drawing pending" : Drawing != null && Drawing.EnabledForInput ? "Drawing"
             : inputEnabled && Ready() ? "On" : inputEnabled || focusRequested || windowResuming ? "Enabling" : "Off";
         void RefreshInputIndicator()
         {
@@ -422,6 +440,7 @@ namespace SpatialModeling
             string mode = InputMode;
             focusButton.GetComponentInChildren<Text>().text = mode == "On" ? "Input ON · turn off"
                 : mode == "Off" ? "Input OFF · enable" : mode == "Blocked" ? "Input blocked · retry"
+                : mode == "Drawing" ? "VR drawing ON" : mode == "Drawing pending" ? "Starting VR drawing…"
                 : mode == "Releasing" ? "Releasing input…" : "Enabling… · cancel";
             focusButton.interactable = !endAfterRelease;
             GlassTheme.State(focusButton,mode=="On",mode=="Blocked");
@@ -463,6 +482,7 @@ namespace SpatialModeling
             mouseOptionsShown = false;
             if (Drawing.NativeModalActive)
             { Notice = "Finish the native operation with Enter or Escape before switching to VR drawing"; return; }
+            lastInputFailure = "";
             objectsRequested = modelToolsShown = false;
             numbersShown = shortcutsShown = windowsShown = editorPointSet = false; Drawing.Numeric.Invalidate();
             Drawing.SetObjectToolsEnabled(false);
@@ -470,6 +490,7 @@ namespace SpatialModeling
             ReleaseNative(); inputEnabled = focusRequested = false;
             if (needsRelease) RequestEndNativeUi();
             spatialRequested = true;
+            Notice = "Starting VR drawing after Blender input is released";
         }
         void BeginObjects()
         {
@@ -683,7 +704,7 @@ namespace SpatialModeling
             else transport.Unknown();
             if ((bool?)fresh["enabled"] != true) Notice = "Start this feature's helper with --enable-input";
             else if (lastInputFailure.Length != 0) { ReleaseNative(); Notice = lastInputFailure; }
-            else if (!Ready())
+            else if (!Ready() && !spatialRequested && (Drawing == null || !Drawing.EnabledForInput))
             {
                 ReleaseNative();
                 string why = (string)fresh["reason"];
@@ -737,6 +758,13 @@ namespace SpatialModeling
                             AwaitInputState("Input helper busy; discarding gesture and confirming cleanup", true);
                         else if (kind == "focus" && rejection == "foreground_activation_denied")
                             FailTransport("Windows did not activate Blender. Bring the test Blender window forward, then use Focus Blender. No click was sent.");
+                        else if (request.responseCode == 409 && rejection == "selected_window_occluded_at_pointer"
+                            && !endAfterRelease && NativeInputOwned && windowAuthority.ProcessId > 0)
+                            // Occlusion does not change the helper/window session.
+                            // Discard this gesture and confirm cleanup on the next
+                            // authoritative state; waiting for a new session would
+                            // time out and turn otherwise-enabled input off.
+                            AwaitInputState("Pointer was covered; action discarded while Blender input resynchronizes", true);
                         else if (request.responseCode == 409 && !endAfterRelease && NativeInputOwned && windowAuthority.ProcessId > 0)
                             AwaitWindowState("Blender window changed; waiting for fresh state. The action was not retried.");
                         else FailTransport("Input stopped: " + request.responseCode + ". Refresh/focus; the action was not retried.");
@@ -789,7 +817,7 @@ namespace SpatialModeling
 
         void BuildControls()
         {
-            panel = MakePanel("P2.5 controls", new Vector2(0, -1020), new Vector2(1840, 430));
+            panel = MakePanel("P2.5 controls", new Vector2(0, -760), new Vector2(1840, 176));
             focusButton = AddButton(panel, "Focus Blender", 0, 0, ToggleNativeUi);
             RefreshInputIndicator();
             AddButton(panel, "Disable input", 1, 0, Suspend);
@@ -808,8 +836,6 @@ namespace SpatialModeling
             AddButton(panel, "Full keyboard", 3, 1, () => OpenKeyboard(true));
             AddButton(panel, "Windows / dialogs", 4, 1, OpenWindows);
             AddButton(panel, "Next window", 5, 1, NextWindow);
-            feedback = MakeText(panel, new Vector2(0, -62), new Vector2(1780, 100), "", 25);
-            actionFeedback = MakeText(panel, new Vector2(0, -158), new Vector2(1780, 80), "", 22);
             mouseOptionsPanel = MakePanel("Optional mouse modes", new Vector2(0, -200), new Vector2(1840, 320));
             AddButton(mouseOptionsPanel, "Mouse left", 0, 0, () => { ReleaseNative(); questControls = false; mouseButton = "left"; });
             AddButton(mouseOptionsPanel, "Mouse right", 1, 0, () => { ReleaseNative(); questControls = false; mouseButton = "right"; });
@@ -858,6 +884,9 @@ namespace SpatialModeling
             // Historical palette builders remain for backend regression evidence,
             // but have no production entry point or constructed controls.
             BuildWindowControls();
+            // Controls are built after the screen's initial curve pass. Keep every
+            // new panel, label and hit contour on that same cylinder.
+            screen.Placement.GetComponent<GlassCurvedCanvas>()?.ApplyToChildren();
         }
 
         void BuildModelTools()
@@ -1055,13 +1084,13 @@ namespace SpatialModeling
             var rect = go.GetComponent<RectTransform>(); rect.SetParent(parent, false);
             rect.sizeDelta = new Vector2(width - 8, 64);
             int layoutColumns=parent==panel?6:columns;
+            if (parent == panel) { width = 300; rect.sizeDelta = new Vector2(width - 8, 64); }
             rect.anchoredPosition = new Vector2((col - (layoutColumns - 1) * .5f) * width, parent.rect.height * .5f - 48 - row * 72);
             go.GetComponent<Image>().color = Color.white;
             var button = go.GetComponent<Button>(); button.onClick.AddListener(() =>
             {
                 pulsedButton = button; pulseUntil = Time.unscaledTime + .35f;
                 if(button!=null)button.GetComponent<GlassControl>()?.Press();
-                lastControlAction = "Pressed: " + label;
                 Debug.Log("P25_CONTROL_ACTION " + (parent == keyboard ? "Keyboard key" : label));
                 action(); RefreshControlFeedback();
             }); buttons.Add(button);

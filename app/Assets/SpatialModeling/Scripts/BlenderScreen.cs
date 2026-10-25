@@ -42,8 +42,8 @@ namespace SpatialModeling
 
         GameObject canvasObject, body;
         RawImage image;
-        Text status, buttonText, hint, magnifyText, modeText, roomText;
-        Button toggleButton, magnifyButton, modeButton, resetButton, roomButton, pointedButton;
+        Text status, magnifyText, modeText, roomText, lockText;
+        Button magnifyButton, modeButton, roomButton, lockButton, pointedButton;
         Button[] buttons;
         WorkspaceArrangement arrangement;
         Text assistText;
@@ -192,19 +192,16 @@ namespace SpatialModeling
                 Unavailable("Capture stalled — waiting for a fresh Blender frame");
             status.text = hostNotice.Length > 0 ? hostNotice : HasImage ? "Blender connected · Live view" : CaptureState;
             status.color = HasImage && hostNotice.Length == 0 ? Color.white : new Color(1f, 0.7f, 0.25f);
-            buttonText.text = Visible ? "Hide Blender" : "Show Blender";
             magnifyText.text = $"Magnify: {Magnification:0.#}×";
             modeText.text = interaction != null && interaction.MoveIndividualParts ? "Arrange: one part" : "Arrange: whole build";
+            lockText.text = PositionLocked ? "Screen position LOCKED" : "Lock screen position";
+            GlassTheme.State(lockButton, PositionLocked);
             if(assistText!=null) assistText.text=arrangement!=null && arrangement.AssistEnabled ? "Surface help: on" : "Surface help: off";
             roomButton.interactable = passthrough != null && passthrough.Supported;
             roomText.text = passthrough != null && passthrough.Supported
                 ? passthrough.Active ? "Room view: on" : "Room view: off" : "Room view: unavailable";
             if (passthrough != null && !passthrough.Active && hostNotice.Length == 0 && HasImage)
                 status.text += " · " + passthrough.State;
-            hint.text = hostNotice.Length > 0 && !Visible ? hostNotice
-                : interactionNotice.Length > 0 ? interactionNotice
-                : "A / X: show–hide · B / Y: recenter · Grip: move screen or build";
-            hint.color = hostNotice.Length > 0 && !Visible ? new Color(1f, 0.7f, 0.25f) : Color.white;
             if (!smokeStarted && Array.IndexOf(Environment.GetCommandLineArgs(), "--p1-smoke") >= 0)
             {
                 smokeStarted = true;
@@ -340,7 +337,6 @@ namespace SpatialModeling
             var background = body.AddComponent<RoundedGlassImage>();
             GlassTheme.StylePanel(background);
             background.raycastTarget = false;
-            Label("Title", body.transform, new Vector2(0, 580), new Vector2(1800, 60), "BLENDER", 32);
             var well=GlassTheme.Panel(body.transform,"Rounded native viewport well",Vector2.zero,new Vector2(ScreenWidth+24,ScreenHeight+24));
             well.GetComponent<RoundedGlassImage>().Radius=12;well.GetComponent<Image>().color=new Color(.012f,.015f,.022f,1);
             var mask=well.gameObject.AddComponent<Mask>();mask.showMaskGraphic=true;
@@ -349,50 +345,46 @@ namespace SpatialModeling
             image.raycastTarget = false;
             image.enabled = false;
             status = Label("Capture state", body.transform, new Vector2(0, -585), new Vector2(1800, 65), CaptureState, 32);
-            var control = Rect("Show hide button", canvasObject.transform, new Vector2(-670, -610), new Vector2(420, 80));
-            control.AddComponent<RoundedGlassImage>();
-            toggleButton = control.AddComponent<Button>();
-            toggleButton.onClick.AddListener(Toggle);
-            buttonText = Label("Label", control.transform, Vector2.zero, new Vector2(400, 65), "Hide Blender", 32);
-            var zoomControl = Rect("Magnify button", canvasObject.transform, new Vector2(-230, -610), new Vector2(420, 80));
+            var zoomControl = Rect("Magnify button", canvasObject.transform, new Vector2(-740, -610), new Vector2(360, 80));
             zoomControl.AddComponent<RoundedGlassImage>();
             magnifyButton = zoomControl.AddComponent<Button>();
             magnifyButton.onClick.AddListener(CycleMagnification);
-            magnifyText = Label("Label", zoomControl.transform, Vector2.zero, new Vector2(400, 65), "Magnify: 1×", 32);
-            var modeControl = Rect("Arrangement mode", canvasObject.transform, new Vector2(330, -610), new Vector2(600, 80));
+            magnifyText = Label("Label", zoomControl.transform, Vector2.zero, new Vector2(336, 65), "Magnify: 1×", 30);
+            var modeControl = Rect("Arrangement mode", canvasObject.transform, new Vector2(-280, -610), new Vector2(520, 80));
             modeControl.AddComponent<RoundedGlassImage>();
             modeButton = modeControl.AddComponent<Button>();
             modeButton.onClick.AddListener(() => interaction?.TogglePartMode());
-            modeText = Label("Label", modeControl.transform, Vector2.zero, new Vector2(580, 65), "Arrange: whole build", 30);
-            var resetControl = Rect("Reset arrangement", canvasObject.transform, new Vector2(780, -610), new Vector2(280, 80));
-            resetControl.AddComponent<RoundedGlassImage>();
-            resetButton = resetControl.AddComponent<Button>();
-            resetButton.onClick.AddListener(() => interaction?.ResetArrangement());
-            Label("Label", resetControl.transform, Vector2.zero, new Vector2(260, 65), "Reset view", 30);
-            var roomControl = Rect("Room view", canvasObject.transform, new Vector2(640, -730), new Vector2(560, 80));
+            modeText = Label("Label", modeControl.transform, Vector2.zero, new Vector2(496, 65), "Arrange: whole build", 30);
+            var lockControl = Rect("Lock Blender screen position", canvasObject.transform, new Vector2(220, -610), new Vector2(440, 80));
+            lockControl.AddComponent<RoundedGlassImage>();
+            lockButton = lockControl.AddComponent<Button>();
+            lockButton.onClick.AddListener(() =>
+            {
+                if (PreviewInteraction.Current != null) PreviewInteraction.Current.ToggleScreenPositionLock();
+                else TogglePositionLock();
+            });
+            lockText = Label("Label", lockControl.transform, Vector2.zero, new Vector2(416, 65), "Lock screen position", 28);
+            var roomControl = Rect("Room view", canvasObject.transform, new Vector2(680, -610), new Vector2(440, 80));
             roomControl.AddComponent<RoundedGlassImage>();
             roomButton = roomControl.AddComponent<Button>();
             roomButton.onClick.AddListener(() => passthrough?.Toggle());
-            roomText = Label("Label", roomControl.transform, Vector2.zero, new Vector2(540, 65), "Room view: checking", 30);
-            hint = Label("Controls", canvasObject.transform, new Vector2(-300, -735), new Vector2(1200, 120), "", 28);
+            roomText = Label("Label", roomControl.transform, Vector2.zero, new Vector2(416, 65), "Room view: checking", 28);
             if(arrangement==null) arrangement=FindFirstObjectByType<WorkspaceArrangement>();
             Button FrameAction(string name,float x,string label,Action action,bool enabled=true)
             {
-                var item=Rect(name,canvasObject.transform,new Vector2(x,735),new Vector2(350,80));
+                var item=Rect(name,canvasObject.transform,new Vector2(x,735),new Vector2(560,80));
                 item.AddComponent<RoundedGlassImage>();
                 var button=item.AddComponent<Button>(); button.interactable=enabled;
                 button.onClick.AddListener(()=>action?.Invoke());
-                Label("Label",item.transform,Vector2.zero,new Vector2(330,70),label,28);
+                Label("Label",item.transform,Vector2.zero,new Vector2(536,70),label,28);
                 return button;
             }
-            var arrangeButton=FrameAction("Arrange space mode",-720,"Arrange space ✓",()=>arrangement?.SelectArrange());
-            var editButton=FrameAction("Edit model mode",-360,"Edit model · coming soon",null,false);
-            var assistButton=FrameAction("Surface assistance",0,"Surface help: on",()=>arrangement?.ToggleAssist());
+            var arrangeButton=FrameAction("Arrange space mode",-600,"Arrange space ✓",()=>arrangement?.SelectArrange());
+            var editButton=FrameAction("Edit model mode",0,"Edit model · coming soon",null,false);
+            var assistButton=FrameAction("Surface assistance",600,"Surface help: on",()=>arrangement?.ToggleAssist());
             assistText=assistButton.GetComponentInChildren<Text>();
-            var undoButton=FrameAction("Undo workspace placement",360,"Undo placement",()=>arrangement?.UndoPlacement());
-            var recoverButton=FrameAction("Recover workspace",720,"Recover workspace",()=>arrangement?.Recover());
-            buttons = new[] { toggleButton, magnifyButton, modeButton, resetButton, roomButton,
-                arrangeButton,editButton,assistButton,undoButton,recoverButton };
+            buttons = new[] { magnifyButton, modeButton, lockButton, roomButton,
+                arrangeButton,editButton,assistButton };
             foreach (var button in buttons) GlassTheme.StyleAction(button.gameObject);
             GlassTheme.State(arrangeButton,true);
             editButton.GetComponentInChildren<Text>().color=new Color(.55f,.55f,.55f,1);

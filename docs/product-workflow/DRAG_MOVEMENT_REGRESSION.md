@@ -1,5 +1,23 @@
 # Far-ray dragging: failures, current fix and regression gates
 
+## Current pointer/depth correction, 2026-10-25
+
+The wearer explicitly rejected pointer lag behind the tracked cylinders. UI hit
+testing and the visible ray now use the current same-device aim sample; the body,
+ray origin/direction and tip use that exact before-render sample. Read-only late
+intersections update the visual without dispatching another click or advancing a
+gesture. The existing Unity stabilization remains only on the held object's pose,
+with its aim-based position and preserved model orientation. Pickup initializes
+that independent filter at the current hit pose to avoid a jump. This supersedes
+the older statement below that hover and visual rays must be stabilized.
+
+Holding the depth stick integrates continuously in either direction without the
+old -0.5..2 metre offset cap. Dead zone and explicit surface-contact behavior
+remain. Production routing tests cover already extended positive/negative holds,
+and extended integration verifies continued movement without release/reselect.
+Both concrete pose formats, both hands, recenter and loss-release are exercised;
+the new physical behavior still needs confirmation on the replacement binary.
+
 ## Required behavior
 
 Grip selects the live screen or model at a distance. While held, changing controller aim must move the item through the environment, as with a desktop panel in Meta Link. Physical hand translation and stick depth/size also remain available. Release leaves the item where shown. The same behavior applies to the screen, whole build and individual parts without editing native Blender objects.

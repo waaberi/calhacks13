@@ -46,6 +46,8 @@ public static class GlassStabilityChecks
             typeof(PreviewInteraction).GetField("screen",Private).SetValue(preview,screen);typeof(PreviewInteraction).GetMethod("BuildControls",Private).Invoke(preview,null);
             var panel=(RectTransform)typeof(PreviewInteraction).GetField("panel",Private).GetValue(preview);
             var actions=panel.GetComponentsInChildren<Button>();Check(actions.Length==12,"all twelve production preview controls retained");
+            Check(panel.rect.height==176,"input controls fit a compact two-row surface without a lower prose area");
+            Check(panel.GetComponentsInChildren<Text>().Length==actions.Length,"input panel contains button captions only, with no status/instruction writing underneath");
             var rows=actions.GroupBy(b=>b.GetComponent<RectTransform>().anchoredPosition.y).OrderByDescending(g=>g.Key).ToArray();
             Check(rows.Length==2&&rows.All(g=>g.Count()==6),"complete action grid is balanced six by two");
             var columns=rows[0].Select(b=>b.GetComponent<RectTransform>().anchoredPosition.x).OrderBy(x=>x).ToArray();
@@ -55,6 +57,29 @@ public static class GlassStabilityChecks
                 var rect=b.GetComponent<RectTransform>();Check(panel.rect.Contains(rect.anchoredPosition+rect.rect.min)&&panel.rect.Contains(rect.anchoredPosition+rect.rect.max),"button remains inside its panel: "+b.name);
                 Check(b.GetComponentInChildren<Text>().rectTransform.rect.width<=rect.rect.width-24,"control text has safe horizontal inset: "+b.name);
             }
+            var curve=screen.Placement.GetComponent<GlassCurvedCanvas>();
+            Check(curve!=null&&panel.GetComponentInParent<GlassCurvedCanvas>()==curve,"native view and its controls share one cylinder instance");
+            foreach(var graphic in panel.GetComponentsInChildren<Graphic>())
+                Check(graphic.GetComponent<GlassCurveMesh>()!=null&&graphic.GetComponentInParent<GlassCurvedCanvas>()==curve,"every panel background, button and caption follows the screen cylinder: "+graphic.name);
+            foreach(var b in actions)
+            {
+                var flat=curve.transform.InverseTransformPoint(b.transform.position);
+                var bent=curve.transform.TransformPoint(curve.Bend(flat));
+                var ray=new Ray(bent-screen.Placement.forward*.4f,screen.Placement.forward);
+                Check(GlassRaycast.Hit(b.GetComponent<RectTransform>(),ray,out _,out var hit)
+                    && Vector2.Distance(hit,Vector2.zero)<.02f,"curved button geometry and controller hit contour agree at each column: "+b.name);
+            }
+            var frame=screen.Placement.GetComponentsInChildren<Button>().Where(b=>b.transform.parent==screen.Placement).ToArray();
+            foreach(var removed in new[]{"Show hide button","Reset arrangement","Undo workspace placement","Recover workspace"})
+                Check(!frame.Any(b=>b.name==removed),"requested obsolete frame action is absent: "+removed);
+            Check(!screen.Placement.GetComponentsInChildren<Text>().Any(t=>t.text=="BLENDER"),"native view has no extra BLENDER title");
+            var lockButton=frame.Single(b=>b.name=="Lock Blender screen position");
+            var lockFlat=curve.transform.InverseTransformPoint(lockButton.transform.position);
+            var lockBent=curve.transform.TransformPoint(curve.Bend(lockFlat));
+            var position=screen.Placement.position;var rotation=screen.Placement.rotation;
+            Check(screen.HoverController(new Ray(lockBent-screen.Placement.forward*.4f,screen.Placement.forward),true)
+                &&screen.PositionLocked&&screen.Placement.position==position&&screen.Placement.rotation==rotation,
+                "near-view lock dispatches through the actual curved controller route without moving the screen");
             var keyboard=(RectTransform)typeof(PreviewInteraction).GetField("keyboard",Private).GetValue(preview);keyboard.gameObject.SetActive(true);
             foreach(var b in keyboard.GetComponentsInChildren<Button>())
             {
@@ -70,7 +95,7 @@ public static class GlassStabilityChecks
             Check(keyboard.GetComponent<Image>().color.a>=.94f,"typing surface prevents native UI text bleed-through while retaining the glass contour");
         }
         finally{foreach(var go in Resources.FindObjectsOfTypeAll<GameObject>())if(go!=null&&!existing.Contains(go)&&!EditorUtility.IsPersistent(go))UnityEngine.Object.DestroyImmediate(go);}
-        Debug.Log("GLASS_GRID_CHECK PASS actual_twelve_controls six_by_two aligned_rows uniform_thirteen_column_keyboard retained_actions inset_text panel_bounds");
+        Debug.Log("GLASS_GRID_CHECK PASS actual_twelve_controls compact_six_by_two captions_only exact_shared_curve contour_hit_agreement near_view_lock removed_requested_frame_actions uniform_thirteen_column_keyboard inset_text panel_bounds");
     }
     static void Stereo()
     {

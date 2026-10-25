@@ -35,7 +35,7 @@ namespace SpatialModeling
         float nextQuery, stateAt = float.NegativeInfinity, pendingAt;
         string pendingSpatialContext = "", draftContext = "";
         bool spatialRequestPending;
-        string status = "P2.5 spatial drawing disabled", draftSketch = "", beginId, endId;
+        string status = "VR drawing is off · choose Draw in VR to start", draftSketch = "", beginId, endId;
         long draftGeneration;
         Vector2? first;
         Ray lastRay;
@@ -100,7 +100,7 @@ namespace SpatialModeling
             Cancel();
             if (!value) target.Reset();
             if (value) { EndNativeUi(); nextQuery = 0; status = "Select a native sketch and Line, Circle or Corner Rectangle tool"; }
-            else status = "P2.5 spatial drawing disabled";
+            else status = "VR drawing is off · Blender preview controls remain available";
         }
 
         public void BeginNativeUi()
@@ -308,26 +308,44 @@ namespace SpatialModeling
 
         bool CanDraw()
         {
+            bool allowed = CanDrawOnSketch(ActiveSketch, out string reason);
+            if (!allowed && reason.Length != 0) status = reason;
+            return allowed;
+        }
+        // Visual queries run again immediately before rendering. They must not
+        // update target selection, tool status, lastRay or the local draft.
+        JObject VisualSketch
+        {
+            get
+            {
+                if (target.MissingExplicitTarget) return null;
+                string id = target.ExplicitId.Length != 0 ? target.ExplicitId : (string)NativeState["sketch_id"];
+                return !string.IsNullOrEmpty(id) && Session.Sketches.TryGetValue(id, out var sketch) ? sketch : null;
+            }
+        }
+        bool CanDrawOnSketch(JObject sketch, out string reason)
+        {
+            reason = "";
             if (!EnabledForInput || scene == null || !scene.IsCurrent || !scene.DisplayPlacementReady || !Session.Ready || !Session.CanEdit || Session.Busy || Session.OutcomeUnknown)
                 return false;
             if (!NativeStateCurrent || (bool?)NativeState["available"] != true || (string)NativeState["mode"] != "OBJECT")
-            { status = "Wait for fresh native CAD tool state in Object Mode"; return false; }
+            { reason = "Wait for fresh native CAD tool state in Object Mode"; return false; }
             if (NativeModalActive || (bool?)NativeState["ui_ending"] == true || NativeState["ui_owner"] is JObject)
-            { status = "End native preview input and confirm/cancel its active tool first"; return false; }
-            if (!string.IsNullOrEmpty((string)NativeState["reason"])) { status = (string)NativeState["reason"]; return false; }
+            { reason = "End native preview input and confirm/cancel its active tool first"; return false; }
+            if (!string.IsNullOrEmpty((string)NativeState["reason"])) { reason = (string)NativeState["reason"]; return false; }
             if (NativeState["unsupported_options"] is JArray options && options.Count > 0)
-            { status = "Spatial drawing needs these native options off: " + string.Join(", ", options.ToObject<string[]>()); return false; }
-            if (ActiveSketch == null)
+            { reason = "Spatial drawing needs these native options off: " + string.Join(", ", options.ToObject<string[]>()); return false; }
+            if (sketch == null)
             {
-                status = "Select or create a supported native planar sketch";
+                reason = "Select or create a supported native planar sketch";
                 if (NativeState["unsupported_sketches"] is JArray problems)
                     foreach (JObject problem in problems)
                         if ((string)problem["id"] == (string)NativeState["sketch_id"])
-                            status = "Native sketch unavailable to spatial tools: " + (string)problem["reason"];
+                            reason = "Native sketch unavailable to spatial tools: " + (string)problem["reason"];
                 return false;
             }
             if (Tool != "line" && Tool != "circle" && Tool != "rectangle" && Tool != "select")
-            { status = "This native tool works in the preview; direct spatial input currently supports Line, Circle and Corner Rectangle"; return false; }
+            { reason = "This native tool works in the preview; direct spatial input currently supports Line, Circle and Corner Rectangle"; return false; }
             return true;
         }
 
@@ -341,10 +359,17 @@ namespace SpatialModeling
             return true;
         }
         bool Map(Ray ray, out Vector2 point, out Vector3 hit)
+            => MapOnSketch(ray, ActiveSketch, out point, out hit);
+        bool MapOnSketch(Ray ray, JObject sketch, out Vector2 point, out Vector3 hit)
         {
             point = default; hit = default;
-            return Frame(ActiveSketch, out var origin, out var rotation)
+            return Frame(sketch, out var origin, out var rotation)
                 && PreviewSketchMapping.TryMapRay(ray, scene.Placement.localToWorldMatrix, origin, rotation, out point, out hit);
+        }
+        public bool TryVisualAim(Ray ray, out Vector3 hit)
+        {
+            hit = default; var sketch = VisualSketch;
+            return CanDrawOnSketch(sketch, out _) && MapOnSketch(ray, sketch, out _, out hit);
         }
         public bool TryAim(Ray ray, out Vector3 hit)
         {

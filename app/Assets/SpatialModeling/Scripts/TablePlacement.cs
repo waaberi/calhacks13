@@ -242,7 +242,7 @@ namespace SpatialModeling
             var connection = GetComponent<HostScene>();
             var arrangement=GetComponent<WorkspaceArrangement>() ?? FindFirstObjectByType<WorkspaceArrangement>();
             title.text = arrangement!=null ? MenuHeading(arrangement) : $"{(IsPlaced ? "Inspect table" : State == PlacementState.ConfirmTrackingReset ? "Tracking reset — confirm placement" : "Choose table position")}" +
-                $" · {(MenuDocked ? "left hand" : "in space")}\nGrip menu, move, release to place" +
+                $" · {(MenuDocked ? "left hand" : "in space")}" +
                 $"\nHeight {Height:F2} m · {ScaleLabel} · {connection.ConnectionText}";
             var keyboard = Keyboard.current;
             if (keyboard != null && !PreviewInteraction.BlocksDesktopShortcuts)
@@ -389,6 +389,11 @@ namespace SpatialModeling
                     if(adapter!=null)adapter.SetShowTranscription(!adapter.ShowTranscription);
                     RefreshMenu();
                 }),
+                ("Selection popups: " + ((GetComponent<VoiceUiAdapter>() ?? FindFirstObjectByType<VoiceUiAdapter>())?.SelectionPopups == true ? "ON" : "OFF"),()=>{
+                    var adapter=GetComponent<VoiceUiAdapter>() ?? FindFirstObjectByType<VoiceUiAdapter>();
+                    if(adapter!=null)adapter.SetSelectionPopups(!adapter.SelectionPopups);
+                    RefreshMenu();
+                }),
                 ("Back to arrange",()=>ChangeMenu(MenuPage.Arrange))
             };
             if(compact && menuPage==MenuPage.Appearance) actions=new (string,Action)[] {
@@ -436,7 +441,7 @@ namespace SpatialModeling
                 var gear=new GameObject("Settings",typeof(RectTransform),typeof(CanvasRenderer),typeof(SettingsGearGraphic),typeof(BoxCollider),typeof(TableAction));
                 gear.transform.SetParent(panel,false);
                 var rect=gear.GetComponent<RectTransform>();
-                rect.anchoredPosition=new Vector2(265,-240); rect.sizeDelta=new Vector2(64,64);
+                rect.anchoredPosition=new Vector2(265,menuPage==MenuPage.Settings?-256:-240); rect.sizeDelta=new Vector2(64,64);
                 gear.GetComponent<SettingsGearGraphic>().color=new Color(.85f,.94f,1);
                 gear.GetComponent<SettingsGearGraphic>().raycastTarget=false;
                 gear.GetComponent<BoxCollider>().size=new Vector3(64,64,8);
@@ -459,7 +464,7 @@ namespace SpatialModeling
                 " · auto surfaces: "+(arrangement.Surfaces.AutomaticEnabled?"on":"off")+
                 "\nSurface help: "+(arrangement.AssistEnabled?"on":"off")+"\n"+ScaleLabel;
             if(menuPage==MenuPage.Planes) return "Horizontal / vertical planes\n"+(string.IsNullOrEmpty(planeNotice)?"Manual corrections stay independent":planeNotice)+"\nPage "+(planePage+1)+" · "+arrangement.Surfaces.PlaneTargets.Count+" planes";
-            return $"Arrange space · {(MenuDocked ? "left hand" : "in space")}\n{arrangement.SurfaceState}\n{ScaleLabel}\nGrip menu to place it";
+            return $"Arrange space · {(MenuDocked ? "left hand" : "in space")}\n{arrangement.SurfaceState}\n{ScaleLabel}";
         }
 
         (string,Action)[] PlaneActions(WorkspaceSurfaces surfaces)

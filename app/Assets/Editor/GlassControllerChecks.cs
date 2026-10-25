@@ -21,7 +21,22 @@ public static class GlassControllerChecks
         InputSystem.RegisterLayout<UnityEngine.XR.OpenXR.Input.PoseControl>("GlassLegacyPose");
         try{foreach(string format in new[]{"Current","Legacy"})Format(format);}
         finally{InputSystem.RemoveLayout("GlassCurrentPose");InputSystem.RemoveLayout("GlassLegacyPose");}
-        Debug.Log("P3_GLASS_RENDER_AIM_CHECK PASS actual_BeforeRender RenderHand raw_device_body independent_accepted_ray hands=2 formats=2 rapid_samples=480 loss_release recenter no_visual_filter held_contact_decoupled");
+        Depth();
+        Debug.Log("P3_GLASS_RENDER_AIM_CHECK PASS actual_BeforeRender RenderHand same_sample_body_pointer hands=2 formats=2 rapid_samples=480 loss_release recenter object_filter_independent unlimited_depth");
+    }
+    static void Depth()
+    {
+        float depth=0;
+        var aim=new UnityEngine.Pose(new Vector3(.1f,1,-.2f),Quaternion.Euler(0,71,0));
+        var relative=new UnityEngine.Pose(new Vector3(0,0,1),Quaternion.identity);
+        for(int i=0;i<1800;i++)depth=WorkspaceInteraction.AdvanceDepth(depth,1,1f/90);
+        var far=WorkspaceInteraction.FollowRay(aim,relative,depth);
+        Check(depth>19.9f&&Vector3.Distance(aim.position,far.position)>20.9f,"held stick keeps moving beyond old two metre limit without reselect");
+        float before=depth;depth=WorkspaceInteraction.AdvanceDepth(depth,1,1f/90);
+        Check(depth>before,"outward motion continues after extended hold");
+        for(int i=0;i<3600;i++)depth=WorkspaceInteraction.AdvanceDepth(depth,-1,1f/90);
+        Check(depth< -19.9f,"inward motion is not capped at the old minus half metre limit");
+        before=depth;Check(WorkspaceInteraction.AdvanceDepth(depth,.19f,1)==before,"dead zone still avoids accidental motion");
     }
     static void Format(string format)
     {
@@ -31,7 +46,7 @@ public static class GlassControllerChecks
         var owner=new GameObject("inactive real render fixture");owner.SetActive(false);
         var origin=new GameObject("translated rotated render origin");origin.transform.SetPositionAndRotation(new Vector3(1,.2f,-2),Quaternion.Euler(0,123,0));
         var camera=new GameObject("render fixture main camera",typeof(Camera));camera.tag="MainCamera";camera.transform.SetParent(origin.transform,false);
-        object left=null,right=null;Material material=null;
+        object left=null,right=null;Material material=null;GameObject movingCollider=null;
         var previous=PreviewInteraction.Current;
         typeof(PreviewInteraction).GetProperty("Current").GetSetMethod(true).Invoke(null,new object[]{null});
         try
@@ -69,20 +84,43 @@ public static class GlassControllerChecks
                     var gripControl=hand==left?a["devicePose"]:b["devicePose"];Check(WorkspaceInteraction.TryReadControllerPose(gripControl,out var gripLocal),"paired grip readable");
                     var gripWorld=WorkspaceInteraction.ToWorldPose(origin.transform,gripLocal);
                     Check(Vector3.Distance(visual.transform.position,gripWorld.position)<.000001f,"accepted grip-root tracking preserved");
-                    Check(Vector3.Distance(ray.GetPosition(0),stable.position)<.000001f,"accepted pointer filter is independent of decorative body");
+                    Check(Vector3.Distance(ray.GetPosition(0),expected.position)<.000001f,"pointer origin and cylinder share exact current sample");
+                    Check(Vector3.Angle(ray.GetPosition(1)-ray.GetPosition(0),expected.rotation*Vector3.forward)<.03f,"pointer direction follows current cylinder without stable-ray latency");
+                    Check(Vector3.Distance(((Transform)Get(hand,"tip")).position,ray.GetPosition(1))<.000001f,"tip shares current ray endpoint");
 
                 }
             }
             var contactTarget=new GameObject("held contact must not steer body");contactTarget.transform.SetParent(owner.transform,false);
             contactTarget.transform.SetPositionAndRotation(new Vector3(2,.5f,1),Quaternion.Euler(35,71,20));
             left.GetType().GetField("target").SetValue(left,contactTarget.transform);left.GetType().GetField("localContact").SetValue(left,new Vector3(.2f,.1f,.3f));Set(interaction,"pairTarget",contactTarget.transform);
+            var route=typeof(WorkspaceInteraction).GetMethod("RouteHand",Private);
+            foreach(float depth in new[]{9f,-9f})
+            {
+                left.GetType().GetField("depth").SetValue(left,depth);
+                route.Invoke(interaction,new object[]{left,right,new UnityEngine.Pose(Vector3.zero,Quaternion.identity),new Ray(Vector3.zero,Vector3.forward),true,false,false,false,new Vector2(0,Mathf.Sign(depth)),false});
+                Check(Mathf.Abs((float)Get(left,"depth"))>=9,"production held routing does not cap accumulated positive or negative depth");
+                Check(Get(left,"target")==contactTarget.transform,"extended stick motion never requires reselecting held object");
+            }
             typeof(WorkspaceInteraction).GetMethod("RenderHand",Private).Invoke(interaction,new object[]{left,Time.realtimeSinceStartupAsDouble});
             Check(WorkspaceInteraction.TryReadControllerPose(a["pointer"],out var heldLocal),"held device aim readable");
             var heldAim=WorkspaceInteraction.ToWorldPose(origin.transform,heldLocal);var heldBody=(Transform)Get(left,"body");
             Check(Vector3.Distance(heldBody.position,heldAim.position)<.000001f&&Quaternion.Angle(heldBody.rotation,heldAim.rotation)<.03f,"held contact cannot pull or turn the physical controller body");
-            var heldRay=(LineRenderer)Get(left,"ray");Check(Vector3.Distance(heldRay.GetPosition(1),contactTarget.transform.TransformPoint(new Vector3(.2f,.1f,.3f)))<.000001f,"accepted held-contact ray is retained independently");
+            var heldRay=(LineRenderer)Get(left,"ray");Check(Vector3.Angle(heldRay.GetPosition(1)-heldRay.GetPosition(0),heldAim.rotation*Vector3.forward)<.03f,"held contact cannot pull pointer behind current cylinder; object filter stays separate");
             left.GetType().GetField("target").SetValue(left,null);Set(interaction,"pairTarget",null);
             UnityEngine.Object.DestroyImmediate(contactTarget);
+            // Collider queries must see geometry moved since LateUpdate, just
+            // as the hand menu and held meshes move during BeforeRender.
+            movingCollider=GameObject.CreatePrimitive(PrimitiveType.Cube);
+            movingCollider.AddComponent<WorkspaceObjectView>();
+            movingCollider.AddComponent<MeshCollider>().sharedMesh=movingCollider.GetComponent<MeshFilter>().sharedMesh;
+            movingCollider.transform.position=heldAim.position+Vector3.up*50;
+            movingCollider.transform.localScale=Vector3.one*.1f;
+            var objects=(System.Collections.IDictionary)typeof(HostScene).GetField("objects",Private).GetValue(host);
+            objects["moving collider"]=movingCollider;Physics.SyncTransforms();
+            movingCollider.transform.SetPositionAndRotation(heldAim.position+heldAim.rotation*Vector3.forward*1.5f,heldAim.rotation);
+            typeof(WorkspaceInteraction).GetMethod("RenderHand",Private).Invoke(interaction,new object[]{left,Time.realtimeSinceStartupAsDouble});
+            Check(Mathf.Abs(Vector3.Distance(heldRay.GetPosition(0),heldRay.GetPosition(1))-1.45f)<.002f,"late visual ray sees moved collider in current frame rather than its old physics pose");
+            objects.Clear();UnityEngine.Object.DestroyImmediate(movingCollider);movingCollider=null;
             Pose(a["pointer"],Vector3.zero,Quaternion.identity,false);
             var held=new GameObject("held fixture");left.GetType().GetField("target").SetValue(left,held.transform);
             Set(interaction,"renderedFrame",-1);typeof(WorkspaceInteraction).GetMethod("BeforeRender",Private).Invoke(interaction,null);
@@ -94,6 +132,7 @@ public static class GlassControllerChecks
             foreach(var hand in new[]{left,right})if(hand!=null){((InputAction)Get(hand,"gripPose")).Dispose();((InputAction)Get(hand,"aimPose")).Dispose();}
             typeof(PreviewInteraction).GetProperty("Current").GetSetMethod(true).Invoke(null,new object[]{previous});
             UnityEngine.Object.DestroyImmediate(owner);UnityEngine.Object.DestroyImmediate(origin);if(material!=null)UnityEngine.Object.DestroyImmediate(material);
+            if(movingCollider!=null)UnityEngine.Object.DestroyImmediate(movingCollider);
             InputSystem.RemoveDevice(a);InputSystem.RemoveDevice(b);InputSystem.RemoveLayout(layout);
         }
     }

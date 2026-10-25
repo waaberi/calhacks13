@@ -88,6 +88,14 @@ public static class P25CommonUiChecks
             state["native_tool"] = "sketcher.native_" + tool; state["tool"] = tool; state["editing_mode"] = "shared";
             f.Drawing.SetNativeState(state); f.Drawing.SetEnabled(true);
             Check(f.Drawing.Press(new Ray(new Vector3(0,1,0), Vector3.down)), "first native-context point " + tool);
+            var lastRay = (Ray)Get(f.Drawing, "lastRay"); bool hadRay = (bool)Get(f.Drawing, "haveRay");
+            string status = f.Drawing.StatusText;
+            Check(f.Drawing.TryVisualAim(new Ray(new Vector3(.05f,1,.04f), Vector3.down), out var visualPoint)
+                && Vector3.Distance(visualPoint, new Vector3(.05f,0,.04f)) < .00001f,
+                "late visual query intersects the current native sketch plane " + tool);
+            Check(f.Drawing.HasDraft && ((Ray)Get(f.Drawing, "lastRay")).Equals(lastRay) && (bool)Get(f.Drawing, "haveRay") == hadRay
+                && f.Drawing.StatusText == status && f.Sent.Count == 0,
+                "late drawing visuals cannot replace the draft ray, feedback or native request " + tool);
             Check(f.Drawing.Press(new Ray(new Vector3(.1f,1,.06f), Vector3.down)), "second native-context point " + tool);
             var acquire = f.Sent.Single(m => (string)m["type"] == "lease.acquire");
             Check((string)acquire["payload"]["mode"] == "shared" && (string)acquire["payload"]["targets"][0] == A,

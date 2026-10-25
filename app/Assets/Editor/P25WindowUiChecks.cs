@@ -27,8 +27,52 @@ public static class P25WindowUiChecks
     static void Check(bool ok, string why) { if (!ok) throw new Exception("P25_WINDOW_UI: " + why); }
     public static void Run()
     {
-        Chooser(); SelectionSequence(); Handoff(); Revocation(); InputIndicator(); ControllerControls(); WorkspaceRouting();
+        Chooser(); SelectionSequence(); Handoff(); Revocation(); InputIndicator(); ControllerControls(); WorkspaceRouting(); QuickActions(); DrawingMode();
         Debug.Log("P25_WINDOW_UI_CHECK PASS actual chooser/pages/stale-choice/bounded-refresh/no-image-recovery/current-sequence/stamped-handoff/lease-retention/typed-staleness/mode-exit/overlay; actual OS popup capture unverified");
+    }
+
+    static void QuickActions()
+    {
+        foreach (string name in new[] { "Keyboard", "Full keyboard", "Controller controls", "Mouse options", "Lock screen position", "Escape / cancel", "Enter", "Windows / dialogs" })
+        {
+            using var f = new Fixture(); f.Stale();
+            string token = (string)f.Drawing.NativeState["ui_session_id"];
+            f.Click(name); f.Tick();
+            Check((bool)Get(f.Preview, "inputEnabled") && !(bool)Get(f.Preview, "endAfterRelease")
+                && (bool)Invoke(f.Preview, "Ready") && f.Authority.ProcessId == 42
+                && (string)f.Drawing.NativeState["ui_session_id"] == token && f.Sent.Count == 0,
+                "quick control preserves the enabled native input reservation: " + name);
+            if (name == "Escape / cancel" || name == "Enter")
+                Check(f.Events.Any(e => (string)e["type"] == "key" && (string)e["key"] == (name == "Enter" ? "ENTER" : "ESC")),
+                    "quick control actually queues its native key: " + name);
+        }
+        using (var f = new Fixture())
+        {
+            var ray = new Ray(f.Image.transform.position - Vector3.forward * 2, Vector3.forward);
+            Set(f.Preview, "triggerWasDown", false); Set(f.Preview, "mouseHeld", true);
+            var before = f.Events.ToArray(); string notice = f.Preview.Notice;
+            Check(f.Preview.RaycastVisual(ray, out var visualDistance) && Mathf.Abs(visualDistance - 2) < .00001f,
+                "late visual ray intersects the same displayed image geometry");
+            Check(!(bool)Get(f.Preview, "triggerWasDown") && (bool)Get(f.Preview, "mouseHeld")
+                && f.Events.SequenceEqual(before) && f.Preview.Notice == notice,
+                "late visual query cannot consume trigger edges, release input or alter feedback");
+        }
+        Debug.Log("P25_QUICK_ACTION_CHECK PASS native_input_preserved actual_key_callbacks read_only_visual_ray");
+    }
+
+    static void DrawingMode()
+    {
+        using var f = new Fixture();
+        var state = P25WindowChecks.Native(f.Session); state["input_allowed"] = false; state["ui_session_id"] = ""; state["ui_owner"] = null;
+        f.Drawing.SetNativeState(state); f.Authority.Clear(); Set(f.Preview, "inputEnabled", false);
+        f.Click("Draw in VR"); f.Tick();
+        Check(f.Drawing.EnabledForInput && !(bool)Get(f.Preview, "spatialRequested")
+            && f.Button("Focus Blender").GetComponentInChildren<Text>().text == "VR drawing ON",
+            "explicit spatial mode reports ON instead of suggesting the feature is disabled");
+        f.Apply((JObject)f.State.DeepClone());
+        Check(f.Preview.Notice.Contains("VR drawing ON") && !f.Drawing.StatusText.Contains("disabled"),
+            "ordinary helper polling cannot replace active drawing feedback with the preview focus instruction");
+        Debug.Log("P25_DRAWING_MODE_CHECK PASS explicit_mode_actionable_status no_false_input_off");
     }
 
     static void ControllerControls()
@@ -348,6 +392,7 @@ public static class P25WindowUiChecks
         yield return HttpHandoff(true); yield return HttpHandoff(false);
         yield return HttpChoice(false); yield return HttpChoice(true); yield return HttpChoice(false, 100);
         yield return HttpFocusDenied(); yield return HttpBusy();
+        yield return HttpPointerOcclusion();
     }
     static void TickHttp()
     {
@@ -373,7 +418,7 @@ public static class P25WindowUiChecks
             ["transport"] = "actual ReadState/ApplyInputState/SendEvents UnityWebRequest; synthetic root/dialog/frame records only",
             ["actual_os_popup_capture_verified"] = false, ["native_or_player_launched"] = false, ["desktop_input_injected"] = false,
             ["physical_acceptance"] = false, ["error"] = error?.ToString() }.ToString());
-        if (error == null) Debug.Log("P25_WINDOW_HTTP_CHECK PASS cases=5 trusted root/dialog/nested/parent/root, chooser current sequence/current-window recovery/focus refusal and invalid ACK ordered cleanup; actual OS popup capture unverified");
+        if (error == null) Debug.Log("P25_WINDOW_HTTP_CHECK PASS cases=" + cases.Count + " trusted root/dialog/nested/parent/root, current-window/occlusion/busy recovery, focus refusal and exact release ACK; actual OS popup capture unverified");
         else Debug.LogError(error);
         EditorApplication.Exit(error == null ? 0 : 1);
     }
@@ -501,6 +546,36 @@ public static class P25WindowUiChecks
         cases.Add(new JObject { ["name"] = "busy_collision_same_session_release_ack_no_action_replay", ["passed"] = true });
     }
 
+    static IEnumerator HttpPointerOcclusion()
+    {
+        using var server = new FakeServer(true, occludedOnce: true);
+        Environment.SetEnvironmentVariable("CALHACKS_CAPTURE_PORT", server.Port.ToString());
+        using var f = new Fixture(); server.State(f.State);
+        f.Events.Enqueue(new JObject { ["type"] = "pointer", ["x"] = .5, ["y"] = .5 });
+        f.Events.Enqueue(new JObject { ["type"] = "key", ["key"] = "G", ["action"] = "press" });
+        yield return Drive((IEnumerator)Invoke(f.Preview, "SendEvents"), () => server.Posts == 1 && !(bool)Get(f.Preview, "sendingEvent"));
+        Check((bool)Get(f.Preview, "windowResuming") && (bool)Get(f.Preview, "inputResync")
+            && !(bool)Get(f.Preview, "inputEnabled") && !(bool)Get(f.Preview, "endAfterRelease")
+            && !f.Transport.Synchronized && f.Events.Count == 0 && f.Sent.Count == 0,
+            "same-window occlusion discards old input and retains native ownership for sequence cleanup");
+        yield return Drive((IEnumerator)Invoke(f.Preview, "ReadState"), () => f.Transport.Synchronized && !(bool)Get(f.Preview, "readingState"));
+        f.Tick();
+        Check(f.Events.Count == 1 && (string)f.Events.Peek()["type"] == "release" && !(bool)Get(f.Preview, "inputEnabled"),
+            "unchanged helper session admits only cleanup after fresh authoritative state");
+        yield return Drive((IEnumerator)Invoke(f.Preview, "SendEvents"), () => server.Posts == 2 && !(bool)Get(f.Preview, "sendingEvent"));
+        var requests = server.Requests.ToArray();
+        Check(server.Error == null && server.Kinds.SequenceEqual(new[] { "pointer", "release" })
+            && (long)requests[0]["seq"] == 1 && (long)requests[1]["seq"] == 2
+            && (bool)Get(f.Preview, "inputEnabled") && !(bool)Get(f.Preview, "windowResuming")
+            && !(bool)Get(f.Preview, "endAfterRelease") && f.Authority.ProcessId == 42 && f.Sent.Count == 0,
+            "exact release ACK resumes input on the same window without replaying rejected or queued actions");
+        f.Click("Enter");
+        yield return Drive((IEnumerator)Invoke(f.Preview, "SendEvents"), () => server.Posts == 3 && !(bool)Get(f.Preview, "sendingEvent"));
+        Check((string)server.Requests.ToArray()[2]["key"] == "ENTER" && (bool)Get(f.Preview, "inputEnabled"),
+            "a new quick button remains usable after same-window occlusion recovery");
+        cases.Add(new JObject { ["name"] = "pointer_occlusion_same_window_release_ack_preserves_input", ["passed"] = true });
+    }
+
     sealed class FakeServer : IDisposable
     {
         readonly TcpListener listener;
@@ -508,6 +583,7 @@ public static class P25WindowUiChecks
         volatile bool valid;
         readonly bool failFocus;
         bool busyOnce;
+        bool occludedOnce;
         readonly object stateLock = new object();
         JObject state, selectedState;
         volatile bool stopped;
@@ -520,9 +596,10 @@ public static class P25WindowUiChecks
         public void State(JObject value) { lock (stateLock) state = (JObject)value.DeepClone(); }
         public void Selects(JObject value) { lock (stateLock) selectedState = (JObject)value.DeepClone(); }
         public void Acknowledge(bool value) { valid = value; }
-        public FakeServer(bool valid, bool failFocus = false, bool busyOnce = false)
+        public FakeServer(bool valid, bool failFocus = false, bool busyOnce = false, bool occludedOnce = false)
         {
-            this.valid = valid; this.failFocus = failFocus; this.busyOnce = busyOnce; listener = new TcpListener(IPAddress.Loopback, 0); listener.Start(); Port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            this.valid = valid; this.failFocus = failFocus; this.busyOnce = busyOnce; this.occludedOnce = occludedOnce;
+            listener = new TcpListener(IPAddress.Loopback, 0); listener.Start(); Port = ((IPEndPoint)listener.LocalEndpoint).Port;
             worker = new Thread(Serve) { IsBackground = true }; worker.Start();
         }
         void Serve()
@@ -555,8 +632,9 @@ public static class P25WindowUiChecks
                             busy = busyOnce; busyOnce = false;
                             if (!busy) state["next_seq"] = (long)state["next_seq"] + 1;
                             Interlocked.Increment(ref posts);
-                            rejected = failFocus && ((string)request["type"] == "select_window" || (string)request["type"] == "focus");
-                            response = busy ? "{\"reason\":\"input_busy\"}" : rejected ? "{\"reason\":\"foreground_activation_denied\"}"
+                            bool occluded = occludedOnce; occludedOnce = false;
+                            rejected = occluded || failFocus && ((string)request["type"] == "select_window" || (string)request["type"] == "focus");
+                            response = busy ? "{\"reason\":\"input_busy\"}" : occluded ? "{\"reason\":\"selected_window_occluded_at_pointer\"}" : rejected ? "{\"reason\":\"foreground_activation_denied\"}"
                                 : valid ? new JObject { ["ok"] = true, ["seq"] = request["seq"] }.ToString() : "{}";
                             if (!rejected && (string)request["type"] == "select_window" && selectedState != null) state = (JObject)selectedState.DeepClone();
                         }

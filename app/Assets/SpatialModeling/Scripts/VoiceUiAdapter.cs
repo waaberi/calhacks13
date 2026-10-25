@@ -55,6 +55,17 @@ namespace SpatialModeling
 
         public const string TranscriptionPreference = "SpatialModeling.Voice.ShowTranscription";
         public bool ShowTranscription { get; private set; }
+        public const string SelectionPopupPreference = "SpatialModeling.UI.SelectionPopups";
+        public bool SelectionPopups { get; private set; }
+        public void SetSelectionPopups(bool show)
+        {
+            SelectionPopups = show;
+            PlayerPrefs.SetInt(SelectionPopupPreference, show ? 1 : 0);
+            PlayerPrefs.Save();
+            if (!show && feedback != null && IsSelectionPopup(feedback.text)) feedback.gameObject.SetActive(false);
+        }
+        static bool IsSelectionPopup(string message) => message != null &&
+            (message.StartsWith("Selected:", StringComparison.Ordinal) || message.StartsWith("Deselected:", StringComparison.Ordinal));
         public void SetShowTranscription(bool show)
         {
             ShowTranscription = show;
@@ -118,6 +129,7 @@ namespace SpatialModeling
         void Awake()
         {
             ShowTranscription = PlayerPrefs.GetInt(TranscriptionPreference, 0) == 1;
+            SelectionPopups = PlayerPrefs.GetInt(SelectionPopupPreference, 0) == 1;
             if (host == null) host = FindAnyObjectByType<HostScene>();
 
             var p = new GameObject("PendingCommandPanel");
@@ -542,6 +554,7 @@ namespace SpatialModeling
 
         void Note(string text)
         {
+            if (!SelectionPopups && IsSelectionPopup(text)) return;
             if (!ShowTranscription && text.StartsWith("Heard:", StringComparison.Ordinal)) return;
             feedback.text = text;
             feedback.gameObject.SetActive(true);
