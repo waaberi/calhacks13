@@ -125,6 +125,16 @@ public static class VoiceSelectionChecks
             var leftMenuPose=new Pose(new Vector3(-.3f,1.1f,.3f),Quaternion.identity);
             var menuHead=new Vector3(0,1.65f,0);
             table.UpdateLeftHandMenu(leftMenuPose,menuHead,true);
+            var menuGlass=table.Menu.GetComponent<GlassRoot>();
+            void MenuGlassLifecycle(bool active)
+            {
+                // This is an edit-time fixture, not Play mode. Normal
+                // MonoBehaviours do not receive the Player lifecycle here.
+                // Remove first so initialization is safe even if OnEnable ran.
+                Invoke(menuGlass,"OnDisable");
+                if(active)Invoke(menuGlass,"OnEnable");
+            }
+            MenuGlassLifecycle(true);
             var menuNames=table.Menu.GetComponentsInChildren<TableAction>().Select(a=>a.name).ToArray();
             foreach(var removed in new[]{"Select object","Pin menu here","Recover workspace"})
                 Check(!menuNames.Contains(removed),"requested left-hand action is absent: "+removed);
@@ -141,11 +151,15 @@ public static class VoiceSelectionChecks
             aim(right,left,menuRay,false,false);
             Check(!interaction.IsHolding,"menu grip release remains available without a Pin menu button");
             table.DockMenu();table.DockMenu();
+            MenuGlassLifecycle(false);
             Check(Vector3.Distance(table.Menu.localScale,compactScale)<.000001f&&!table.Menu.gameObject.activeSelf,
                 "repeated return-to-hand shrinks once and waits for fresh tracking");
             table.UpdateLeftHandMenu(leftMenuPose,menuHead,true);
+            MenuGlassLifecycle(true);
             table.UpdateLeftHandMenu(default,menuHead,false);
+            MenuGlassLifecycle(false);
             table.UpdateLeftHandMenu(leftMenuPose,menuHead,true);
+            MenuGlassLifecycle(true);
             Check(Vector3.Distance(table.Menu.localScale,compactScale)<.000001f,
                 "tracking disable/re-enable does not apply the one-third factor again");
             const string glassPrefix="SpatialModeling.Glass.";
@@ -159,21 +173,31 @@ public static class VoiceSelectionChecks
                 GlassTheme.SetAccessibility(enlarged,oldContrast,oldOpaque,oldMotion);
                 var accessibleScale=compactScale*(enlarged/oldTextScale);
                 Check(Vector3.Distance(table.Menu.localScale,accessibleScale)<.000001f,
-                    "docked one-third menu preserves the user's accessibility text-size multiplier");
+                    "actual GlassRoot subscription preserves docked accessibility: scale_x="+table.Menu.localScale.x.ToString("R")+
+                    " expected_x="+accessibleScale.x.ToString("R")+" previous="+Get(menuGlass,"previous")+" requested="+enlarged);
                 table.PinMenu();table.PinMenu();
                 Check(Vector3.Distance(table.Menu.localScale,accessibleScale*3f)<.000001f,
                     "full-size world menu preserves accessibility without duplicate enlargement");
-                table.DockMenu();table.DockMenu();table.UpdateLeftHandMenu(leftMenuPose,menuHead,true);
+                table.DockMenu();table.DockMenu();MenuGlassLifecycle(false);
+                table.UpdateLeftHandMenu(leftMenuPose,menuHead,true);MenuGlassLifecycle(true);
                 Check(Vector3.Distance(table.Menu.localScale,accessibleScale)<.000001f,
                     "returning accessible menu to hand preserves exactly one compact factor");
+                table.UpdateLeftHandMenu(default,menuHead,false);MenuGlassLifecycle(false);
+                GlassTheme.SetAccessibility(oldTextScale,oldContrast,oldOpaque,oldMotion);
+                Check(Vector3.Distance(table.Menu.localScale,accessibleScale)<.000001f,
+                    "hidden menu defers a new accessibility choice until its actual OnEnable");
+                table.UpdateLeftHandMenu(leftMenuPose,menuHead,true);MenuGlassLifecycle(true);
+                Check(Vector3.Distance(table.Menu.localScale,compactScale)<.000001f,
+                    "reactivating hidden menu applies the pending accessibility ratio once");
             }
             finally
             {
                 GlassTheme.SetAccessibility(oldTextScale,oldContrast,oldOpaque,oldMotion);
                 for(int i=0;i<glassKeys.Length;i++)if(!glassPresent[i])PlayerPrefs.DeleteKey(glassPrefix+glassKeys[i]);
                 PlayerPrefs.Save();
+                MenuGlassLifecycle(false);
             }
-            Debug.Log("LEFT_HAND_MENU_COMPACT_CHECK PASS removed_select_pin_recover direct_trigger_selection public_selection_method grip_world_pin exact_one_third_docked_scale full_pinned_scale repeated_dock_pin_idempotent tracking_reenable accessibility_retained");
+            Debug.Log("LEFT_HAND_MENU_COMPACT_CHECK PASS removed_select_pin_recover direct_trigger_selection public_selection_method grip_world_pin exact_one_third_docked_scale full_pinned_scale repeated_dock_pin_idempotent tracking_reenable actual_GlassRoot_lifecycle active_and_hidden_accessibility_retained");
             table.Menu.gameObject.SetActive(false);
 
             // A nearer screen must occlude a model for selection, exactly as it does for grabbing.
