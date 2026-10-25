@@ -1,5 +1,16 @@
 {
+  "scopedRegistries": [
+    {
+      "name": "Meta XR official packages",
+      "url": "https://npm.developer.oculus.com",
+      "scopes": [
+        "com.meta.xr"
+      ]
+    }
+  ],
   "dependencies": {
+    "com.meta.xr.sdk.core": "207.0.1",
+    "com.meta.xr.mrutilitykit": "file:../ThirdParty/com.meta.xr.mrutilitykit-207.0.1.tgz",
     "com.calhacks13.voicecore": "file:../../voice/VoiceCore",
     "com.unity.ide.rider": "3.0.40",
     "com.unity.ide.visualstudio": "2.0.26",

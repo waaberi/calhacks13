@@ -356,12 +356,14 @@ The capture helper serves the newest frame of the selected Blender window. Only 
 
 - **Transport:** HTTP on `127.0.0.1:8766`.
 - `GET /frame` returns `200` with `Content-Type: image/jpeg` and the newest frame. Response headers:
-  - `ETag`: the frame number.
+  - `ETag`: the frame number, quoted (`"1842"`).
   - `X-Captured-At`: capture time in Unix milliseconds.
-  - `X-Window`: window title.
+  - `X-Capture-Alive`: when the helper answered, in Unix milliseconds. It shows the helper is running, not that the pixels are new.
+  - `X-Window`: window title, with characters outside ASCII replaced by `?`.
   - `X-Size`: `WIDTHxHEIGHT`.
 
-  Send `If-None-Match` with the last `ETag` to get `304` when nothing changed. Returns `503` with the status JSON below when no frame is available.
+  Send `If-None-Match` with the last `ETag` to get `304` when nothing changed; a `304` carries the same headers. Returns `503` with the status JSON below when no frame is available. The helper stops serving a frame when it has captured nothing new for 3 s (`state` `error`). The Unity app needs `X-Captured-At` and `X-Capture-Alive` on every `200` and `304`, and hides a frame captured more than 3 s ago.
+- `GET /selection` returns the selected window as `{"hwnd", "pid", "title"}`, or `null`. The launcher uses it to check that the helper captures the window it asked for. It is read-only: the window is chosen only in the helper's picker.
 - `GET /status` returns the status JSON ([schema](schemas/capture.status.schema.json), [example](examples/capture.status.json)). Every field is always present:
 
   | Field | Meaning |
