@@ -39,7 +39,19 @@
           "type": "boolean"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "dependentSchemas": {
+        "continuation": {
+          "required": [
+            "composition"
+          ],
+          "properties": {
+            "composition": {
+              "const": true
+            }
+          }
+        }
+      }
     }
   }
 }

@@ -89,6 +89,20 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "decision": {
+                "const": "clarify"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "missing"
+            ]
+          }
         }
       ],
       "additionalProperties": false

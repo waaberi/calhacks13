@@ -284,3 +284,40 @@ def test_later_named_target_change_during_earlier_clarification_cancels_whole_pl
     changed = [dict(o, generation=1) if o["id"] == SHAFT else o for o in OBJECTS]
     with pytest.raises(vc.InvalidPlan):
         p.resolve("x", PLATE, changed, r["resolution"])
+
+
+def test_leading_decimal_scale_is_never_misread_as_five_times():
+    assert steps("scale it by -.5 along x")[0]["by"] == [-0.5, 1, 1]
+    assert steps("scale it by .5 along x")[0]["by"] == [0.5, 1, 1]
+
+
+def test_clarification_continues_over_real_socket_with_capability_and_same_owner():
+    import protocol
+    from test_commands import assert_valid, valid
+
+    with voice_hosting() as host, host.vr() as client:
+        attach(host)
+        r = ask(
+            client,
+            "move it ten centimeters then colour it red",
+            target={"id": PLATE, "generation": 0},
+        )
+        assert r["decision"] == "clarify" and r["missing"] == "axis"
+        payload = {
+            "text": "x",
+            "confidence": 1,
+            "target": {"id": PLATE, "generation": 0},
+            "continuation": r["resolution"],
+            "composition": True,
+        }
+        msg = protocol.message("voice.resolve", payload)
+        assert valid(msg)
+        _, reply = client.ask(msg)
+        assert_valid(reply)
+        assert reply["payload"]["decision"] == "run"
+        assert (
+            len(host.editor.voice.resolutions[reply["payload"]["resolution"]][1][0]["steps"]) == 2
+        )
+        del payload["composition"]
+        invalid = protocol.message("voice.resolve", payload)
+        assert not valid(invalid) and voice_ops.resolve_problem(invalid)

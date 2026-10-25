@@ -236,6 +236,7 @@ def _check_words(ws, permitted, read_number):
 
 def parse_step(text, target, known, created, deleted, overrides, index, registry):
     """Return (step, next target). References to future objects are host-only new:N handles."""
+    text = re.sub(r"(?<![\w.])(-?)\.(\d+)", r"\g<1>0.\2", text)
     text = re.sub(r"(?<!\w)-(?=\d)", "negative ", text)
     ws = registry.words(text)
     if not ws:
