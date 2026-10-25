@@ -80,7 +80,9 @@ def verify_existing_selection(requested, selected):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--player", type=Path, required=True, help="Built SpatialModeling.exe")
+    parser.add_argument(
+        "--player", type=Path, help="Built SpatialModeling.exe (not needed with --diagnose)"
+    )
     parser.add_argument("--blender", type=Path, help="Blender executable, if no running Host")
     parser.add_argument("--blend", type=Path, help="Reference .blend to open in a separate window")
     parser.add_argument(
@@ -102,7 +104,7 @@ def main():
             json.dumps(
                 {
                     "python": sys.version.split()[0],
-                    "player_exists": args.player.is_file(),
+                    "player_exists": bool(args.player and args.player.is_file()),
                     "native_ping": ping_host(),
                     "capture": capture_status(),
                     "blender_windows": Windows().windows(),
@@ -111,7 +113,7 @@ def main():
             )
         )
         return
-    if not args.player.is_file():
+    if args.player is None or not args.player.is_file():
         parser.error("--player must point to a built Windows EXE")
     players = player_processes(args.player.name)
     if players:
