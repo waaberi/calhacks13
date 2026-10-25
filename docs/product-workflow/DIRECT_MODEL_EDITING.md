@@ -45,6 +45,21 @@ status must show the corresponding native tool before beginning a gesture.
 G/R/S start Blender's native 2D modal operation; they do not select the toolbar
 tool for a floating-model gesture. Finish/cancel that modal before direct editing.
 
+With Move selected, red X, green Y and blue Z arrows surround the floating
+selection. Hold the front trigger on an arrowhead or shaft and move along that
+axis. Its starting native frame stays fixed while Blender updates live. Release
+commits one Undo; grip/Escape cancels. Trigger dragging the selected body still
+provides free Move, and the existing plane handles remain available. Nearer
+unrelated controls and objects keep their input priority.
+
+During Scale, the readout starts at **Scale ×1.00 · Waiting for Blender**. It then
+shows the latest factor Blender has acknowledged, relative to the gesture start,
+with X/Y/Z factors for a constrained scale. **×0.50** means half size and **×2.00**
+means twice the starting size. Pending controller movement is not reported as an
+applied native change. The label clears on commit/cancel. Two-hand arrangement
+resizing separately displays **Display scale · VR view only**; it changes the
+presentation rather than Blender geometry.
+
 With Rotate selected, red X, green Y and blue Z rings with arrowheads surround
 the selection. Aim at a coloured ring, hold the front trigger and sweep around
 it to rotate about that native axis. The chosen ring highlights and stays fixed

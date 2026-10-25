@@ -34,6 +34,12 @@ available through the existing room-view controls.
 
 ## Scaling on a surface
 
+Native Scale shows its acknowledged multiplier while held (for example ×0.50 or
+×2.00), including X/Y/Z when constrained. Two-hand arrangement resizing shows a
+separate Display scale ratio. Move has red/green/blue native-axis arrows on the
+floating selection; trigger-drag an arrow, release to commit, or grip/Escape to
+cancel. Existing free Move, Rotate rings and Blender-view editing remain.
+
 With Surface detection enabled, scaling an object already resting on a current
 finite plane preserves its contact point. A desk-seated cylinder grows upward
 from its base and remains seated when reduced. Direct Object Scale updates
