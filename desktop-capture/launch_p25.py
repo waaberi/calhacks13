@@ -39,8 +39,10 @@ def native_preflight(port):
         connection.sendall(json.dumps(hello).encode() + b"\n")
         with connection.makefile("rb") as stream:
             while time.monotonic() < deadline:
-                line = stream.readline(4 * 1024 * 1024 + 1)
-                if not line or len(line) > 4 * 1024 * 1024:
+                # Hello also sends a scene snapshot before preview.state. Match
+                # the Player's bounded 16 MiB transport for ordinary large files.
+                line = stream.readline(16 * 1024 * 1024 + 1)
+                if not line or len(line) > 16 * 1024 * 1024:
                     raise RuntimeError("Native preflight closed or exceeded the message size limit")
                 msg = json.loads(line)
                 if msg.get("type") == "error":

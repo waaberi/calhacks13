@@ -24,6 +24,12 @@ class WindowUnavailable(RuntimeError):
         self.state = state
 
 
+def minimized_message(selected):
+    title = selected.get("title") or "Untitled Blender window"
+    return (f'The connected Blender window "{title}" (PID {selected["pid"]}) is minimized. '
+            'Use Show connected Blender in Coplanar. Maximizing a different Blender window will not restore this feed.')
+
+
 def selected_window_identity(api, selected):
     """Revalidate the selected family/lifetimes before accepting any pixels."""
     current = api.identity(selected["hwnd"])
@@ -202,7 +208,7 @@ class Windows:
             )
         if self.u.IsIconic(hwnd):
             raise WindowUnavailable(
-                "minimized", "Blender is minimized. Restore its window to resume capture."
+                "minimized", minimized_message(selected)
             )
         rect = W.RECT()
         if not self.u.GetWindowRect(hwnd, C.byref(rect)):
@@ -586,7 +592,7 @@ def graphics_capture_loop(api, latest, stop, fps):
                 latest.fail(
                     generation,
                     "minimized",
-                    "Blender is minimized. Restore its window to resume capture.",
+                    minimized_message(selected),
                 )
                 return
             last_callback[0] = time.monotonic()
@@ -653,7 +659,7 @@ def graphics_capture_loop(api, latest, stop, fps):
                 latest.fail(
                     generation,
                     "minimized",
-                    "Blender is minimized. Restore its window to resume capture.",
+                    minimized_message(selected),
                 )
                 continue
             if control is not None and capture_refresh_due(last_callback[0], time.monotonic()):
@@ -924,7 +930,10 @@ def main():
     parser.add_argument("--enable-input", action="store_true",
                         help="Explicitly enable P2.5 input for the selected Blender window")
     parser.add_argument("--clear-text", action="store_true", help="Maximum JPEG quality for native UI text; retains full 4:4:4 capture")
+    parser.add_argument("--headless", action="store_true", help="Run with an explicit connected window, without a separate picker")
     args = parser.parse_args()
+    if args.headless and not args.window:
+        parser.error("--headless requires --window; never guess which Blender to capture")
     if not 1 <= args.fps <= 60:
         parser.error("--fps must be between 1 and 60")
     api = Windows()
@@ -959,7 +968,10 @@ def main():
         flush=True,
     )
     try:
-        picker(api, latest)
+        if args.headless:
+            stop.wait()
+        else:
+            picker(api, latest)
     finally:
         stop.set()
         server.shutdown()
